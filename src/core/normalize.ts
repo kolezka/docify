@@ -104,11 +104,23 @@ function normalizeHtml(raw: string): NormalizedDoc {
     /<article[^>]*>([\s\S]*?)<\/article>/i.exec(raw)?.[1] ??
     /<body[^>]*>([\s\S]*?)<\/body>/i.exec(raw)?.[1] ??
     raw;
+  // The converter loses fences on highlighted <pre> blocks, so code is swapped for
+  // placeholders and restored as fenced blocks after conversion.
+  const codeBlocks: string[] = [];
   const cleaned = main
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<nav[\s\S]*?<\/nav>/gi, "");
-  const md = NodeHtmlMarkdown.translate(cleaned, { codeFence: "```", keepDataImages: false });
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/(?:<div class="highlight-([\w+-]+)[^"]*">\s*<div class="highlight">\s*)?<pre[^>]*>([\s\S]*?)<\/pre>(?:\s*<\/div>\s*<\/div>)?/gi, (_m, lang: string | undefined, body: string) => {
+      const code = decodeEntities(body.replace(/<[^>]+>/g, "")).replace(/\n+$/, "");
+      const fenceLang = lang && !["default", "none", "text"].includes(lang) ? lang.replace(/^python3$/, "python") : "";
+      codeBlocks.push("```" + fenceLang + "\n" + code + "\n```");
+      return `<p>DOCIFYCODEBLOCK${codeBlocks.length - 1}</p>`;
+    });
+  const md = NodeHtmlMarkdown.translate(cleaned, { codeFence: "```", keepDataImages: false }).replace(
+    /^DOCIFYCODEBLOCK(\d+)$/gm,
+    (_m, i: string) => codeBlocks[Number(i)]!,
+  );
   const anchors = new Map<number, string>();
   const out: string[] = [];
   const lines = md.split("\n");
@@ -134,8 +146,21 @@ function normalizeHtml(raw: string): NormalizedDoc {
       out.push("");
       continue;
     }
-    out.push(line.replace(/\[¶\]\(#[^)]*\)/g, ""));
+    // The converter escapes underscores in identifiers (pbkdf2\_hmac), which breaks symbol search.
+    out.push(line.replace(/\[¶\]\(#[^)]*\)/g, "").replace(/\\_/g, "_"));
   }
   const title = out.find((l) => /^# /.test(l))?.slice(2).trim() ?? /<title>([^<]*)<\/title>/i.exec(raw)?.[1]?.trim() ?? null;
   return { title, markdown: out.join("\n"), linesMatchRaw: false, anchors };
+}
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#(\d+);/g, (_m, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, n: string) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
 }

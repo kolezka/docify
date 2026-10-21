@@ -2,7 +2,7 @@ import type { Docify, GenerationRow, SourceRow } from "./docify.ts";
 import { Docify as DocifyClass, DocifyError, pidAlive } from "./docify.ts";
 import { embedQuery } from "./embed.ts";
 import { countTokens, TOKENIZER } from "./tokens.ts";
-import { extractSymbols, squash } from "./symbols.ts";
+import { extractSymbols, methodToken, squash } from "./symbols.ts";
 
 export type Mode = "lexical" | "vector" | "graph" | "combined";
 
@@ -14,9 +14,14 @@ export interface SearchInput {
   mode?: Mode;
   maxTokens?: number;
   project?: string; // directory whose .docify.json pins apply
+  // Weight of graph hits in combined fusion. Default 0: on the fixture corpus any positive
+  // weight lowered recall (docs/evaluation.md), so the graph is opt-in there.
+  graphWeight?: number;
 }
 
-export type SearchStatus = "ok" | "no_match" | "not_indexed" | "version_unavailable" | "source_unknown" | "update_failed";
+export const DEFAULT_GRAPH_WEIGHT = 0;
+
+export type SearchStatus = "ok" | "weak_match" | "no_match" | "not_indexed" | "version_unavailable" | "source_unknown" | "update_failed";
 
 export interface Citation {
   source: string;
@@ -91,9 +96,12 @@ const STOP = new Set(
 );
 const RRF_K = 60;
 const CANDIDATES = 30;
-// Calibrated on the fixture corpus (see docs/evaluation.md): below these, nothing is treated as evidence.
-export const MIN_VECTOR_SIM = 0.62;
-export const MIN_TERM_COVERAGE = 0.6;
+// Evidence tiers (docs/evaluation.md). bge-small similarity alone does not separate
+// paraphrases from unrelated questions on the fixture corpus, so the middle tier
+// returns hits with a caveat instead of hiding them.
+export const STRONG_VECTOR_SIM = 0.65;
+export const WEAK_VECTOR_SIM = 0.5;
+export const STRONG_TERM_COVERAGE = 0.6;
 
 const vectorCache = new Map<number, { rowids: Int32Array; matrix: Float32Array; dims: number }>();
 
@@ -121,10 +129,15 @@ export function queryTerms(query: string) {
   return { words: [...new Set(words)], symbols };
 }
 
+function methodTokens(query: string): string[] {
+  return extractSymbols(query).filter((s) => s.startsWith("m_"));
+}
+
 function ftsQuery(query: string): string | null {
   const { words, symbols } = queryTerms(query);
   const parts = words.map((w) => `"${w}"`);
   for (const s of symbols) parts.push(`symbols:"${s}"`);
+  for (const m of methodTokens(query)) parts.push(`symbols:"${m}"`);
   return parts.length ? parts.join(" OR ") : null;
 }
 
@@ -206,6 +219,39 @@ function placeholders(n: number) {
   return Array.from({ length: n }, () => "?").join(",");
 }
 
+function exactSymbolHits(docify: Docify, query: string, gens: number[]): number[] {
+  const { symbols } = queryTerms(query);
+  const full = symbols.filter((s) => !s.startsWith("m_"));
+  if (!full.length || !gens.length) return [];
+  const terms = [...full.map((s) => `symbols:"${s}"`), ...methodTokens(query).map((m) => `heading:"${m.slice(2)}"`)];
+  return docify.db
+    .query<{ rowid: number }, (string | number)[]>(
+      `SELECT f.rowid AS rowid FROM passages_fts f JOIN passages p ON p.rowid = f.rowid
+       WHERE passages_fts MATCH ? AND p.generation_id IN (${placeholders(gens.length)}) ORDER BY bm25(passages_fts, 4.0, 1.0, 8.0) LIMIT 3`,
+    )
+    .all(terms.join(" OR "), ...gens)
+    .map((r) => r.rowid);
+}
+
+// A named API symbol that occurs nowhere in scope is strong evidence of absence.
+function symbolsAbsent(docify: Docify, query: string, gens: number[]): string | null {
+  const named = (query.match(/(?:[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)+/g) ?? []).filter((s) => !/\.(md|html?|js|ts)$/i.test(s));
+  if (!named.length || !gens.length) return null;
+  const present = (sym: string) => {
+    const parts = sym.split(".");
+    const last = parts[parts.length - 1]!;
+    const terms = [`symbols:"${squash(sym)}"`, ...(last.length >= 4 ? [`symbols:"${methodToken(last)}"`] : [])];
+    const row = docify.db
+      .query<{ n: number }, (string | number)[]>(
+        `SELECT count(*) AS n FROM passages_fts f JOIN passages p ON p.rowid = f.rowid WHERE passages_fts MATCH ? AND p.generation_id IN (${placeholders(gens.length)})`,
+      )
+      .get(terms.join(" OR "), ...gens);
+    return (row?.n ?? 0) > 0;
+  };
+  const missing = named.filter((s) => !present(s));
+  return missing.length === named.length ? missing[0]! : null;
+}
+
 function lexicalRank(docify: Docify, query: string, gens: number[]) {
   const q = ftsQuery(query);
   if (!q || !gens.length) return [];
@@ -253,7 +299,9 @@ function graphRank(docify: Docify, query: string, gens: number[], seedPassages: 
     else {
       const labelWords = label.match(/[a-z0-9_]+/g) ?? [];
       const overlap = labelWords.filter((w) => words.includes(w)).length;
-      if (labelWords.length && overlap / labelWords.length >= 0.99) score = 0.8;
+      // One-word labels such as "Database" match too many questions to be strong seeds.
+      if (labelWords.length > 1 && overlap === labelWords.length) score = 0.8;
+      else if (labelWords.length === 1 && overlap === 1) score = 0.3;
       else if (overlap >= 2) score = 0.5;
     }
     if (score) seeds.set(key(n.generation_id, n.node_id), score);
@@ -265,7 +313,9 @@ function graphRank(docify: Docify, query: string, gens: number[], seedPassages: 
     for (const r of rows) if (!seeds.has(key(r.generation_id, r.node_id))) seeds.set(key(r.generation_id, r.node_id), 0.3);
   }
   if (!seeds.size) return [];
-  const nodeScore = new Map(seeds);
+  // Passage-derived seeds only contribute their neighbours, so the graph adds related
+  // passages instead of re-voting for what lexical and vector already ranked.
+  const nodeScore = new Map([...seeds].filter(([, s]) => s > 0.3));
   const edgeStmt = docify.db.query<{ other: string }, [number, string, number, string]>(
     "SELECT dst AS other FROM graph_edges WHERE generation_id = ? AND src = ? UNION SELECT src AS other FROM graph_edges WHERE generation_id = ? AND dst = ?",
   );
@@ -280,7 +330,10 @@ function graphRank(docify: Docify, query: string, gens: number[], seedPassages: 
   const groundStmt = docify.db.query<{ passage_rowid: number }, [number, string]>("SELECT passage_rowid FROM node_passages WHERE generation_id = ? AND node_id = ?");
   for (const [k, s] of nodeScore) {
     const [g, n] = k.split("\0") as [string, string];
-    for (const p of groundStmt.all(Number(g), n)) passageScore.set(p.passage_rowid, (passageScore.get(p.passage_rowid) ?? 0) + s);
+    for (const p of groundStmt.all(Number(g), n)) {
+      if (seedPassages.includes(p.passage_rowid)) continue;
+      passageScore.set(p.passage_rowid, (passageScore.get(p.passage_rowid) ?? 0) + s);
+    }
   }
   return [...passageScore].map(([rowid, score]) => ({ rowid, score })).sort((a, b) => b.score - a.score).slice(0, CANDIDATES);
 }
@@ -366,6 +419,7 @@ export function truncateExcerpt(text: string, maxTokens: number): string {
 export async function search(docify: Docify, input: SearchInput): Promise<SearchResult> {
   const t0 = performance.now();
   const mode: Mode = input.mode ?? "combined";
+  const graphWeight = Math.max(0, Math.min(input.graphWeight ?? DEFAULT_GRAPH_WEIGHT, 1));
   const maxTokens = Math.max(200, Math.min(input.maxTokens ?? 2000, 20000));
   const query = input.query.trim();
   if (!query) throw new DocifyError("invalid_input", "query is empty");
@@ -404,7 +458,7 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
     const lex = mode === "lexical" || mode === "combined" ? lexicalRank(docify, query, gens) : [];
     const vec = qv ? vectorRank(docify, qv, vectorGens) : [];
     const seedPassages = mode === "combined" ? [...lex.slice(0, 3), ...vec.slice(0, 3)].map((r) => r.rowid) : [];
-    const gr = mode === "graph" || mode === "combined" ? graphRank(docify, query, graphGens, seedPassages) : [];
+    const gr = mode === "graph" || (mode === "combined" && graphWeight > 0) ? graphRank(docify, query, graphGens, seedPassages) : [];
     timings.rankMs = Math.round(performance.now() - tr);
     const lists: [string, { rowid: number; score: number }[]][] = [
       ["lexical", lex],
@@ -413,14 +467,21 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
     ];
     const fused = new Map<number, { score: number; via: string[] }>();
     for (const [name, list] of lists) {
-      // Graph hits only add evidence in combined mode; half weight keeps neighbours below direct matches.
-      const weight = mode === "combined" && name === "graph" ? 0.5 : 1;
+      const weight = mode === "combined" && name === "graph" ? graphWeight : 1;
+      if (!weight) continue;
       list.forEach((r, i) => {
         const e = fused.get(r.rowid) ?? { score: 0, via: [] };
         e.score += weight / (RRF_K + i + 1);
         e.via.push(`${name}#${i + 1}`);
         fused.set(r.rowid, e);
       });
+    }
+    // An exact API symbol named in the query outranks fused similarity.
+    for (const rowid of exactSymbolHits(docify, query, gens)) {
+      const e = fused.get(rowid) ?? { score: 0, via: [] };
+      e.score += 2 / (RRF_K + 1);
+      e.via.push("symbol");
+      fused.set(rowid, e);
     }
     const order = [...fused].sort((a, b) => b[1].score - a[1].score);
     const passages = loadPassages(docify, order.slice(0, CANDIDATES).map(([rowid]) => rowid));
@@ -432,13 +493,20 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
   const coverage = (text: string) => {
     const t = text.toLowerCase();
     const sq = squash(t);
-    const terms = [...words.map((w) => t.includes(w)), ...symbols.map((s) => sq.includes(s))];
+    const terms = [...words.map((w) => t.includes(w)), ...symbols.filter((s) => !s.startsWith("m_")).map((s) => sq.includes(s))];
     return terms.length ? terms.filter(Boolean).length / terms.length : 0;
   };
   const bestVec = ranked.vec[0]?.score ?? 0;
   const bestCoverage = Math.max(0, ...[...ranked.passages.values()].slice(0, 10).map((p) => coverage(p.heading_path + " " + p.text)));
   const graphSeeded = mode === "graph" && ranked.gr.length > 0;
-  const evidence = bestVec >= MIN_VECTOR_SIM || bestCoverage >= MIN_TERM_COVERAGE || graphSeeded;
+  const missingSymbol = symbolsAbsent(docify, query, gens);
+  let tier: "strong" | "weak" | "none" = "none";
+  if (missingSymbol) tier = "none";
+  else if (bestVec >= STRONG_VECTOR_SIM || bestCoverage >= STRONG_TERM_COVERAGE || graphSeeded) tier = "strong";
+  else if (bestVec >= WEAK_VECTOR_SIM || (mode === "lexical" && ranked.lex.length > 0)) tier = "weak";
+  if (missingSymbol) base.warnings.push(`${missingSymbol} does not appear in the selected documentation`);
+  if (tier === "weak") base.warnings.push("no passage matches strongly; these excerpts may not answer the question");
+  const evidence = tier !== "none";
 
   const hits: SearchHit[] = [];
   let omitted = 0;
@@ -489,7 +557,7 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
   } else omitted = 0;
 
   timings.totalMs = Math.round(performance.now() - t0);
-  const status: SearchStatus = hits.length ? "ok" : "no_match";
+  const status: SearchStatus = !hits.length ? "no_match" : tier === "weak" ? "weak_match" : "ok";
   const draft = { ...base, status, hits, omitted, timings };
   // The token count is part of the text, so render twice; the second count is exact.
   let text = renderText(draft, countTokens(renderText(draft, 0)));

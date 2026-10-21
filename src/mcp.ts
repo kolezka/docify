@@ -32,6 +32,7 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
         sources: z.array(z.string()).optional().describe("Restrict to source ids from docs_sources"),
         mode: z.enum(["combined", "lexical", "vector", "graph"]).optional().describe("Retrieval mode, default combined"),
         max_tokens: z.number().int().min(200).max(20000).optional().describe("Output budget, default 2000"),
+        graph_weight: z.number().min(0).max(1).optional().describe("Weight of graph-related passages in combined mode, default 0"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -44,6 +45,7 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
           sources: args.sources,
           mode: args.mode,
           maxTokens: args.max_tokens,
+          graphWeight: args.graph_weight,
           project,
         });
         return { content: [{ type: "text", text: r.text }] };

@@ -85,6 +85,9 @@ export class DocifyError extends Error {
 
 const ID_RE = /^[a-z0-9][a-z0-9._@-]{0,80}$/;
 
+// Bump when normalization, chunking or indexing changes, so identical raw snapshots are rebuilt.
+export const PIPELINE_VERSION = 5;
+
 export function pidAlive(pid: number | null): boolean {
   if (!pid) return false;
   try {
@@ -254,6 +257,7 @@ export class Docify {
       if (
         !opts.force &&
         active?.snapshot_hash === snapshotHash &&
+        (JSON.parse(active.stats) as { pipeline?: number }).pipeline === PIPELINE_VERSION &&
         (active.graph_status === "ok" || !graphWanted) &&
         active.embedding_model === this.config.embeddingModel
       ) {
@@ -328,7 +332,7 @@ export class Docify {
       if (graphWanted) {
         await checkpoint("graph", "semantic extraction");
         const runner = opts.graphRunner ?? runGraphify;
-        const result = await runner(this.config, sourceId, normalizedDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal);
+        const result = await runner(this.config, sourceId, normalizedDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force);
         writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
         graphStats = this.importGraph(genId, result, normalizedDocs);
         graphStatus = "ok";
@@ -346,7 +350,7 @@ export class Docify {
       if (graphStatus === "ok" && !(graphStats.groundedNodes as number)) {
         throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
       }
-      const stats = { documents: raw.length, passages: passageCount, embedMs, ...graphStats };
+      const stats = { pipeline: PIPELINE_VERSION, documents: raw.length, passages: passageCount, embedMs, ...graphStats };
 
       await checkpoint("activate");
       this.db

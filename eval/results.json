@@ -1,0 +1,1885 @@
+{
+  "combined": {
+    "summary": {
+      "pass": 27,
+      "weak": 5,
+      "of": 28,
+      "mustPass": 16,
+      "mustOf": 16,
+      "passageRecall": 0.963,
+      "mrr": 0.868,
+      "avgTokens": 1359,
+      "maxTokens": 1495,
+      "versionLeaks": 0,
+      "badCitations": 0,
+      "truncatedHits": 11,
+      "p50Ms": 6.3,
+      "p95Ms": 12.8,
+      "failed": [
+        "q25:ok:0/1"
+      ]
+    },
+    "rows": [
+      {
+        "id": "q01",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1427,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.8
+      },
+      {
+        "id": "q02",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          2
+        ],
+        "tokens": 1481,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.2
+      },
+      {
+        "id": "q03",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1481,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7
+      },
+      {
+        "id": "q04",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          2
+        ],
+        "tokens": 1427,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.2
+      },
+      {
+        "id": "q05",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1445,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7
+      },
+      {
+        "id": "q06",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          4
+        ],
+        "tokens": 1487,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.1
+      },
+      {
+        "id": "q07",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          1
+        ],
+        "tokens": 1427,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.9
+      },
+      {
+        "id": "q08",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          3
+        ],
+        "tokens": 1480,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6
+      },
+      {
+        "id": "q09",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1480,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.5
+      },
+      {
+        "id": "q10",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1467,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.2
+      },
+      {
+        "id": "q11",
+        "kind": "relationship",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1458,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.3
+      },
+      {
+        "id": "q12",
+        "kind": "relationship",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          2,
+          1
+        ],
+        "tokens": 1443,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.5
+      },
+      {
+        "id": "q13",
+        "kind": "code+warning",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1465,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.4
+      },
+      {
+        "id": "q14",
+        "kind": "code+warning",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1488,
+        "hits": 7,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.8
+      },
+      {
+        "id": "q15",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1471,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.7
+      },
+      {
+        "id": "q16",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1432,
+        "hits": 7,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 14.8
+      },
+      {
+        "id": "q17",
+        "kind": "relationship",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1,
+          3
+        ],
+        "tokens": 1489,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 12.8
+      },
+      {
+        "id": "q18",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          4
+        ],
+        "tokens": 1446,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7.1
+      },
+      {
+        "id": "q19",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [],
+        "tokens": 1490,
+        "hits": 5,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.3
+      },
+      {
+        "id": "q20",
+        "kind": "version",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1424,
+        "hits": 7,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.1
+      },
+      {
+        "id": "q21",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1459,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.3
+      },
+      {
+        "id": "q22",
+        "kind": "code+warning",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1491,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7
+      },
+      {
+        "id": "q23",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1490,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.9
+      },
+      {
+        "id": "q24",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1352,
+        "hits": 4,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6
+      },
+      {
+        "id": "q25",
+        "kind": "relationship",
+        "must": false,
+        "pass": false,
+        "status": "ok",
+        "found": [
+          0,
+          1
+        ],
+        "tokens": 1469,
+        "hits": 3,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.9
+      },
+      {
+        "id": "q26",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [],
+        "tokens": 1495,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.1
+      },
+      {
+        "id": "q27",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "no_match",
+        "found": [],
+        "tokens": 38,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4.6
+      },
+      {
+        "id": "q28",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "version_unavailable",
+        "found": [],
+        "tokens": 57,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.2
+      }
+    ]
+  },
+  "lexical": {
+    "summary": {
+      "pass": 23,
+      "weak": 9,
+      "of": 28,
+      "mustPass": 13,
+      "mustOf": 16,
+      "passageRecall": 0.815,
+      "mrr": 0.802,
+      "avgTokens": 1232,
+      "maxTokens": 1491,
+      "versionLeaks": 0,
+      "badCitations": 0,
+      "truncatedHits": 10,
+      "p50Ms": 2.9,
+      "p95Ms": 5,
+      "failed": [
+        "q04*:weak_match:0",
+        "q06*:weak_match:0",
+        "q08*:weak_match:0",
+        "q17:weak_match:2/0",
+        "q25:ok:0/1"
+      ]
+    },
+    "rows": [
+      {
+        "id": "q01",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1364,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4.2
+      },
+      {
+        "id": "q02",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          2
+        ],
+        "tokens": 584,
+        "hits": 2,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 1
+      },
+      {
+        "id": "q03",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          1
+        ],
+        "tokens": 1356,
+        "hits": 5,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4
+      },
+      {
+        "id": "q04",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": false,
+        "status": "weak_match",
+        "found": [
+          0
+        ],
+        "tokens": 1412,
+        "hits": 4,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.4
+      },
+      {
+        "id": "q05",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1471,
+        "hits": 4,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 3.3
+      },
+      {
+        "id": "q06",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": false,
+        "status": "weak_match",
+        "found": [
+          0
+        ],
+        "tokens": 1477,
+        "hits": 5,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.9
+      },
+      {
+        "id": "q07",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          1
+        ],
+        "tokens": 1488,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.5
+      },
+      {
+        "id": "q08",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": false,
+        "status": "weak_match",
+        "found": [
+          0
+        ],
+        "tokens": 1412,
+        "hits": 3,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.4
+      },
+      {
+        "id": "q09",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          1
+        ],
+        "tokens": 1447,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.5
+      },
+      {
+        "id": "q10",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1467,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 3.1
+      },
+      {
+        "id": "q11",
+        "kind": "relationship",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1358,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.9
+      },
+      {
+        "id": "q12",
+        "kind": "relationship",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          2,
+          1
+        ],
+        "tokens": 1445,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.8
+      },
+      {
+        "id": "q13",
+        "kind": "code+warning",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1324,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.2
+      },
+      {
+        "id": "q14",
+        "kind": "code+warning",
+        "must": false,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          1
+        ],
+        "tokens": 1433,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4.8
+      },
+      {
+        "id": "q15",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1420,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.8
+      },
+      {
+        "id": "q16",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1365,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 3.7
+      },
+      {
+        "id": "q17",
+        "kind": "relationship",
+        "must": false,
+        "pass": false,
+        "status": "weak_match",
+        "found": [
+          2,
+          0
+        ],
+        "tokens": 1459,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.9
+      },
+      {
+        "id": "q18",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          4
+        ],
+        "tokens": 1446,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.5
+      },
+      {
+        "id": "q19",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [],
+        "tokens": 1462,
+        "hits": 5,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5
+      },
+      {
+        "id": "q20",
+        "kind": "version",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 200,
+        "hits": 1,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.4
+      },
+      {
+        "id": "q21",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1468,
+        "hits": 2,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 3.6
+      },
+      {
+        "id": "q22",
+        "kind": "code+warning",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1467,
+        "hits": 3,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4.2
+      },
+      {
+        "id": "q23",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1412,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4.2
+      },
+      {
+        "id": "q24",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1488,
+        "hits": 3,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 3
+      },
+      {
+        "id": "q25",
+        "kind": "relationship",
+        "must": false,
+        "pass": false,
+        "status": "ok",
+        "found": [
+          0,
+          1
+        ],
+        "tokens": 1491,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.9
+      },
+      {
+        "id": "q26",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [],
+        "tokens": 676,
+        "hits": 1,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 1.5
+      },
+      {
+        "id": "q27",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "no_match",
+        "found": [],
+        "tokens": 38,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.5
+      },
+      {
+        "id": "q28",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "version_unavailable",
+        "found": [],
+        "tokens": 57,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      }
+    ]
+  },
+  "vector": {
+    "summary": {
+      "pass": 28,
+      "weak": 5,
+      "of": 28,
+      "mustPass": 16,
+      "mustOf": 16,
+      "passageRecall": 1,
+      "mrr": 0.859,
+      "avgTokens": 1354,
+      "maxTokens": 1492,
+      "versionLeaks": 0,
+      "badCitations": 0,
+      "truncatedHits": 10,
+      "p50Ms": 7.3,
+      "p95Ms": 10.3,
+      "failed": []
+    },
+    "rows": [
+      {
+        "id": "q01",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1482,
+        "hits": 7,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 9.5
+      },
+      {
+        "id": "q02",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          2
+        ],
+        "tokens": 1481,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7.9
+      },
+      {
+        "id": "q03",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1481,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7.6
+      },
+      {
+        "id": "q04",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          1
+        ],
+        "tokens": 1461,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7.5
+      },
+      {
+        "id": "q05",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          3
+        ],
+        "tokens": 1430,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 10.3
+      },
+      {
+        "id": "q06",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          5
+        ],
+        "tokens": 1423,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 9
+      },
+      {
+        "id": "q07",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "weak_match",
+        "found": [
+          1
+        ],
+        "tokens": 1461,
+        "hits": 7,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.6
+      },
+      {
+        "id": "q08",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          3
+        ],
+        "tokens": 1481,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.4
+      },
+      {
+        "id": "q09",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1448,
+        "hits": 7,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7.3
+      },
+      {
+        "id": "q10",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1467,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.7
+      },
+      {
+        "id": "q11",
+        "kind": "relationship",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1408,
+        "hits": 5,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.7
+      },
+      {
+        "id": "q12",
+        "kind": "relationship",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          2,
+          1
+        ],
+        "tokens": 1443,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.7
+      },
+      {
+        "id": "q13",
+        "kind": "code+warning",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1465,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.3
+      },
+      {
+        "id": "q14",
+        "kind": "code+warning",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1439,
+        "hits": 5,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8
+      },
+      {
+        "id": "q15",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1483,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 8.7
+      },
+      {
+        "id": "q16",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1451,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.3
+      },
+      {
+        "id": "q17",
+        "kind": "relationship",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1,
+          2
+        ],
+        "tokens": 1427,
+        "hits": 3,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.5
+      },
+      {
+        "id": "q18",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          4
+        ],
+        "tokens": 1446,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.9
+      },
+      {
+        "id": "q19",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [],
+        "tokens": 1433,
+        "hits": 8,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4.7
+      },
+      {
+        "id": "q20",
+        "kind": "version",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1424,
+        "hits": 7,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5
+      },
+      {
+        "id": "q21",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1492,
+        "hits": 2,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 17.6
+      },
+      {
+        "id": "q22",
+        "kind": "code+warning",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1467,
+        "hits": 3,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 9.4
+      },
+      {
+        "id": "q23",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1454,
+        "hits": 4,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6
+      },
+      {
+        "id": "q24",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1417,
+        "hits": 4,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 7.5
+      },
+      {
+        "id": "q25",
+        "kind": "relationship",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1,
+          3
+        ],
+        "tokens": 1479,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 6.2
+      },
+      {
+        "id": "q26",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "weak_match",
+        "found": [],
+        "tokens": 1467,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 5.7
+      },
+      {
+        "id": "q27",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "no_match",
+        "found": [],
+        "tokens": 38,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.8
+      },
+      {
+        "id": "q28",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "version_unavailable",
+        "found": [],
+        "tokens": 57,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      }
+    ]
+  },
+  "graph": {
+    "summary": {
+      "pass": 10,
+      "weak": 0,
+      "of": 28,
+      "mustPass": 8,
+      "mustOf": 16,
+      "passageRecall": 0.333,
+      "mrr": 0.274,
+      "avgTokens": 541,
+      "maxTokens": 1473,
+      "versionLeaks": 0,
+      "badCitations": 0,
+      "truncatedHits": 2,
+      "p50Ms": 0.1,
+      "p95Ms": 3.8,
+      "failed": [
+        "q02*:no_match:0",
+        "q03*:no_match:0",
+        "q04*:no_match:0",
+        "q05:no_match:0",
+        "q06*:no_match:0",
+        "q07:no_match:0",
+        "q08*:no_match:0",
+        "q09:no_match:0",
+        "q11*:ok:0",
+        "q13*:no_match:0",
+        "q14:ok:0",
+        "q16:no_match:0",
+        "q17:ok:1/0",
+        "q20:no_match:0",
+        "q22*:no_match:0",
+        "q23:no_match:0",
+        "q24:no_match:0",
+        "q25:ok:1/0"
+      ]
+    },
+    "rows": [
+      {
+        "id": "q01",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1473,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 3.2
+      },
+      {
+        "id": "q02",
+        "kind": "exact",
+        "must": true,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q03",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q04",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q05",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q06",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q07",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q08",
+        "kind": "paraphrase",
+        "must": true,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q09",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q10",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          3
+        ],
+        "tokens": 1467,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.5
+      },
+      {
+        "id": "q11",
+        "kind": "relationship",
+        "must": true,
+        "pass": false,
+        "status": "ok",
+        "found": [
+          0
+        ],
+        "tokens": 1473,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.2
+      },
+      {
+        "id": "q12",
+        "kind": "relationship",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1,
+          3
+        ],
+        "tokens": 1445,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.2
+      },
+      {
+        "id": "q13",
+        "kind": "code+warning",
+        "must": true,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q14",
+        "kind": "code+warning",
+        "must": false,
+        "pass": false,
+        "status": "ok",
+        "found": [
+          0
+        ],
+        "tokens": 1473,
+        "hits": 6,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.4
+      },
+      {
+        "id": "q15",
+        "kind": "exact",
+        "must": false,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1457,
+        "hits": 6,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.8
+      },
+      {
+        "id": "q16",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q17",
+        "kind": "relationship",
+        "must": false,
+        "pass": false,
+        "status": "ok",
+        "found": [
+          1,
+          0
+        ],
+        "tokens": 1445,
+        "hits": 5,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.3
+      },
+      {
+        "id": "q18",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          4
+        ],
+        "tokens": 1446,
+        "hits": 4,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 2.1
+      },
+      {
+        "id": "q19",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "no_match",
+        "found": [],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.2
+      },
+      {
+        "id": "q20",
+        "kind": "version",
+        "must": false,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q21",
+        "kind": "exact",
+        "must": true,
+        "pass": true,
+        "status": "ok",
+        "found": [
+          1
+        ],
+        "tokens": 1468,
+        "hits": 2,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 4
+      },
+      {
+        "id": "q22",
+        "kind": "code+warning",
+        "must": true,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.3
+      },
+      {
+        "id": "q23",
+        "kind": "paraphrase",
+        "must": false,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q24",
+        "kind": "exact",
+        "must": false,
+        "pass": false,
+        "status": "no_match",
+        "found": [
+          0
+        ],
+        "tokens": 26,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q25",
+        "kind": "relationship",
+        "must": false,
+        "pass": false,
+        "status": "ok",
+        "found": [
+          1,
+          0
+        ],
+        "tokens": 1460,
+        "hits": 3,
+        "truncated": 1,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 3.8
+      },
+      {
+        "id": "q26",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "no_match",
+        "found": [],
+        "tokens": 55,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.2
+      },
+      {
+        "id": "q27",
+        "kind": "absent",
+        "must": true,
+        "pass": true,
+        "status": "no_match",
+        "found": [],
+        "tokens": 38,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      },
+      {
+        "id": "q28",
+        "kind": "version",
+        "must": true,
+        "pass": true,
+        "status": "version_unavailable",
+        "found": [],
+        "tokens": 57,
+        "hits": 0,
+        "truncated": 0,
+        "leaks": 0,
+        "badCitations": 0,
+        "ms": 0.1
+      }
+    ]
+  }
+}

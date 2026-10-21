@@ -16,6 +16,13 @@ export function extractSymbols(text: string): string[] {
     const parts = s.split(".").filter(Boolean);
     // Suffixes let "password.hash" or ".hash" style queries match "Bun.password.hash".
     for (let i = 1; i < parts.length - 1; i++) out.add(squash(parts.slice(i).join(".")));
+    // Method name alone, so "Database.serialize" finds "db.serialize()".
+    const last = parts[parts.length - 1]!;
+    if (last.length >= 4) out.add(methodToken(last));
   }
   return [...out];
+}
+
+export function methodToken(name: string): string {
+  return "m_" + name.replace(/[$]/g, "").toLowerCase();
 }

@@ -38,10 +38,11 @@ export interface GraphRunResult {
 
 export class GraphProviderError extends Error {}
 
-// Graphify skips files whose names look sensitive (seen with "secrets.md"),
-// so staged documents get neutral names derived from their path.
+// Graphify skips files whose names look sensitive (seen with "secrets.md"), so staged
+// documents get neutral names. Letters and digits only: the model rewrote "d-<hash>.md"
+// as "d_<hash>.md" in source_file and Graphify then dropped those nodes as out of scope.
 export function stagedName(path: string): string {
-  return `d-${sha256(path).slice(0, 12)}.md`;
+  return `doc${sha256(path).slice(0, 12)}.md`;
 }
 
 export function providerEnv(provider: GraphProviderConfig): Record<string, string> {
@@ -67,6 +68,7 @@ export async function runGraphify(
   sourceId: string,
   docs: { path: string; markdown: string }[],
   signal?: AbortSignal,
+  force = false,
 ): Promise<GraphRunResult> {
   const provider = config.graph;
   if (!provider) throw new GraphProviderError("no graph provider configured");
@@ -100,6 +102,8 @@ export async function runGraphify(
     "--no-cluster",
     "--out",
     work,
+    // --force skips Graphify's semantic cache, which keeps a bad partial extraction otherwise.
+    ...(force ? ["--force"] : []),
   ];
   const started = performance.now();
   const proc = Bun.spawn(argv, { env: providerEnv(provider), stdout: "pipe", stderr: "pipe", cwd: work });
@@ -112,7 +116,8 @@ export async function runGraphify(
   const log = (stdout + stderr).trim();
   if (code !== 0) {
     const tail = log.split("\n").slice(-6).join("\n");
-    throw new GraphProviderError(`graphify extract exited ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}: ${tail}`);
+    const hint = /semantic shrink|Refusing to overwrite/.test(log) ? " The provider returned a partial graph and Graphify cached it; rerun prepare with --force to re-extract." : "";
+    throw new GraphProviderError(`graphify extract exited ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}: ${tail}${hint}`);
   }
   if (/semantic chunk\(s\) failed|produced no nodes/.test(log)) {
     throw new GraphProviderError(`graphify extract returned partial results: ${log.split("\n").filter((l) => /WARNING|failed/.test(l)).join(" | ")}`);

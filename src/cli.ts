@@ -16,7 +16,7 @@ Preparation (may use the network or the configured graph provider):
 
 Queries (local and offline only):
   sources                       list sources, versions and preparation state
-  search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--json]
+  search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
   read <passage-id> [--max-tokens N] [--json]
   pin <library> [version]       pin (or unpin) a version in ./.docify.json
 
@@ -41,6 +41,7 @@ async function main(argv: string[]) {
       "no-graph": { type: "boolean" },
       force: { type: "boolean" },
       port: { type: "string" },
+      "graph-weight": { type: "string" },
     },
   });
   if (!command || command === "help" || command === "--help") {
@@ -105,6 +106,7 @@ async function main(argv: string[]) {
           mode: (values.mode as Mode | undefined) ?? "combined",
           maxTokens: values["max-tokens"] ? Number(values["max-tokens"]) : undefined,
           project: process.env.DOCIFY_PROJECT ?? process.cwd(),
+          graphWeight: values["graph-weight"] ? Number(values["graph-weight"]) : undefined,
         });
         console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
         if (r.status !== "ok") process.exitCode = 3;
