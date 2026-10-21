@@ -1,6 +1,6 @@
 # Docify implementation plan
 
-Status (2026-10-21, branch `feat/docify-mvp`): phases 0 to 6 implemented and verified on the fixture corpus; independent review pending at the time of writing. Evidence: `docs/feasibility.md`, `docs/evaluation.md`, `docs/verification.md`.
+Status (2026-10-21, branch `feat/docify-mvp`): phases 0 to 6 implemented and verified on the fixture corpus; independent review done and its 12 findings fixed (`docs/verification.md`). Evidence: `docs/feasibility.md`, `docs/evaluation.md`, `docs/verification.md`.
 
 | Phase | State | Notes |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Status (2026-10-21, branch `feat/docify-mvp`): phases 0 to 6 implemented and ver
 | 3 Interfaces and jobs | done | CLI and MCP share the core; lock, progress, cancel, recovery |
 | 4 UI | done | Loopback one-screen UI, browser smoke passed |
 | 5 Clients | done | Claude Code and Codex installed and exercised separately |
-| 6 Evaluate and close | done, review pending | 28 questions, targets met in combined mode; known limits in `docs/evaluation.md` |
+| 6 Evaluate and close | done | 28 questions, targets met in combined mode; known limits in `docs/evaluation.md` |
 
 Implement the MVP in small, reviewable commits, with a working vertical slice early. Use `docs/design.md` for scope and contracts. Do not remove Graphify, embeddings, or either client integration to declare completion. Proposed defaults become working assumptions when the implementation prompt is used; record any subsequent user decisions.
 

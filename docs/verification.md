@@ -20,6 +20,8 @@ Against a scratch store on `127.0.0.1:4848`: added `bun@1.2.0` through the form,
 
 ## Claude Code (verified)
 
+Host runs below used the code before the review fixes (`e006f11` to `a45f48a`). The fixes changed the excerpt frame text; `scripts/mcp-smoke.ts` passed against the final code, but the hosts were not re-run.
+
 Installed with `claude plugin marketplace add integrations/claude-code` and `claude plugin install docify@docify-local` (user scope). `claude mcp list` showed `plugin:docify:docify: docify mcp - ✔ Connected`. Headless runs (`claude -p`, model `claude-opus-5-5[1m]`) in a scratch git project:
 
 1. A natural question about removing WAL sidecar files: the agent loaded the tools, called `docs_search` (library bun, version 1.4.3), expanded the hit with `docs_read`, and answered citing passage ids.

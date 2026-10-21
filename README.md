@@ -31,7 +31,7 @@ Graph extraction calls an LLM. The default provider is the LiteLLM proxy named b
 docify search "keep WAL sidecar files after close" --library bun --max-tokens 1500
 docify read p_0123456789abcdef0123
 docify sources
-docify serve             # one-screen UI on http://127.0.0.1:4747
+docify serve             # one-screen UI; open the printed http://127.0.0.1:4747/#token=... URL
 docify mcp               # MCP server on stdio: docs_search, docs_read, docs_sources
 ```
 
