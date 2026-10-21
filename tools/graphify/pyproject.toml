@@ -1,0 +1,9 @@
+[project]
+name = "docify-graphify-runtime"
+version = "0.0.0"
+description = "Pinned Graphify runtime used by Docify for semantic document extraction"
+requires-python = ">=3.12"
+dependencies = ["graphifyy[openai]==0.9.70"]
+
+[tool.uv]
+package = false
