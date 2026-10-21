@@ -1,0 +1,497 @@
+import type { Database } from "bun:sqlite";
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { openDb, nowIso, SCHEMA_VERSION } from "./db.ts";
+import { loadConfig, type DocifyConfig } from "./config.ts";
+import { collectLocal, crawl, DEFAULT_LIMITS, type CrawlLimits, type Fetcher, type RawDoc } from "./collect.ts";
+import { normalize } from "./normalize.ts";
+import { chunk } from "./chunk.ts";
+import { countTokens } from "./tokens.ts";
+import { sha256 } from "./hash.ts";
+import { embedTexts } from "./embed.ts";
+import { groundingTerms, runGraphify, type GraphRunResult } from "./graph.ts";
+import { extractSymbols } from "./symbols.ts";
+
+export type SourceKind = "local" | "url";
+
+export interface SourceRow {
+  id: string;
+  library: string;
+  version: string | null;
+  kind: SourceKind;
+  locator: string;
+  options: string;
+  created_at: string;
+  active_generation: number | null;
+  lock_pid: number | null;
+  lock_at: string | null;
+}
+
+export interface GenerationRow {
+  id: number;
+  source_id: string;
+  status: "staging" | "active" | "superseded" | "failed";
+  phase: string | null;
+  progress: string | null;
+  error: string | null;
+  pid: number | null;
+  started_at: string;
+  finished_at: string | null;
+  downloaded_at: string | null;
+  snapshot_hash: string | null;
+  snapshot_dir: string | null;
+  embedding_model: string | null;
+  embedding_dims: number | null;
+  graph_status: string | null;
+  stats: string;
+  schema_version: number;
+}
+
+export interface AddSourceInput {
+  library: string;
+  version?: string | null;
+  kind: SourceKind;
+  locator: string;
+  id?: string;
+  crawl?: Partial<CrawlLimits>;
+}
+
+export interface PrepareOptions {
+  graph?: boolean; // default true; false records graph_status = skipped
+  force?: boolean;
+  signal?: AbortSignal;
+  fetcher?: Fetcher;
+  // Test hook: called at each phase boundary, may throw to simulate failure.
+  onPhase?: (phase: string, generationId: number) => void | Promise<void>;
+  graphRunner?: typeof runGraphify;
+}
+
+export interface PrepareResult {
+  sourceId: string;
+  generationId: number;
+  status: "activated" | "unchanged";
+  stats: Record<string, unknown>;
+}
+
+export class DocifyError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const ID_RE = /^[a-z0-9][a-z0-9._@-]{0,80}$/;
+
+export function pidAlive(pid: number | null): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+export class Docify {
+  readonly db: Database;
+  readonly config: DocifyConfig;
+
+  constructor(config: Partial<DocifyConfig> & { home?: string } = {}) {
+    const base = loadConfig(config.home);
+    this.config = { ...base, ...config };
+    this.db = openDb(this.config.home);
+  }
+
+  close() {
+    this.db.close();
+  }
+
+  // ---- sources -------------------------------------------------------------
+
+  addSource(input: AddSourceInput): SourceRow {
+    const library = input.library.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{0,60}$/.test(library)) throw new DocifyError("invalid_input", `invalid library name: ${input.library}`);
+    const version = input.version?.trim() || null;
+    if (version && !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/.test(version)) throw new DocifyError("invalid_input", `invalid version: ${version}`);
+    const id = input.id ?? `${library}@${version ?? "unknown"}`;
+    if (!ID_RE.test(id)) throw new DocifyError("invalid_input", `invalid source id: ${id}`);
+    let locator = input.locator.trim();
+    if (input.kind === "local") {
+      locator = resolve(locator.replace(/^~(?=$|\/)/, homedir()));
+      if (!existsSync(locator)) throw new DocifyError("invalid_input", `path does not exist: ${locator}`);
+      if (locator === this.config.home || locator.startsWith(this.config.home + sep)) {
+        throw new DocifyError("invalid_input", "cannot register Docify's own store as a source");
+      }
+      statSync(locator);
+    } else {
+      let u: URL;
+      try {
+        u = new URL(locator);
+      } catch {
+        throw new DocifyError("invalid_input", `invalid URL: ${locator}`);
+      }
+      if (!/^https?:$/.test(u.protocol)) throw new DocifyError("invalid_input", "only http(s) URLs are supported");
+      locator = u.toString();
+    }
+    const existing = this.getSource(id);
+    if (existing) throw new DocifyError("exists", `source ${id} already exists`);
+    this.db.run(
+      "INSERT INTO sources (id, library, version, kind, locator, options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, library, version, input.kind, locator, JSON.stringify({ crawl: input.crawl ?? {} }), nowIso()],
+    );
+    return this.getSource(id)!;
+  }
+
+  removeSource(id: string) {
+    const src = this.requireSource(id);
+    if (src.lock_pid && pidAlive(src.lock_pid)) throw new DocifyError("busy", `source ${id} is being prepared by pid ${src.lock_pid}`);
+    const gens = this.db.query<{ id: number }, [string]>("SELECT id FROM generations WHERE source_id = ?").all(id);
+    this.db.transaction(() => {
+      for (const g of gens) this.deleteGenerationRows(g.id);
+      this.db.run("DELETE FROM generations WHERE source_id = ?", [id]);
+      this.db.run("DELETE FROM sources WHERE id = ?", [id]);
+    })();
+    rmSync(join(this.config.home, "snapshots", id), { recursive: true, force: true });
+    rmSync(join(this.config.home, "graphify", id), { recursive: true, force: true });
+  }
+
+  getSource(id: string): SourceRow | null {
+    return this.db.query<SourceRow, [string]>("SELECT * FROM sources WHERE id = ?").get(id);
+  }
+
+  requireSource(id: string): SourceRow {
+    const s = this.getSource(id);
+    if (!s) throw new DocifyError("source_unknown", `no source with id ${id}`);
+    return s;
+  }
+
+  listSourceRows(): SourceRow[] {
+    return this.db.query<SourceRow, []>("SELECT * FROM sources ORDER BY library, version").all();
+  }
+
+  generations(sourceId: string): GenerationRow[] {
+    return this.db.query<GenerationRow, [string]>("SELECT * FROM generations WHERE source_id = ? ORDER BY id DESC").all(sourceId);
+  }
+
+  // Marks staging generations and locks left by dead processes as interrupted.
+  recoverInterrupted(): number {
+    let n = 0;
+    const stale = this.db
+      .query<{ id: number; pid: number | null }, []>("SELECT id, pid FROM generations WHERE status = 'staging'")
+      .all()
+      .filter((g) => !pidAlive(g.pid));
+    for (const g of stale) {
+      this.db.transaction(() => {
+        this.deleteGenerationRows(g.id);
+        this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [
+          "interrupted: the preparing process exited before activation",
+          nowIso(),
+          g.id,
+        ]);
+      })();
+      n++;
+    }
+    for (const s of this.listSourceRows()) {
+      if (s.lock_pid && !pidAlive(s.lock_pid)) this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ?", [s.id]);
+    }
+    return n;
+  }
+
+  // ---- preparation ---------------------------------------------------------
+
+  private acquireLock(sourceId: string) {
+    const ok = this.db
+      .transaction(() => {
+        const s = this.requireSource(sourceId);
+        if (s.lock_pid && pidAlive(s.lock_pid)) return false;
+        this.db.run("UPDATE sources SET lock_pid = ?, lock_at = ? WHERE id = ?", [process.pid, nowIso(), sourceId]);
+        return true;
+      })
+      .immediate();
+    if (!ok) throw new DocifyError("busy", `source ${sourceId} is already being prepared`);
+  }
+
+  private releaseLock(sourceId: string) {
+    this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ? AND lock_pid = ?", [sourceId, process.pid]);
+  }
+
+  private setPhase(genId: number, phase: string, progress = "") {
+    this.db.run("UPDATE generations SET phase = ?, progress = ? WHERE id = ?", [phase, progress, genId]);
+  }
+
+  async prepare(sourceId: string, opts: PrepareOptions = {}): Promise<PrepareResult> {
+    this.recoverInterrupted();
+    const source = this.requireSource(sourceId);
+    this.acquireLock(sourceId);
+    // Generations already in flight in another Docify instance of this process are covered by the lock.
+    // AUTOINCREMENT keeps ids increasing even after rows are deleted, so ids never repeat.
+    const genId = Number(
+      this.db.run(
+        "INSERT INTO generations (source_id, status, phase, pid, started_at, schema_version) VALUES (?, 'staging', 'collect', ?, ?, ?)",
+        [sourceId, process.pid, nowIso(), SCHEMA_VERSION],
+      ).lastInsertRowid,
+    );
+    const snapshotDir = join(this.config.home, "snapshots", sourceId, String(genId));
+    const checkpoint = async (phase: string, progress = "") => {
+      if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
+      this.setPhase(genId, phase, progress);
+      await opts.onPhase?.(phase, genId);
+    };
+    try {
+      await checkpoint("collect");
+      const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits> };
+      const limits = { ...DEFAULT_LIMITS, ...sourceOpts.crawl };
+      const downloadedAt = nowIso();
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await crawl(source.locator, limits, opts.fetcher);
+      raw.sort((a, b) => a.path.localeCompare(b.path));
+      const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
+      const snapshotHash = sha256(docHashes.map((x) => `${x.d.path}\0${x.rawSha}`).join("\n"));
+      const active = source.active_generation ? this.getGeneration(source.active_generation) : null;
+      const graphWanted = opts.graph !== false && this.config.graph !== null;
+      if (
+        !opts.force &&
+        active?.snapshot_hash === snapshotHash &&
+        (active.graph_status === "ok" || !graphWanted) &&
+        active.embedding_model === this.config.embeddingModel
+      ) {
+        this.db.transaction(() => {
+          this.db.run("DELETE FROM generations WHERE id = ?", [genId]);
+        })();
+        this.releaseLock(sourceId);
+        return { sourceId, generationId: active.id, status: "unchanged", stats: JSON.parse(active.stats) };
+      }
+
+      await checkpoint("normalize", `${raw.length} documents`);
+      mkdirSync(snapshotDir, { recursive: true });
+      const normalizedDocs: { path: string; markdown: string; docId: number; passages: { rowid: number; text: string; headingPath: string[] }[] }[] = [];
+      let passageCount = 0;
+      const insertDoc = this.db.prepare(
+        "INSERT INTO documents (generation_id, path, url, title, kind, raw_file, raw_sha256, normalized_file, normalized_sha256, lines_match_raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      );
+      const insertPassage = this.db.prepare(
+        "INSERT INTO passages (id, generation_id, document_id, ord, heading_path, anchor, start_line, end_line, text, content_sha256, tokens, has_code, has_warning) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      );
+      const insertFts = this.db.prepare("INSERT INTO passages_fts (rowid, heading, body, symbols) VALUES (?, ?, ?, ?)");
+      for (const { d, rawSha } of docHashes) {
+        const text = new TextDecoder().decode(d.bytes);
+        const norm = normalize(text, d.kind);
+        const rawFile = join(snapshotDir, "raw", safeRel(d.path));
+        const normFile = join(snapshotDir, "normalized", safeRel(d.path) + ".md");
+        mkdirSync(dirname(rawFile), { recursive: true });
+        mkdirSync(dirname(normFile), { recursive: true });
+        writeFileSync(rawFile, d.bytes);
+        writeFileSync(normFile, norm.markdown);
+        const chunks = chunk(norm.markdown, norm.anchors);
+        const entry = { path: d.path, markdown: norm.markdown, docId: 0, passages: [] as { rowid: number; text: string; headingPath: string[] }[] };
+        this.db.transaction(() => {
+          entry.docId = Number(
+            insertDoc.run(genId, d.path, d.url, norm.title, d.kind, rawFile, rawSha, normFile, sha256(norm.markdown), norm.linesMatchRaw ? 1 : 0).lastInsertRowid,
+          );
+          chunks.forEach((c, ord) => {
+            const contentSha = sha256(c.text);
+            // Generation id is part of the hash, so an id never names content from another snapshot.
+            const id = "p_" + sha256(`${sourceId}\0${genId}\0${snapshotHash}\0${d.path}\0${c.startLine}\0${c.endLine}\0${contentSha}`).slice(0, 20);
+            const rowid = Number(
+              insertPassage.run(id, genId, entry.docId, ord, JSON.stringify(c.headingPath), c.anchor, c.startLine, c.endLine, c.text, contentSha, countTokens(c.text), c.hasCode ? 1 : 0, c.hasWarning ? 1 : 0)
+                .lastInsertRowid,
+            );
+            const heading = [norm.title ?? "", ...c.headingPath].join(" > ");
+            insertFts.run(rowid, heading, c.text, extractSymbols(heading + "\n" + c.text).join(" "));
+            entry.passages.push({ rowid, text: c.text, headingPath: c.headingPath });
+          });
+        })();
+        passageCount += chunks.length;
+        normalizedDocs.push(entry);
+      }
+      if (!passageCount) throw new DocifyError("empty", "no passages produced from the source documents");
+
+      await checkpoint("embed", `0/${passageCount}`);
+      const all = normalizedDocs.flatMap((d) => d.passages.map((p) => ({ ...p, title: d.path })));
+      const insertVec = this.db.prepare("INSERT INTO vectors (passage_rowid, generation_id, embedding) VALUES (?, ?, ?)");
+      const embedStart = performance.now();
+      for (let i = 0; i < all.length; i += 64) {
+        const batch = all.slice(i, i + 64);
+        const vecs = await embedTexts(
+          this.config,
+          batch.map((p) => [p.headingPath.join(" > "), p.text].filter(Boolean).join("\n")),
+        );
+        this.db.transaction(() => vecs.forEach((v, j) => insertVec.run(batch[j]!.rowid, genId, new Uint8Array(v.buffer))))();
+        await checkpoint("embed", `${Math.min(i + 64, all.length)}/${all.length}`);
+      }
+      const embedMs = Math.round(performance.now() - embedStart);
+
+      let graphStatus = "skipped";
+      let graphStats: Record<string, unknown> = {};
+      if (graphWanted) {
+        await checkpoint("graph", "semantic extraction");
+        const runner = opts.graphRunner ?? runGraphify;
+        const result = await runner(this.config, sourceId, normalizedDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal);
+        writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
+        graphStats = this.importGraph(genId, result, normalizedDocs);
+        graphStatus = "ok";
+      }
+
+      await checkpoint("validate");
+      const counts = this.db
+        .query<{ p: number; v: number }, [number, number]>(
+          "SELECT (SELECT count(*) FROM passages WHERE generation_id = ?) AS p, (SELECT count(*) FROM vectors WHERE generation_id = ?) AS v",
+        )
+        .get(genId, genId)!;
+      if (counts.p !== passageCount || counts.v !== passageCount) {
+        throw new DocifyError("invalid_generation", `validation failed: ${counts.p} passages, ${counts.v} vectors, expected ${passageCount}`);
+      }
+      if (graphStatus === "ok" && !(graphStats.groundedNodes as number)) {
+        throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
+      }
+      const stats = { documents: raw.length, passages: passageCount, embedMs, ...graphStats };
+
+      await checkpoint("activate");
+      this.db
+        .transaction(() => {
+          const prev = this.requireSource(sourceId).active_generation;
+          if (prev) this.db.run("UPDATE generations SET status = 'superseded' WHERE id = ?", [prev]);
+          this.db.run(
+            `UPDATE generations SET status = 'active', phase = 'done', progress = '', finished_at = ?, downloaded_at = ?, snapshot_hash = ?,
+             snapshot_dir = ?, embedding_model = ?, embedding_dims = ?, graph_status = ?, stats = ? WHERE id = ?`,
+            [nowIso(), downloadedAt, snapshotHash, snapshotDir, this.config.embeddingModel, this.config.embeddingDims, graphStatus, JSON.stringify(stats), genId],
+          );
+          this.db.run("UPDATE sources SET active_generation = ? WHERE id = ?", [genId, sourceId]);
+        })
+        .immediate();
+      this.releaseLock(sourceId);
+      this.collectGarbage(sourceId);
+      return { sourceId, generationId: genId, status: "activated", stats };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.db.transaction(() => {
+        this.deleteGenerationRows(genId);
+        this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [message.slice(0, 2000), nowIso(), genId]);
+      })();
+      rmSync(snapshotDir, { recursive: true, force: true });
+      this.releaseLock(sourceId);
+      throw err;
+    }
+  }
+
+  private importGraph(genId: number, result: GraphRunResult, docs: { path: string; docId: number; passages: { rowid: number; text: string; headingPath: string[] }[] }[]) {
+    const byPath = new Map(docs.map((d) => [d.path, d]));
+    const insertNode = this.db.prepare(
+      "INSERT OR IGNORE INTO graph_nodes (generation_id, node_id, label, norm_label, node_type, document_id) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    const insertEdge = this.db.prepare("INSERT INTO graph_edges (generation_id, src, dst, relation, confidence) VALUES (?, ?, ?, ?, ?)");
+    const insertGround = this.db.prepare("INSERT OR IGNORE INTO node_passages (generation_id, node_id, passage_rowid) VALUES (?, ?, ?)");
+    let grounded = 0;
+    let edges = 0;
+    this.db.transaction(() => {
+      for (const n of result.graph.nodes) {
+        const path = n.source_file ? result.fileToPath.get(n.source_file.split("/").pop()!) : undefined;
+        const doc = path ? byPath.get(path) : undefined;
+        insertNode.run(genId, n.id, n.label, (n.norm_label ?? n.label).toLowerCase(), n.file_type ?? null, doc?.docId ?? null);
+        const pool = doc ? doc.passages : docs.flatMap((d) => d.passages);
+        const terms = groundingTerms(n.label);
+        const scored = pool
+          .map((p) => {
+            const text = p.text.toLowerCase();
+            const head = p.headingPath.join(" ").toLowerCase().replace(/`/g, "");
+            let score = 0;
+            for (const t of terms) {
+              const hits = text.split(t).length - 1;
+              score += Math.min(hits, 5) + (head.includes(t.replace(/^\./, "")) ? 5 : 0);
+            }
+            return { p, score };
+          })
+          .filter((x) => x.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3);
+        for (const s of scored) insertGround.run(genId, n.id, s.p.rowid);
+        if (scored.length) grounded++;
+      }
+      for (const e of result.graph.links) {
+        insertEdge.run(genId, e.source, e.target, e.relation, e.confidence ?? null);
+        edges++;
+      }
+      for (const h of result.graph.hyperedges ?? []) {
+        const [hub, ...rest] = h.nodes;
+        for (const m of rest) {
+          insertEdge.run(genId, hub!, m, `group:${h.label}`, "HYPEREDGE");
+          edges++;
+        }
+      }
+    })();
+    return {
+      graphNodes: result.graph.nodes.length,
+      groundedNodes: grounded,
+      graphEdges: edges,
+      graphMs: result.durationMs,
+      graphTokensIn: result.tokensIn,
+      graphTokensOut: result.tokensOut,
+      graphCostEstimate: result.costEstimate,
+      graphModel: this.config.graph?.model ?? null,
+    };
+  }
+
+  private deleteGenerationRows(genId: number) {
+    this.db.run("DELETE FROM passages_fts WHERE rowid IN (SELECT rowid FROM passages WHERE generation_id = ?)", [genId]);
+    this.db.run("DELETE FROM vectors WHERE generation_id = ?", [genId]);
+    this.db.run("DELETE FROM node_passages WHERE generation_id = ?", [genId]);
+    this.db.run("DELETE FROM graph_edges WHERE generation_id = ?", [genId]);
+    this.db.run("DELETE FROM graph_nodes WHERE generation_id = ?", [genId]);
+    this.db.run("DELETE FROM passages WHERE generation_id = ?", [genId]);
+    this.db.run("DELETE FROM documents WHERE generation_id = ?", [genId]);
+  }
+
+  // Keeps the active generation plus the newest superseded ones, so recent passage ids stay readable.
+  private collectGarbage(sourceId: string) {
+    const superseded = this.db
+      .query<{ id: number; snapshot_dir: string | null }, [string]>("SELECT id, snapshot_dir FROM generations WHERE source_id = ? AND status = 'superseded' ORDER BY id DESC")
+      .all(sourceId);
+    for (const g of superseded.slice(Math.max(0, this.config.keepGenerations - 1))) {
+      this.db.transaction(() => {
+        this.deleteGenerationRows(g.id);
+        this.db.run("DELETE FROM generations WHERE id = ?", [g.id]);
+      })();
+      if (g.snapshot_dir) rmSync(g.snapshot_dir, { recursive: true, force: true });
+    }
+    const failed = this.db.query<{ id: number }, [string]>("SELECT id FROM generations WHERE source_id = ? AND status = 'failed' ORDER BY id DESC").all(sourceId);
+    for (const g of failed.slice(3)) this.db.run("DELETE FROM generations WHERE id = ?", [g.id]);
+  }
+
+  getGeneration(id: number): GenerationRow | null {
+    return this.db.query<GenerationRow, [number]>("SELECT * FROM generations WHERE id = ?").get(id);
+  }
+
+  // ---- project pins --------------------------------------------------------
+
+  static readPins(projectDir: string | undefined): Record<string, string> {
+    if (!projectDir) return {};
+    let dir = resolve(projectDir);
+    for (;;) {
+      const file = join(dir, ".docify.json");
+      if (existsSync(file)) {
+        const parsed = JSON.parse(readFileSync(file, "utf8")) as { pins?: Record<string, string> };
+        return parsed.pins ?? {};
+      }
+      const parent = dirname(dir);
+      if (parent === dir) return {};
+      dir = parent;
+    }
+  }
+
+  static writePin(projectDir: string, library: string, version: string | null) {
+    const file = join(resolve(projectDir), ".docify.json");
+    const current = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as { pins?: Record<string, string> }) : {};
+    const pins = { ...(current.pins ?? {}) };
+    if (version) pins[library] = version;
+    else delete pins[library];
+    writeFileSync(file, JSON.stringify({ ...current, pins }, null, 2) + "\n");
+    return file;
+  }
+}
+
+function safeRel(path: string): string {
+  const parts = path.split(/[\\/]+/).filter((p) => p && p !== "." && p !== "..");
+  return parts.join("/") || "index";
+}
