@@ -166,11 +166,30 @@ describe("failed updates", () => {
     });
   }
 
+  test("a cleanup failure after activation keeps the new generation active and readable", async () => {
+    writeFileSync(join(dir, "a.md"), "# A\n\n## Otter knob\n\nCleanup failure revision about kelp.\n");
+    const gc = (d as unknown as { collectGarbage: () => void }).collectGarbage;
+    (d as unknown as { collectGarbage: () => void }).collectGarbage = () => {
+      throw new Error("gc exploded");
+    };
+    try {
+      const r = await d.prepare("lib@2.0", { graphRunner: fakeGraph });
+      expect(r.status).toBe("activated");
+      expect(d.getSource("lib@2.0")!.active_generation).toBe(r.generationId);
+      const hit = (await search(d, { query: "cleanup failure kelp", library: "lib" })).hits[0]!;
+      expect(hit.citation.generation).toBe(r.generationId);
+      expect(read(d, hit.id).status).toBe("ok");
+    } finally {
+      (d as unknown as { collectGarbage: () => void }).collectGarbage = gc;
+    }
+  });
+
   test("graph provider failure fails the update instead of activating without a graph", async () => {
+    const before = d.getSource("lib@2.0")!.active_generation;
     writeFileSync(join(dir, "a.md"), "# A\n\n## Otter knob\n\nProvider failure revision.\n");
     const err = await d.prepare("lib@2.0", { graphRunner: async () => Promise.reject(new Error("provider down")) }).catch((e) => e);
     expect(String(err)).toContain("provider down");
-    expect(d.getSource("lib@2.0")!.active_generation).toBe(good.generationId);
+    expect(d.getSource("lib@2.0")!.active_generation).toBe(before);
   });
 
   test("a registered but never prepared source is not_indexed; an unknown id is source_unknown", async () => {

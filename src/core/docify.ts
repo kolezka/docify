@@ -238,6 +238,7 @@ export class Docify {
       ).lastInsertRowid,
     );
     const snapshotDir = join(this.config.home, "snapshots", sourceId, String(genId));
+    let result: PrepareResult;
     const checkpoint = async (phase: string, progress = "") => {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
       this.setPhase(genId, phase, progress);
@@ -366,8 +367,7 @@ export class Docify {
         })
         .immediate();
       this.releaseLock(sourceId);
-      this.collectGarbage(sourceId);
-      return { sourceId, generationId: genId, status: "activated", stats };
+      result = { sourceId, generationId: genId, status: "activated", stats };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.db.transaction(() => {
@@ -378,6 +378,13 @@ export class Docify {
       this.releaseLock(sourceId);
       throw err;
     }
+    // Outside the try: cleanup of old generations must never undo a committed activation.
+    try {
+      this.collectGarbage(sourceId);
+    } catch (err) {
+      console.error(`docify: cleanup of old generations for ${sourceId} failed; generation ${genId} stays active: ${err instanceof Error ? err.message : err}`);
+    }
+    return result;
   }
 
   private importGraph(genId: number, result: GraphRunResult, docs: { path: string; docId: number; passages: { rowid: number; text: string; headingPath: string[] }[] }[]) {
