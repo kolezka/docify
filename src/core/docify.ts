@@ -98,6 +98,16 @@ export function pidAlive(pid: number | null): boolean {
   }
 }
 
+// A writer renews its lease while preparing. A lease older than this, or one whose pid is
+// gone, is dead; the age check also covers a reused pid.
+export const LEASE_MS = 60_000;
+const HEARTBEAT_MS = 10_000;
+
+export function leaseAlive(pid: number | null, at: string | null): boolean {
+  if (!pid || !pidAlive(pid)) return false;
+  return at !== null && Date.now() - Date.parse(at) < LEASE_MS;
+}
+
 export class Docify {
   readonly db: Database;
   readonly config: DocifyConfig;
@@ -150,7 +160,7 @@ export class Docify {
 
   removeSource(id: string) {
     const src = this.requireSource(id);
-    if (src.lock_pid && pidAlive(src.lock_pid)) throw new DocifyError("busy", `source ${id} is being prepared by pid ${src.lock_pid}`);
+    if (src.lock_pid && leaseAlive(src.lock_pid, src.lock_at)) throw new DocifyError("busy", `source ${id} is being prepared by pid ${src.lock_pid}`);
     const gens = this.db.query<{ id: number }, [string]>("SELECT id FROM generations WHERE source_id = ?").all(id);
     this.db.transaction(() => {
       for (const g of gens) this.deleteGenerationRows(g.id);
@@ -179,26 +189,36 @@ export class Docify {
     return this.db.query<GenerationRow, [string]>("SELECT * FROM generations WHERE source_id = ? ORDER BY id DESC").all(sourceId);
   }
 
-  // Marks staging generations and locks left by dead processes as interrupted.
+  // Marks staging generations and locks left by dead writers as interrupted. Every decision is
+  // re-checked inside an immediate transaction, so a lock taken meanwhile is never cleared.
   recoverInterrupted(): number {
     let n = 0;
-    const stale = this.db
-      .query<{ id: number; pid: number | null }, []>("SELECT id, pid FROM generations WHERE status = 'staging'")
-      .all()
-      .filter((g) => !pidAlive(g.pid));
-    for (const g of stale) {
-      this.db.transaction(() => {
-        this.deleteGenerationRows(g.id);
-        this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [
-          "interrupted: the preparing process exited before activation",
-          nowIso(),
-          g.id,
-        ]);
-      })();
-      n++;
+    const candidates = this.db.query<{ id: number; source_id: string }, []>("SELECT id, source_id FROM generations WHERE status = 'staging'").all();
+    for (const c of candidates) {
+      const recovered = this.db
+        .transaction(() => {
+          const g = this.db.query<{ pid: number | null; status: string }, [number]>("SELECT pid, status FROM generations WHERE id = ?").get(c.id);
+          const s = this.getSource(c.source_id);
+          if (!g || g.status !== "staging") return false;
+          if (s && s.lock_pid === g.pid && leaseAlive(s.lock_pid, s.lock_at)) return false;
+          this.deleteGenerationRows(c.id);
+          this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [
+            "interrupted: the preparing process exited before activation",
+            nowIso(),
+            c.id,
+          ]);
+          if (s && s.lock_pid === g.pid) this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ? AND lock_pid IS ?", [s.id, g.pid]);
+          return true;
+        })
+        .immediate();
+      if (recovered) {
+        rmSync(join(this.config.home, "snapshots", c.source_id, String(c.id)), { recursive: true, force: true });
+        n++;
+      }
     }
     for (const s of this.listSourceRows()) {
-      if (s.lock_pid && !pidAlive(s.lock_pid)) this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ?", [s.id]);
+      if (!s.lock_pid || leaseAlive(s.lock_pid, s.lock_at)) continue;
+      this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ? AND lock_pid = ? AND lock_at IS ?", [s.id, s.lock_pid, s.lock_at]);
     }
     return n;
   }
@@ -209,7 +229,7 @@ export class Docify {
     const ok = this.db
       .transaction(() => {
         const s = this.requireSource(sourceId);
-        if (s.lock_pid && pidAlive(s.lock_pid)) return false;
+        if (s.lock_pid && leaseAlive(s.lock_pid, s.lock_at)) return false;
         this.db.run("UPDATE sources SET lock_pid = ?, lock_at = ? WHERE id = ?", [process.pid, nowIso(), sourceId]);
         return true;
       })
@@ -229,6 +249,18 @@ export class Docify {
     this.recoverInterrupted();
     const source = this.requireSource(sourceId);
     this.acquireLock(sourceId);
+    const heartbeat = setInterval(() => {
+      this.db.run("UPDATE sources SET lock_at = ? WHERE id = ? AND lock_pid = ?", [nowIso(), sourceId, process.pid]);
+    }, HEARTBEAT_MS);
+    try {
+      return await this.prepareLocked(source, opts);
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  private async prepareLocked(source: SourceRow, opts: PrepareOptions): Promise<PrepareResult> {
+    const sourceId = source.id;
     // Generations already in flight in another Docify instance of this process are covered by the lock.
     // AUTOINCREMENT keeps ids increasing even after rows are deleted, so ids never repeat.
     const genId = Number(

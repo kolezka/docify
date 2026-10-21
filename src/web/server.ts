@@ -1,16 +1,21 @@
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { realpathSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import index from "./index.html";
 import { Docify, DocifyError } from "../core/docify.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
 
 const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404 };
 
-export async function startServer(port: number, opts: { docify?: Docify; quiet?: boolean } = {}) {
+export async function startServer(port: number, opts: { docify?: Docify; quiet?: boolean; token?: string } = {}) {
   const docify = opts.docify ?? new Docify();
   const running = new Map<string, AbortController>();
   let boundPort = port;
+  // Loopback is shared by every local user, so each server start gets a secret that is shown
+  // only in the URL fragment (never sent to the server or logged) and required on /api.
+  const token = opts.token ?? Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("hex");
+  const tokenOk = (given: string | null) => !!given && given.length === token.length && timingSafeEqual(Buffer.from(given), Buffer.from(token));
 
   const json = (data: unknown, status = 200) => Response.json(data, { status });
   const fail = (err: unknown) => {
@@ -23,6 +28,7 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
   const guard = (req: Request): Response | null => {
     const host = req.headers.get("host");
     if (host !== `127.0.0.1:${boundPort}` && host !== `localhost:${boundPort}`) return json({ error: "forbidden host", code: "forbidden" }, 403);
+    if (!tokenOk(req.headers.get("x-docify-token"))) return json({ error: "missing or wrong access token; open the URL printed by docify serve", code: "unauthorized" }, 401);
     if (req.method !== "GET") {
       if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) return json({ error: "JSON body required", code: "unsupported" }, 415);
       const origin = req.headers.get("origin");
@@ -149,6 +155,6 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
     fetch: () => new Response("not found", { status: 404 }),
   });
   boundPort = server.port!;
-  if (!opts.quiet) console.log(`Docify UI on http://127.0.0.1:${boundPort}`);
-  return server;
+  if (!opts.quiet) console.log(`Docify UI on http://127.0.0.1:${boundPort}/#token=${token}`);
+  return Object.assign(server, { token });
 }

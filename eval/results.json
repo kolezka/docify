@@ -8,13 +8,13 @@
       "mustOf": 16,
       "passageRecall": 0.963,
       "mrr": 0.868,
-      "avgTokens": 1359,
-      "maxTokens": 1495,
+      "avgTokens": 1348,
+      "maxTokens": 1487,
       "versionLeaks": 0,
       "badCitations": 0,
       "truncatedHits": 11,
-      "p50Ms": 6.3,
-      "p95Ms": 12.8,
+      "p50Ms": 7.2,
+      "p95Ms": 11.5,
       "failed": [
         "q25:ok:0/1"
       ]
@@ -29,12 +29,12 @@
         "found": [
           1
         ],
-        "tokens": 1427,
+        "tokens": 1430,
         "hits": 5,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8.8
+        "ms": 10.9
       },
       {
         "id": "q02",
@@ -45,12 +45,12 @@
         "found": [
           2
         ],
-        "tokens": 1481,
+        "tokens": 1459,
         "hits": 6,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.2
+        "ms": 7.4
       },
       {
         "id": "q03",
@@ -61,12 +61,12 @@
         "found": [
           1
         ],
-        "tokens": 1481,
-        "hits": 6,
+        "tokens": 1435,
+        "hits": 5,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7
+        "ms": 7.9
       },
       {
         "id": "q04",
@@ -77,12 +77,12 @@
         "found": [
           2
         ],
-        "tokens": 1427,
-        "hits": 4,
+        "tokens": 1430,
+        "hits": 3,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.2
+        "ms": 7.2
       },
       {
         "id": "q05",
@@ -93,12 +93,12 @@
         "found": [
           1
         ],
-        "tokens": 1445,
+        "tokens": 1472,
         "hits": 3,
-        "truncated": 1,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7
+        "ms": 6.9
       },
       {
         "id": "q06",
@@ -109,12 +109,12 @@
         "found": [
           4
         ],
-        "tokens": 1487,
-        "hits": 4,
-        "truncated": 0,
+        "tokens": 1442,
+        "hits": 5,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.1
+        "ms": 11.5
       },
       {
         "id": "q07",
@@ -125,12 +125,12 @@
         "found": [
           1
         ],
-        "tokens": 1427,
-        "hits": 6,
-        "truncated": 1,
+        "tokens": 1378,
+        "hits": 5,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.9
+        "ms": 6.5
       },
       {
         "id": "q08",
@@ -141,12 +141,12 @@
         "found": [
           3
         ],
-        "tokens": 1480,
+        "tokens": 1437,
         "hits": 5,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6
+        "ms": 6.5
       },
       {
         "id": "q09",
@@ -157,12 +157,12 @@
         "found": [
           1
         ],
-        "tokens": 1480,
-        "hits": 6,
-        "truncated": 0,
+        "tokens": 1460,
+        "hits": 7,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.5
+        "ms": 9.6
       },
       {
         "id": "q10",
@@ -173,12 +173,12 @@
         "found": [
           1
         ],
-        "tokens": 1467,
-        "hits": 5,
+        "tokens": 1479,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.2
+        "ms": 6.9
       },
       {
         "id": "q11",
@@ -189,12 +189,12 @@
         "found": [
           1
         ],
-        "tokens": 1458,
-        "hits": 5,
+        "tokens": 1449,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.3
+        "ms": 6.5
       },
       {
         "id": "q12",
@@ -206,12 +206,12 @@
           2,
           1
         ],
-        "tokens": 1443,
-        "hits": 5,
+        "tokens": 1431,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.5
+        "ms": 7
       },
       {
         "id": "q13",
@@ -222,12 +222,12 @@
         "found": [
           1
         ],
-        "tokens": 1465,
-        "hits": 5,
+        "tokens": 1405,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.4
+        "ms": 6.8
       },
       {
         "id": "q14",
@@ -238,8 +238,8 @@
         "found": [
           1
         ],
-        "tokens": 1488,
-        "hits": 7,
+        "tokens": 1392,
+        "hits": 6,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
@@ -254,12 +254,12 @@
         "found": [
           1
         ],
-        "tokens": 1471,
+        "tokens": 1487,
         "hits": 6,
-        "truncated": 1,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.7
+        "ms": 6.3
       },
       {
         "id": "q16",
@@ -270,12 +270,12 @@
         "found": [
           1
         ],
-        "tokens": 1432,
+        "tokens": 1469,
         "hits": 7,
-        "truncated": 1,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 14.8
+        "ms": 5.7
       },
       {
         "id": "q17",
@@ -287,12 +287,12 @@
           1,
           3
         ],
-        "tokens": 1489,
+        "tokens": 1474,
         "hits": 3,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 12.8
+        "ms": 12.1
       },
       {
         "id": "q18",
@@ -303,12 +303,12 @@
         "found": [
           4
         ],
-        "tokens": 1446,
+        "tokens": 1476,
         "hits": 4,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7.1
+        "ms": 10.9
       },
       {
         "id": "q19",
@@ -317,12 +317,12 @@
         "pass": true,
         "status": "weak_match",
         "found": [],
-        "tokens": 1490,
+        "tokens": 1474,
         "hits": 5,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8.3
+        "ms": 9.4
       },
       {
         "id": "q20",
@@ -335,10 +335,10 @@
         ],
         "tokens": 1424,
         "hits": 7,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.1
+        "ms": 6
       },
       {
         "id": "q21",
@@ -349,12 +349,12 @@
         "found": [
           1
         ],
-        "tokens": 1459,
+        "tokens": 1480,
         "hits": 3,
-        "truncated": 1,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8.3
+        "ms": 9.2
       },
       {
         "id": "q22",
@@ -365,12 +365,12 @@
         "found": [
           1
         ],
-        "tokens": 1491,
+        "tokens": 1477,
         "hits": 3,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7
+        "ms": 7.9
       },
       {
         "id": "q23",
@@ -381,12 +381,12 @@
         "found": [
           1
         ],
-        "tokens": 1490,
-        "hits": 4,
+        "tokens": 1380,
+        "hits": 3,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.9
+        "ms": 6.3
       },
       {
         "id": "q24",
@@ -397,12 +397,12 @@
         "found": [
           1
         ],
-        "tokens": 1352,
+        "tokens": 1425,
         "hits": 4,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6
+        "ms": 9
       },
       {
         "id": "q25",
@@ -414,12 +414,12 @@
           0,
           1
         ],
-        "tokens": 1469,
-        "hits": 3,
+        "tokens": 1461,
+        "hits": 2,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.9
+        "ms": 7.3
       },
       {
         "id": "q26",
@@ -428,12 +428,12 @@
         "pass": true,
         "status": "weak_match",
         "found": [],
-        "tokens": 1495,
-        "hits": 4,
+        "tokens": 1468,
+        "hits": 3,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.1
+        "ms": 6.5
       },
       {
         "id": "q27",
@@ -442,12 +442,12 @@
         "pass": true,
         "status": "no_match",
         "found": [],
-        "tokens": 38,
+        "tokens": 63,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4.6
+        "ms": 3
       },
       {
         "id": "q28",
@@ -456,12 +456,12 @@
         "pass": true,
         "status": "version_unavailable",
         "found": [],
-        "tokens": 57,
+        "tokens": 84,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 0.2
+        "ms": 2.4
       }
     ]
   },
@@ -474,13 +474,13 @@
       "mustOf": 16,
       "passageRecall": 0.815,
       "mrr": 0.802,
-      "avgTokens": 1232,
-      "maxTokens": 1491,
+      "avgTokens": 1238,
+      "maxTokens": 1493,
       "versionLeaks": 0,
       "badCitations": 0,
-      "truncatedHits": 10,
-      "p50Ms": 2.9,
-      "p95Ms": 5,
+      "truncatedHits": 7,
+      "p50Ms": 3.3,
+      "p95Ms": 7.4,
       "failed": [
         "q04*:weak_match:0",
         "q06*:weak_match:0",
@@ -499,12 +499,12 @@
         "found": [
           1
         ],
-        "tokens": 1364,
+        "tokens": 1487,
         "hits": 6,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4.2
+        "ms": 3.6
       },
       {
         "id": "q02",
@@ -515,12 +515,12 @@
         "found": [
           2
         ],
-        "tokens": 584,
+        "tokens": 631,
         "hits": 2,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 1
+        "ms": 0.9
       },
       {
         "id": "q03",
@@ -531,12 +531,12 @@
         "found": [
           1
         ],
-        "tokens": 1356,
+        "tokens": 1472,
         "hits": 5,
-        "truncated": 1,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4
+        "ms": 3.2
       },
       {
         "id": "q04",
@@ -547,9 +547,9 @@
         "found": [
           0
         ],
-        "tokens": 1412,
-        "hits": 4,
-        "truncated": 1,
+        "tokens": 1342,
+        "hits": 3,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
         "ms": 2.4
@@ -563,9 +563,9 @@
         "found": [
           1
         ],
-        "tokens": 1471,
-        "hits": 4,
-        "truncated": 1,
+        "tokens": 1480,
+        "hits": 3,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
         "ms": 3.3
@@ -579,12 +579,12 @@
         "found": [
           0
         ],
-        "tokens": 1477,
-        "hits": 5,
-        "truncated": 1,
+        "tokens": 1403,
+        "hits": 4,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.9
+        "ms": 2.8
       },
       {
         "id": "q07",
@@ -595,12 +595,12 @@
         "found": [
           1
         ],
-        "tokens": 1488,
-        "hits": 6,
+        "tokens": 1401,
+        "hits": 5,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.5
+        "ms": 2.9
       },
       {
         "id": "q08",
@@ -611,12 +611,12 @@
         "found": [
           0
         ],
-        "tokens": 1412,
+        "tokens": 1471,
         "hits": 3,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.4
+        "ms": 3
       },
       {
         "id": "q09",
@@ -627,12 +627,12 @@
         "found": [
           1
         ],
-        "tokens": 1447,
+        "tokens": 1493,
         "hits": 5,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.5
+        "ms": 2.9
       },
       {
         "id": "q10",
@@ -643,12 +643,12 @@
         "found": [
           1
         ],
-        "tokens": 1467,
-        "hits": 5,
+        "tokens": 1447,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 3.1
+        "ms": 4
       },
       {
         "id": "q11",
@@ -659,12 +659,12 @@
         "found": [
           1
         ],
-        "tokens": 1358,
+        "tokens": 1429,
         "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.9
+        "ms": 3.3
       },
       {
         "id": "q12",
@@ -676,12 +676,12 @@
           2,
           1
         ],
-        "tokens": 1445,
-        "hits": 5,
+        "tokens": 1431,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.8
+        "ms": 3.8
       },
       {
         "id": "q13",
@@ -692,12 +692,12 @@
         "found": [
           1
         ],
-        "tokens": 1324,
+        "tokens": 1395,
         "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.2
+        "ms": 2.7
       },
       {
         "id": "q14",
@@ -708,12 +708,12 @@
         "found": [
           1
         ],
-        "tokens": 1433,
+        "tokens": 1422,
         "hits": 6,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4.8
+        "ms": 4.1
       },
       {
         "id": "q15",
@@ -724,9 +724,9 @@
         "found": [
           1
         ],
-        "tokens": 1420,
-        "hits": 6,
-        "truncated": 1,
+        "tokens": 1373,
+        "hits": 5,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
         "ms": 2.8
@@ -740,7 +740,7 @@
         "found": [
           1
         ],
-        "tokens": 1365,
+        "tokens": 1446,
         "hits": 6,
         "truncated": 1,
         "leaks": 0,
@@ -757,12 +757,12 @@
           2,
           0
         ],
-        "tokens": 1459,
-        "hits": 5,
+        "tokens": 1447,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.9
+        "ms": 3.3
       },
       {
         "id": "q18",
@@ -773,12 +773,12 @@
         "found": [
           4
         ],
-        "tokens": 1446,
+        "tokens": 1450,
         "hits": 4,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.5
+        "ms": 6.9
       },
       {
         "id": "q19",
@@ -787,12 +787,12 @@
         "pass": true,
         "status": "ok",
         "found": [],
-        "tokens": 1462,
+        "tokens": 1458,
         "hits": 5,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5
+        "ms": 3.6
       },
       {
         "id": "q20",
@@ -803,12 +803,12 @@
         "found": [
           1
         ],
-        "tokens": 200,
+        "tokens": 235,
         "hits": 1,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 0.4
+        "ms": 0.3
       },
       {
         "id": "q21",
@@ -819,12 +819,12 @@
         "found": [
           1
         ],
-        "tokens": 1468,
+        "tokens": 1461,
         "hits": 2,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 3.6
+        "ms": 6
       },
       {
         "id": "q22",
@@ -835,12 +835,12 @@
         "found": [
           1
         ],
-        "tokens": 1467,
-        "hits": 3,
+        "tokens": 1360,
+        "hits": 2,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4.2
+        "ms": 4.3
       },
       {
         "id": "q23",
@@ -851,12 +851,12 @@
         "found": [
           1
         ],
-        "tokens": 1412,
-        "hits": 3,
-        "truncated": 1,
+        "tokens": 1338,
+        "hits": 2,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4.2
+        "ms": 3.8
       },
       {
         "id": "q24",
@@ -867,12 +867,12 @@
         "found": [
           1
         ],
-        "tokens": 1488,
+        "tokens": 1449,
         "hits": 3,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 3
+        "ms": 8
       },
       {
         "id": "q25",
@@ -884,12 +884,12 @@
           0,
           1
         ],
-        "tokens": 1491,
-        "hits": 3,
+        "tokens": 1480,
+        "hits": 5,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8.9
+        "ms": 7.4
       },
       {
         "id": "q26",
@@ -898,12 +898,12 @@
         "pass": true,
         "status": "weak_match",
         "found": [],
-        "tokens": 676,
+        "tokens": 724,
         "hits": 1,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 1.5
+        "ms": 0.9
       },
       {
         "id": "q27",
@@ -912,12 +912,12 @@
         "pass": true,
         "status": "no_match",
         "found": [],
-        "tokens": 38,
+        "tokens": 59,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 0.5
+        "ms": 0.4
       },
       {
         "id": "q28",
@@ -926,7 +926,7 @@
         "pass": true,
         "status": "version_unavailable",
         "found": [],
-        "tokens": 57,
+        "tokens": 80,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -937,21 +937,23 @@
   },
   "vector": {
     "summary": {
-      "pass": 28,
+      "pass": 27,
       "weak": 5,
       "of": 28,
       "mustPass": 16,
       "mustOf": 16,
-      "passageRecall": 1,
+      "passageRecall": 0.963,
       "mrr": 0.859,
-      "avgTokens": 1354,
-      "maxTokens": 1492,
+      "avgTokens": 1344,
+      "maxTokens": 1493,
       "versionLeaks": 0,
       "badCitations": 0,
-      "truncatedHits": 10,
-      "p50Ms": 7.3,
-      "p95Ms": 10.3,
-      "failed": []
+      "truncatedHits": 13,
+      "p50Ms": 6.6,
+      "p95Ms": 13.4,
+      "failed": [
+        "q25:ok:1/0"
+      ]
     },
     "rows": [
       {
@@ -963,12 +965,12 @@
         "found": [
           1
         ],
-        "tokens": 1482,
-        "hits": 7,
+        "tokens": 1424,
+        "hits": 6,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 9.5
+        "ms": 8.9
       },
       {
         "id": "q02",
@@ -979,12 +981,12 @@
         "found": [
           2
         ],
-        "tokens": 1481,
+        "tokens": 1473,
         "hits": 6,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7.9
+        "ms": 7.8
       },
       {
         "id": "q03",
@@ -995,12 +997,12 @@
         "found": [
           1
         ],
-        "tokens": 1481,
-        "hits": 6,
+        "tokens": 1423,
+        "hits": 5,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7.6
+        "ms": 6.6
       },
       {
         "id": "q04",
@@ -1011,12 +1013,12 @@
         "found": [
           1
         ],
-        "tokens": 1461,
-        "hits": 5,
+        "tokens": 1457,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7.5
+        "ms": 5.9
       },
       {
         "id": "q05",
@@ -1027,12 +1029,12 @@
         "found": [
           3
         ],
-        "tokens": 1430,
+        "tokens": 1481,
         "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 10.3
+        "ms": 7.8
       },
       {
         "id": "q06",
@@ -1043,12 +1045,12 @@
         "found": [
           5
         ],
-        "tokens": 1423,
-        "hits": 5,
-        "truncated": 0,
+        "tokens": 1438,
+        "hits": 6,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 9
+        "ms": 13.4
       },
       {
         "id": "q07",
@@ -1059,12 +1061,12 @@
         "found": [
           1
         ],
-        "tokens": 1461,
-        "hits": 7,
+        "tokens": 1400,
+        "hits": 6,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8.6
+        "ms": 7.1
       },
       {
         "id": "q08",
@@ -1075,12 +1077,12 @@
         "found": [
           3
         ],
-        "tokens": 1481,
+        "tokens": 1426,
         "hits": 6,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.4
+        "ms": 8.2
       },
       {
         "id": "q09",
@@ -1091,12 +1093,12 @@
         "found": [
           1
         ],
-        "tokens": 1448,
-        "hits": 7,
-        "truncated": 1,
+        "tokens": 1415,
+        "hits": 6,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7.3
+        "ms": 5.9
       },
       {
         "id": "q10",
@@ -1107,12 +1109,12 @@
         "found": [
           1
         ],
-        "tokens": 1467,
-        "hits": 5,
+        "tokens": 1479,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.7
+        "ms": 6.2
       },
       {
         "id": "q11",
@@ -1123,12 +1125,12 @@
         "found": [
           1
         ],
-        "tokens": 1408,
+        "tokens": 1479,
         "hits": 5,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8.7
+        "ms": 6.2
       },
       {
         "id": "q12",
@@ -1140,12 +1142,12 @@
           2,
           1
         ],
-        "tokens": 1443,
-        "hits": 5,
+        "tokens": 1431,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.7
+        "ms": 7.6
       },
       {
         "id": "q13",
@@ -1156,12 +1158,12 @@
         "found": [
           1
         ],
-        "tokens": 1465,
-        "hits": 5,
+        "tokens": 1405,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.3
+        "ms": 7.6
       },
       {
         "id": "q14",
@@ -1172,12 +1174,12 @@
         "found": [
           1
         ],
-        "tokens": 1439,
+        "tokens": 1473,
         "hits": 5,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8
+        "ms": 7.4
       },
       {
         "id": "q15",
@@ -1188,12 +1190,12 @@
         "found": [
           1
         ],
-        "tokens": 1483,
-        "hits": 6,
+        "tokens": 1469,
+        "hits": 5,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 8.7
+        "ms": 5.4
       },
       {
         "id": "q16",
@@ -1204,12 +1206,12 @@
         "found": [
           1
         ],
-        "tokens": 1451,
-        "hits": 6,
-        "truncated": 0,
+        "tokens": 1417,
+        "hits": 7,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.3
+        "ms": 6.3
       },
       {
         "id": "q17",
@@ -1221,7 +1223,7 @@
           1,
           2
         ],
-        "tokens": 1427,
+        "tokens": 1493,
         "hits": 3,
         "truncated": 0,
         "leaks": 0,
@@ -1237,12 +1239,12 @@
         "found": [
           4
         ],
-        "tokens": 1446,
+        "tokens": 1476,
         "hits": 4,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.9
+        "ms": 11.5
       },
       {
         "id": "q19",
@@ -1252,11 +1254,11 @@
         "status": "weak_match",
         "found": [],
         "tokens": 1433,
-        "hits": 8,
+        "hits": 7,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4.7
+        "ms": 5
       },
       {
         "id": "q20",
@@ -1267,12 +1269,12 @@
         "found": [
           1
         ],
-        "tokens": 1424,
+        "tokens": 1443,
         "hits": 7,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5
+        "ms": 5.3
       },
       {
         "id": "q21",
@@ -1283,12 +1285,12 @@
         "found": [
           1
         ],
-        "tokens": 1492,
+        "tokens": 1480,
         "hits": 2,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 17.6
+        "ms": 16.7
       },
       {
         "id": "q22",
@@ -1299,12 +1301,12 @@
         "found": [
           1
         ],
-        "tokens": 1467,
+        "tokens": 1328,
         "hits": 3,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 9.4
+        "ms": 6.5
       },
       {
         "id": "q23",
@@ -1315,12 +1317,12 @@
         "found": [
           1
         ],
-        "tokens": 1454,
-        "hits": 4,
-        "truncated": 1,
+        "tokens": 1334,
+        "hits": 3,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6
+        "ms": 8.7
       },
       {
         "id": "q24",
@@ -1331,29 +1333,29 @@
         "found": [
           1
         ],
-        "tokens": 1417,
+        "tokens": 1490,
         "hits": 4,
         "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 7.5
+        "ms": 8
       },
       {
         "id": "q25",
         "kind": "relationship",
         "must": false,
-        "pass": true,
+        "pass": false,
         "status": "ok",
         "found": [
           1,
-          3
+          0
         ],
-        "tokens": 1479,
-        "hits": 3,
-        "truncated": 1,
+        "tokens": 1486,
+        "hits": 4,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 6.2
+        "ms": 6.3
       },
       {
         "id": "q26",
@@ -1362,12 +1364,12 @@
         "pass": true,
         "status": "weak_match",
         "found": [],
-        "tokens": 1467,
+        "tokens": 1448,
         "hits": 4,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 5.7
+        "ms": 6.4
       },
       {
         "id": "q27",
@@ -1376,12 +1378,12 @@
         "pass": true,
         "status": "no_match",
         "found": [],
-        "tokens": 38,
+        "tokens": 59,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.8
+        "ms": 2.6
       },
       {
         "id": "q28",
@@ -1390,12 +1392,12 @@
         "pass": true,
         "status": "version_unavailable",
         "found": [],
-        "tokens": 57,
+        "tokens": 84,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 0.1
+        "ms": 2.2
       }
     ]
   },
@@ -1408,13 +1410,13 @@
       "mustOf": 16,
       "passageRecall": 0.333,
       "mrr": 0.274,
-      "avgTokens": 541,
-      "maxTokens": 1473,
+      "avgTokens": 549,
+      "maxTokens": 1479,
       "versionLeaks": 0,
       "badCitations": 0,
       "truncatedHits": 2,
       "p50Ms": 0.1,
-      "p95Ms": 3.8,
+      "p95Ms": 5.2,
       "failed": [
         "q02*:no_match:0",
         "q03*:no_match:0",
@@ -1446,12 +1448,12 @@
         "found": [
           1
         ],
-        "tokens": 1473,
-        "hits": 6,
+        "tokens": 1424,
+        "hits": 5,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 3.2
+        "ms": 3.8
       },
       {
         "id": "q02",
@@ -1462,7 +1464,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 51,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1478,7 +1480,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 53,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1494,7 +1496,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 53,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1510,7 +1512,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 49,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1526,7 +1528,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 47,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1542,7 +1544,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 51,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1558,7 +1560,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 49,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1574,7 +1576,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 53,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1590,12 +1592,12 @@
         "found": [
           3
         ],
-        "tokens": 1467,
-        "hits": 5,
+        "tokens": 1447,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.5
+        "ms": 2.9
       },
       {
         "id": "q11",
@@ -1606,12 +1608,12 @@
         "found": [
           0
         ],
-        "tokens": 1473,
-        "hits": 6,
+        "tokens": 1412,
+        "hits": 5,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.2
+        "ms": 2.4
       },
       {
         "id": "q12",
@@ -1623,12 +1625,12 @@
           1,
           3
         ],
-        "tokens": 1445,
-        "hits": 5,
+        "tokens": 1441,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.2
+        "ms": 2.5
       },
       {
         "id": "q13",
@@ -1639,7 +1641,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 51,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1655,12 +1657,12 @@
         "found": [
           0
         ],
-        "tokens": 1473,
-        "hits": 6,
+        "tokens": 1412,
+        "hits": 5,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.4
+        "ms": 2.3
       },
       {
         "id": "q15",
@@ -1671,9 +1673,9 @@
         "found": [
           1
         ],
-        "tokens": 1457,
+        "tokens": 1468,
         "hits": 6,
-        "truncated": 1,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
         "ms": 2.8
@@ -1687,7 +1689,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 53,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1704,12 +1706,12 @@
           1,
           0
         ],
-        "tokens": 1445,
-        "hits": 5,
+        "tokens": 1431,
+        "hits": 4,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.3
+        "ms": 2.2
       },
       {
         "id": "q18",
@@ -1720,12 +1722,12 @@
         "found": [
           4
         ],
-        "tokens": 1446,
+        "tokens": 1466,
         "hits": 4,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 2.1
+        "ms": 6.3
       },
       {
         "id": "q19",
@@ -1734,12 +1736,12 @@
         "pass": true,
         "status": "no_match",
         "found": [],
-        "tokens": 26,
+        "tokens": 53,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 0.2
+        "ms": 0.1
       },
       {
         "id": "q20",
@@ -1750,7 +1752,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 49,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1766,12 +1768,12 @@
         "found": [
           1
         ],
-        "tokens": 1468,
+        "tokens": 1479,
         "hits": 2,
-        "truncated": 0,
+        "truncated": 1,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 4
+        "ms": 5.2
       },
       {
         "id": "q22",
@@ -1782,12 +1784,12 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 47,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 0.3
+        "ms": 0.1
       },
       {
         "id": "q23",
@@ -1798,7 +1800,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 47,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1814,7 +1816,7 @@
         "found": [
           0
         ],
-        "tokens": 26,
+        "tokens": 47,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1831,12 +1833,12 @@
           1,
           0
         ],
-        "tokens": 1460,
+        "tokens": 1415,
         "hits": 3,
-        "truncated": 1,
+        "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 3.8
+        "ms": 2.6
       },
       {
         "id": "q26",
@@ -1845,12 +1847,12 @@
         "pass": true,
         "status": "no_match",
         "found": [],
-        "tokens": 55,
+        "tokens": 78,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
         "badCitations": 0,
-        "ms": 0.2
+        "ms": 0.1
       },
       {
         "id": "q27",
@@ -1859,7 +1861,7 @@
         "pass": true,
         "status": "no_match",
         "found": [],
-        "tokens": 38,
+        "tokens": 61,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,
@@ -1873,7 +1875,7 @@
         "pass": true,
         "status": "version_unavailable",
         "found": [],
-        "tokens": 57,
+        "tokens": 80,
         "hits": 0,
         "truncated": 0,
         "leaks": 0,

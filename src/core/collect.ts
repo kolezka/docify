@@ -1,5 +1,5 @@
-import { readdirSync, statSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { readdirSync, statSync, readFileSync, realpathSync, lstatSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { kindFromPath, type DocKind } from "./normalize.ts";
 
 export interface RawDoc {
@@ -29,16 +29,27 @@ export const DEFAULT_LIMITS: CrawlLimits = {
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "graphify-out"]);
 
+// Symlinks are followed only while they resolve inside the registered root, so a link
+// cannot pull files from elsewhere into the store (the UI only vets the root itself).
 export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS): RawDoc[] {
-  const abs = resolve(root);
+  const abs = realpathSync(resolve(root));
   const st = statSync(abs);
   const files: string[] = [];
+  const skipped: string[] = [];
+  const inside = (p: string) => {
+    const real = realpathSync(p);
+    return real === abs || real.startsWith(abs + sep);
+  };
   if (st.isFile()) files.push(abs);
   else {
     const walk = (dir: string) => {
       for (const name of readdirSync(dir).sort()) {
         if (name.startsWith(".") || SKIP_DIRS.has(name)) continue;
         const p = join(dir, name);
+        if (lstatSync(p).isSymbolicLink() && !inside(p)) {
+          skipped.push(p);
+          continue;
+        }
         const s = statSync(p);
         if (s.isDirectory()) walk(p);
         else if (kindFromPath(p)) files.push(p);
@@ -46,6 +57,7 @@ export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS)
     };
     walk(abs);
   }
+  if (skipped.length) console.error(`docify: skipped ${skipped.length} symlink(s) pointing outside ${abs}: ${skipped.slice(0, 3).join(", ")}`);
   let total = 0;
   const docs: RawDoc[] = [];
   for (const f of files) {

@@ -107,11 +107,24 @@ export async function runGraphify(
   ];
   const started = performance.now();
   const proc = Bun.spawn(argv, { env: providerEnv(provider), stdout: "pipe", stderr: "pipe", cwd: work });
-  const timeout = setTimeout(() => proc.kill(), (provider.timeoutSeconds ?? 900) * 1000);
-  const onAbort = () => proc.kill();
+  // SIGTERM first; SIGKILL if Graphify ignores it, so a hung extraction cannot hold the lock forever.
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => {
+    proc.kill();
+    killTimer ??= setTimeout(() => proc.kill("SIGKILL"), 5000);
+  };
+  const timeout = setTimeout(stop, (provider.timeoutSeconds ?? 900) * 1000);
+  const onAbort = stop;
   signal?.addEventListener("abort", onAbort);
-  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  // Read while it runs (a full pipe would block Graphify), but once it exits give the pipes
+  // only 5 s: a grandchild holding them open must not hang preparation.
+  const outText = new Response(proc.stdout).text();
+  const errText = new Response(proc.stderr).text();
+  const code = await proc.exited;
+  const drain = (p: Promise<string>) => Promise.race([p, Bun.sleep(5000).then(() => "")]);
+  const [stdout, stderr] = await Promise.all([drain(outText), drain(errText)]);
   clearTimeout(timeout);
+  clearTimeout(killTimer);
   signal?.removeEventListener("abort", onAbort);
   const log = (stdout + stderr).trim();
   if (code !== 0) {

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const SCHEMA_VERSION = 1;
@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS node_passages (
 `;
 
 export function openDb(home: string): Database {
-  mkdirSync(home, { recursive: true });
+  // Owner-only: the store holds copies of documents and must not be readable by other users.
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  chmodSync(home, 0o700);
   const db = new Database(join(home, "docify.sqlite"), { create: true, strict: true });
   db.run("PRAGMA journal_mode = WAL");
   db.run("PRAGMA busy_timeout = 10000");

@@ -11,10 +11,20 @@ type SourceInfo = {
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
+// The access token arrives in the URL fragment; keep it for this tab and drop it from the address bar.
+const fromHash = new URLSearchParams(location.hash.slice(1)).get("token");
+if (fromHash) {
+  sessionStorage.setItem("docify-token", fromHash);
+  history.replaceState(null, "", location.pathname);
+}
+const token = sessionStorage.getItem("docify-token") ?? "";
+
 async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const headers: Record<string, string> = { "x-docify-token": token };
+  if (init?.body !== undefined) headers["content-type"] = "application/json";
   const res = await fetch(path, {
     method: init?.method ?? "GET",
-    headers: init?.body !== undefined ? { "content-type": "application/json" } : undefined,
+    headers,
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   const data = await res.json();

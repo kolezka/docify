@@ -16,10 +16,12 @@ Before scoring, the harness checks that every expected locator resolves to a sto
 
 | Mode | Pass | Must-pass | Passage recall | MRR | Avg tokens | Max tokens | Version leaks | Bad citations | p50 ms | p95 ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| combined (default) | 27/28 | 16/16 | 0.963 | 0.868 | 1359 | 1495 | 0 | 0 | 6.3 | 12.8 |
-| lexical | 23/28 | 13/16 | 0.815 | 0.802 | 1232 | 1491 | 0 | 0 | 2.9 | 5.0 |
-| vector | 28/28 | 16/16 | 1.000 | 0.859 | 1354 | 1492 | 0 | 0 | 7.3 | 10.3 |
-| graph | 10/28 | 8/16 | 0.333 | 0.274 | 541 | 1473 | 0 | 0 | 0.1 | 3.8 |
+| combined (default) | 27/28 | 16/16 | 0.963 | 0.868 | 1348 | 1487 | 0 | 0 | 7.2 | 11.5 |
+| lexical | 23/28 | 13/16 | 0.815 | 0.802 | 1238 | 1493 | 0 | 0 | 3.3 | 7.4 |
+| vector | 27/28 | 16/16 | 0.963 | 0.859 | 1344 | 1493 | 0 | 0 | 6.6 | 13.4 |
+| graph | 10/28 | 8/16 | 0.333 | 0.274 | 549 | 1479 | 0 | 0 | 0.1 | 5.2 |
+
+Final run after the review fixes (nonce frame header, budget enforcement). Before them, vector scored 28/28 and recall 1.0; the slightly longer header now squeezes q25 out of the vector budget.
 
 Combined misses one non-must question: q25 (Bun password hashing compared with Python key derivation, no library filter) returns the Python passage but not the Bun one within budget. 5 combined results came back as `weak_match`. 11 hits were truncated with a `read()` hint; no question needed a second call to find its evidence.
 
