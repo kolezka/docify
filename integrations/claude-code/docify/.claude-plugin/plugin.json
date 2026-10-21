@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "docify",
+  "version": "0.1.0",
+  "description": "Search locally prepared documentation with cited, token-bounded excerpts. Queries run offline.",
+  "license": "MIT",
+  "keywords": [
+    "documentation",
+    "retrieval",
+    "mcp"
+  ],
+  "mcpServers": {
+    "docify": {
+      "command": "docify",
+      "args": [
+        "mcp"
+      ]
+    }
+  },
+  "author": {
+    "name": "Docify"
+  }
+}

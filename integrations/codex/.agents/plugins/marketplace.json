@@ -1,0 +1,12 @@
+{
+  "name": "docify-local",
+  "interface": { "displayName": "Docify (local)" },
+  "plugins": [
+    {
+      "name": "docify",
+      "source": { "source": "local", "path": "./docify" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    }
+  ]
+}

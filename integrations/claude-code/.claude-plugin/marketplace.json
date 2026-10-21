@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "docify-local",
+  "description": "Local marketplace for the Docify documentation retrieval plugin",
+  "owner": { "name": "docify" },
+  "plugins": [
+    {
+      "name": "docify",
+      "description": "Search locally prepared documentation with cited, token-bounded excerpts",
+      "source": "./docify",
+      "category": "documentation"
+    }
+  ]
+}

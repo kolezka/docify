@@ -15,5 +15,14 @@
     "js-tiktoken": "1.0.21",
     "node-html-markdown": "2.0.0",
     "zod": "4.6.7"
+  },
+  "bin": {
+    "docify": "src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p .",
+    "docify": "bun src/cli.ts",
+    "serve": "bun src/cli.ts serve"
   }
 }

@@ -1,0 +1,19 @@
+{
+  "name": "docify",
+  "version": "0.1.0",
+  "description": "Search locally prepared documentation with cited, token-bounded excerpts. Queries run offline.",
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Docify",
+    "shortDescription": "Cited local documentation search for API and version questions",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read"
+    ]
+  },
+  "author": {
+    "name": "Docify"
+  }
+}
