@@ -1,0 +1,55 @@
+:root {
+  --bg: #fafafa;
+  --fg: #1d1d1f;
+  --muted: #6b6b70;
+  --line: #dcdce0;
+  --panel: #ffffff;
+  --accent: #2c5cc5;
+  --ok: #1f7a3a;
+  --warn: #9a6200;
+  --bad: #b3261e;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161618;
+    --fg: #e8e8ea;
+    --muted: #9a9aa2;
+    --line: #34343a;
+    --panel: #1f1f23;
+    --accent: #7ea2ff;
+    --ok: #6fcf8a;
+    --warn: #e6b450;
+    --bad: #ff8a80;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+header { display: flex; gap: 12px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+h3 { font-size: 13px; margin: 12px 0 4px; color: var(--muted); }
+main { padding: 12px 16px; display: grid; gap: 16px; max-width: 1200px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input, select, button { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+input.wide { flex: 1 1 260px; }
+input[type="number"] { width: 90px; }
+button { cursor: pointer; background: var(--accent); color: #fff; border-color: transparent; }
+button.secondary { background: transparent; color: var(--accent); border-color: var(--line); }
+button:disabled { opacity: 0.5; cursor: default; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.actions { white-space: nowrap; }
+td.actions button { margin-right: 4px; padding: 3px 6px; }
+.badge { padding: 1px 6px; border-radius: 10px; border: 1px solid currentColor; font-size: 12px; }
+.state-ready { color: var(--ok); }
+.state-preparing { color: var(--accent); }
+.state-stale, .state-not_indexed { color: var(--warn); }
+.state-failed { color: var(--bad); }
+.muted { color: var(--muted); }
+.error { color: var(--bad); white-space: pre-wrap; min-height: 1em; margin: 6px 0 0; }
+pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-height: 480px; overflow: auto; margin: 0; }
+#citations { padding-left: 18px; margin: 6px 0; }
+#citations a { color: var(--accent); cursor: pointer; }
