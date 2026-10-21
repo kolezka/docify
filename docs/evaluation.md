@@ -31,7 +31,7 @@ These changes were made with this question set in view, so the final numbers are
 
 1. Baseline combined: 24/28, must-pass 13/16, recall 0.852. Two must-pass paraphrases (q04, q06) were hidden by the evidence gate.
 2. The gate could not be fixed with a threshold: best bge-small similarity was 0.576 for q04 (real answer) and 0.616 for absent q27, 0.572 for absent q26. A `weak_match` status now returns hits with a low-confidence warning, and a query that names an API symbol found nowhere in scope returns `no_match` (q27, `Bun.redis`). q26 now passes as `weak_match` instead of `no_match`; this expectation was changed after the baseline and is recorded in the question file.
-3. Method-name symbol tokens (`m_serialize`) and an exact-symbol fusion bonus fixed `Database.serialize`.
+3. Method-name symbol tokens (`m_serialize`) and an exact-symbol fusion bonus fixed `Database.serialize`. Rechecked after the graph decision: at graph weight 0 the bonus changes nothing measurable (27/28 either way, MRR 0.878 without, 0.868 with); at graph weight 0.35 it lifts combined from 20/28 to 23/28.
 4. Graph fusion weight sweep, all else equal: weight 0 gives 27/28 and recall 0.963, 0.15 gives 25/28 and 0.889, 0.35 gives 23/28 and 0.815. Graph hits promote broad hub passages (`Database`, `Bun.hash`) over the precise answer. Combined therefore defaults to `graphWeight: 0`; the graph is still built, stored, queryable through `mode: "graph"`, and can be weighted per query.
 
 ## Graph findings
