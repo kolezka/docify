@@ -1,6 +1,6 @@
 # Docify
 
-Docify keeps documentation on disk and gives AI agents cited, token-bounded excerpts from it. Preparation (download, normalization, embeddings, Graphify semantic graph) is an explicit step. Queries are local and offline.
+Docify keeps documentation on disk and gives AI agents cited, token-bounded excerpts from it. Preparation (download, normalization, embeddings, Graphify semantic graph) is an explicit step. Queries are local and offline, unless you point embeddings at an Ollama server on another machine (see Embeddings).
 
 ## Install
 
@@ -11,6 +11,29 @@ docify setup             # pinned Graphify into ~/.cache/docify/graphify-venv, e
 ```
 
 `setup` is the only command that downloads models. The store lives in `~/.cache/docify` (override with `DOCIFY_HOME`), outside any plugin directory.
+
+## Embeddings
+
+The default is `Xenova/bge-small-en-v1.5` in process, with no server. For multilingual or larger corpora, docify can embed with `bge-m3` on an Ollama server instead:
+
+```bash
+docker compose up -d     # Ollama on 127.0.0.1:11434, pulls bge-m3 (about 1.5 GB the first time)
+```
+
+Then put this in `~/.cache/docify/config.json` and run `docify setup` (it checks the server) and `docify prepare` for each source:
+
+```json
+{
+  "embeddingProvider": "ollama",
+  "embeddingModel": "bge-m3",
+  "embeddingDims": 1024,
+  "embeddingQueryPrefix": "",
+  "strongVectorSim": 0.58,
+  "weakVectorSim": 0.48
+}
+```
+
+`embeddingUrl` (or `DOCIFY_EMBED_URL`) points at another Ollama server. With a server on another machine, every search embeds its query over the network, so queries are no longer offline. The similarity thresholds are per model: bge-m3 scores about 0.08 lower than bge-small, and the bge-small defaults turned a must-pass question into `no_match` (`docs/evaluation.md`). Each generation records the provider and model (`ollama:bge-m3`); after a switch, search skips vector mode for sources prepared with the other model until they are prepared again.
 
 ## Prepare documentation
 

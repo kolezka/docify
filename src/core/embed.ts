@@ -3,7 +3,16 @@ import type { DocifyConfig } from "./config.ts";
 
 export class ModelNotPreparedError extends Error {}
 
+// Huge code blocks exceed the model context; the Ollama server answers 413 for them.
+const OLLAMA_MAX_CHARS = 16000;
+
 const loaded = new Map<string, Promise<FeatureExtractionPipeline>>();
+
+// Stored with every generation. Vectors from different providers are not interchangeable,
+// even for the same model name.
+export function embeddingIdentity(config: DocifyConfig): string {
+  return config.embeddingProvider === "ollama" ? `ollama:${config.embeddingModel}` : config.embeddingModel;
+}
 
 function configure(config: DocifyConfig, allowDownload: boolean) {
   env.cacheDir = config.modelsDir;
@@ -31,14 +40,77 @@ export async function loadEmbedder(config: DocifyConfig, allowDownload = false):
   return p;
 }
 
+class PayloadTooLarge extends Error {}
+
+async function ollamaPost(config: DocifyConfig, texts: string[]): Promise<number[][]> {
+  let res: Response;
+  try {
+    res = await fetch(`${config.embeddingUrl.replace(/\/$/, "")}/api/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: config.embeddingModel, input: texts }),
+    });
+  } catch (err) {
+    throw new ModelNotPreparedError(
+      `Ollama at ${config.embeddingUrl} is not reachable (${String(err).slice(0, 120)}). Start it with \`docker compose up -d\` in the docify checkout, or fix embeddingUrl.`,
+    );
+  }
+  if (res.status === 413) throw new PayloadTooLarge();
+  if (res.status === 404) {
+    throw new ModelNotPreparedError(
+      `Ollama at ${config.embeddingUrl} has no model ${config.embeddingModel}: run \`ollama pull ${config.embeddingModel}\` there (docker-compose.yml does it).`,
+    );
+  }
+  if (!res.ok) throw new Error(`Ollama /api/embed returned HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return ((await res.json()) as { embeddings: number[][] }).embeddings;
+}
+
+// One vector per text, in order. Splits batches and shortens single texts the server rejects.
+export async function ollamaEmbed(config: DocifyConfig, texts: string[]): Promise<number[][]> {
+  try {
+    return await ollamaPost(config, texts);
+  } catch (err) {
+    if (!(err instanceof PayloadTooLarge)) throw err;
+    if (texts.length > 1) {
+      const mid = Math.floor(texts.length / 2);
+      return [...(await ollamaEmbed(config, texts.slice(0, mid))), ...(await ollamaEmbed(config, texts.slice(mid)))];
+    }
+    const text = texts[0]!;
+    if (text.length < 500) throw new Error(`Ollama rejected a ${text.length}-character input as too large`);
+    return ollamaEmbed(config, [text.slice(0, Math.floor(text.length / 2))]);
+  }
+}
+
+function normalized(v: ArrayLike<number>): Float32Array {
+  const out = Float32Array.from(v);
+  let sum = 0;
+  for (const x of out) sum += x * x;
+  const norm = Math.sqrt(sum) || 1;
+  for (let i = 0; i < out.length; i++) out[i]! /= norm;
+  return out;
+}
+
 export async function embedTexts(config: DocifyConfig, texts: string[], prefix = ""): Promise<Float32Array[]> {
-  const extractor = await loadEmbedder(config);
   const out: Float32Array[] = [];
+  const check = (dim: number) => {
+    if (dim !== config.embeddingDims) throw new Error(`model ${config.embeddingModel} returned ${dim} dims, expected ${config.embeddingDims}`);
+  };
+  if (config.embeddingProvider === "ollama") {
+    for (let i = 0; i < texts.length; i += 16) {
+      const batch = texts.slice(i, i + 16).map((t) => (prefix + t).slice(0, OLLAMA_MAX_CHARS));
+      for (const v of await ollamaEmbed(config, batch)) {
+        check(v.length);
+        out.push(normalized(v));
+      }
+    }
+    return out;
+  }
+  const extractor = await loadEmbedder(config);
   for (let i = 0; i < texts.length; i += 16) {
     const batch = texts.slice(i, i + 16).map((t) => prefix + t);
     const tensor = await extractor(batch, { pooling: "mean", normalize: true });
     const [n, dim] = tensor.dims as [number, number];
-    if (dim !== config.embeddingDims) throw new Error(`model ${config.embeddingModel} returned ${dim} dims, expected ${config.embeddingDims}`);
+    check(dim);
     const data = tensor.data as Float32Array;
     for (let j = 0; j < n; j++) out.push(data.slice(j * dim, (j + 1) * dim));
   }

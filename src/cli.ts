@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { Docify, DocifyError } from "./core/docify.ts";
 import { read, renderSources, search, sources, type Mode } from "./core/search.ts";
-import { loadEmbedder } from "./core/embed.ts";
+import { embedTexts, loadEmbedder } from "./core/embed.ts";
 
 const USAGE = `docify <command> [options]
 
@@ -144,9 +144,16 @@ async function setup(docify: Docify) {
   });
   if ((await proc.exited) !== 0) throw new Error("uv sync failed");
   if (!existsSync(docify.config.graphifyBin)) console.warn(`warning: graphify not found at ${docify.config.graphifyBin}; set DOCIFY_GRAPHIFY_BIN`);
-  console.log(`downloading embedding model ${docify.config.embeddingModel} into ${docify.config.modelsDir}`);
-  await loadEmbedder(docify.config, true);
-  console.log("setup complete; queries now run offline");
+  if (docify.config.embeddingProvider === "ollama") {
+    // The model lives on the Ollama server (docker-compose.yml pulls it); check it answers.
+    console.log(`checking Ollama at ${docify.config.embeddingUrl} for ${docify.config.embeddingModel}`);
+    await embedTexts(docify.config, ["docify setup check"]);
+    console.log(`setup complete; queries embed through ${docify.config.embeddingUrl}`);
+  } else {
+    console.log(`downloading embedding model ${docify.config.embeddingModel} into ${docify.config.modelsDir}`);
+    await loadEmbedder(docify.config, true);
+    console.log("setup complete; queries now run offline");
+  }
 }
 
 main(Bun.argv.slice(2)).catch((err) => {

@@ -9,7 +9,7 @@ import { normalize } from "./normalize.ts";
 import { chunk } from "./chunk.ts";
 import { countTokens } from "./tokens.ts";
 import { sha256 } from "./hash.ts";
-import { embedTexts } from "./embed.ts";
+import { embedTexts, embeddingIdentity } from "./embed.ts";
 import { groundingTerms, runGraphify, type GraphRunResult } from "./graph.ts";
 import { extractSymbols } from "./symbols.ts";
 
@@ -292,7 +292,7 @@ export class Docify {
         active?.snapshot_hash === snapshotHash &&
         (JSON.parse(active.stats) as { pipeline?: number }).pipeline === PIPELINE_VERSION &&
         (active.graph_status === "ok" || !graphWanted) &&
-        active.embedding_model === this.config.embeddingModel
+        active.embedding_model === embeddingIdentity(this.config)
       ) {
         this.db.transaction(() => {
           this.db.run("DELETE FROM generations WHERE id = ?", [genId]);
@@ -393,7 +393,7 @@ export class Docify {
           this.db.run(
             `UPDATE generations SET status = 'active', phase = 'done', progress = '', finished_at = ?, downloaded_at = ?, snapshot_hash = ?,
              snapshot_dir = ?, embedding_model = ?, embedding_dims = ?, graph_status = ?, stats = ? WHERE id = ?`,
-            [nowIso(), downloadedAt, snapshotHash, snapshotDir, this.config.embeddingModel, this.config.embeddingDims, graphStatus, JSON.stringify(stats), genId],
+            [nowIso(), downloadedAt, snapshotHash, snapshotDir, embeddingIdentity(this.config), this.config.embeddingDims, graphStatus, JSON.stringify(stats), genId],
           );
           this.db.run("UPDATE sources SET active_generation = ? WHERE id = ?", [genId, sourceId]);
         })

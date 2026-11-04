@@ -1,6 +1,6 @@
 import type { Docify, GenerationRow, SourceRow } from "./docify.ts";
 import { Docify as DocifyClass, DocifyError, pidAlive } from "./docify.ts";
-import { embedQuery } from "./embed.ts";
+import { embedQuery, embeddingIdentity } from "./embed.ts";
 import { countTokens, TOKENIZER } from "./tokens.ts";
 import { extractSymbols, methodToken, squash } from "./symbols.ts";
 
@@ -96,11 +96,10 @@ const STOP = new Set(
 );
 const RRF_K = 60;
 const CANDIDATES = 30;
-// Evidence tiers (docs/evaluation.md). bge-small similarity alone does not separate
+// Evidence tiers (docs/evaluation.md). Vector similarity alone does not separate
 // paraphrases from unrelated questions on the fixture corpus, so the middle tier
-// returns hits with a caveat instead of hiding them.
-export const STRONG_VECTOR_SIM = 0.65;
-export const WEAK_VECTOR_SIM = 0.5;
+// returns hits with a caveat instead of hiding them. The similarity thresholds are
+// per model (config strongVectorSim, weakVectorSim).
 export const STRONG_TERM_COVERAGE = 0.6;
 
 // Keyed by store and generation: generation ids restart at 1 in every store.
@@ -205,8 +204,8 @@ export function resolveScope(docify: Docify, input: SearchInput): Scope {
       if (latest.status === "failed") warnings.push(`${s.id}: last update failed at ${latest.finished_at} (${latest.error}); serving older generation ${gen.id} from ${gen.finished_at}, which may be stale`);
       if (latest.status === "staging") warnings.push(`${s.id}: update in progress (${latest.phase}); serving generation ${gen.id}`);
     }
-    if (gen.embedding_model && gen.embedding_model !== docify.config.embeddingModel) {
-      warnings.push(`${s.id}: indexed with ${gen.embedding_model}, current model is ${docify.config.embeddingModel}; vector mode skipped for it until re-prepared`);
+    if (gen.embedding_model && gen.embedding_model !== embeddingIdentity(docify.config)) {
+      warnings.push(`${s.id}: indexed with ${gen.embedding_model}, current model is ${embeddingIdentity(docify.config)}; vector mode skipped for it until re-prepared`);
     }
   }
   let status: SearchStatus | null = null;
@@ -456,7 +455,7 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
     const scope = resolveScope(docify, input);
     if (scope.status) return { scope, gens: [] as number[], ranked: null, missingSymbol: null as string | null };
     const gens = [...scope.generations.keys()];
-    const vectorGens = gens.filter((g) => scope.generations.get(g)!.generation.embedding_model === docify.config.embeddingModel);
+    const vectorGens = gens.filter((g) => scope.generations.get(g)!.generation.embedding_model === embeddingIdentity(docify.config));
     const graphGens = gens.filter((g) => scope.generations.get(g)!.generation.graph_status === "ok");
     const tr = performance.now();
     const lex = mode === "lexical" || mode === "combined" ? lexicalRank(docify, query, gens) : [];
@@ -523,8 +522,8 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
   const missingSymbol = snapshot.missingSymbol;
   let tier: "strong" | "weak" | "none" = "none";
   if (missingSymbol) tier = "none";
-  else if (bestVec >= STRONG_VECTOR_SIM || bestCoverage >= STRONG_TERM_COVERAGE || graphSeeded) tier = "strong";
-  else if (bestVec >= WEAK_VECTOR_SIM || (mode === "lexical" && ranked.lex.length > 0)) tier = "weak";
+  else if (bestVec >= docify.config.strongVectorSim || bestCoverage >= STRONG_TERM_COVERAGE || graphSeeded) tier = "strong";
+  else if (bestVec >= docify.config.weakVectorSim || (mode === "lexical" && ranked.lex.length > 0)) tier = "weak";
   if (missingSymbol) base.warnings.push(`${missingSymbol} does not appear in the selected documentation`);
   if (tier === "weak") base.warnings.push("no passage matches strongly; these excerpts may not answer the question");
   const evidence = tier !== "none";

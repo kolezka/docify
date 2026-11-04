@@ -1,0 +1,32 @@
+# Optional embedding server for docify: Ollama with bge-m3 on 127.0.0.1:11434.
+#   docker compose up -d      (first start downloads the image and the model, about 1.5 GB)
+# Then set "embeddingProvider": "ollama" in ~/.cache/docify/config.json (README, "Embeddings").
+# Docker on macOS runs it on the CPU; on a Linux host with an NVIDIA GPU, add a
+# deploy.resources.reservations.devices entry for speed.
+name: docify  # fixed, so running it from another checkout reuses the same model volume
+
+services:
+  ollama:
+    image: ollama/ollama:0.40.6
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      retries: 30
+
+  pull-model:
+    image: ollama/ollama:0.40.6
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: ["ollama", "pull", "bge-m3"]
+    restart: "no"
+
+volumes:
+  ollama:

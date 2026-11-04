@@ -48,3 +48,29 @@ Two extraction defects were found and fixed during evaluation:
 ## Preparation cost (measured)
 
 Wall time for `docify prepare` with graph extraction through LiteLLM `deepseek/deepseek-flash-nothink`, cold Graphify cache: Python 3.13 21.6 s, Bun 1.4.3 14.2 s, Bun 1.2.0 13.1 s. Without the graph step, about 2 s per source (embedding 0.9 to 1.5 s). Graphify's cost estimates per source: $0.0156, $0.0109, $0.0097, about 10k input and 4k to 8k output tokens each. These are Graphify's estimates from token counts, not provider invoices. Whole-session extraction spend across all runs was under $0.25 by the same estimates.
+
+## bge-m3 through Ollama (2026-11-04)
+
+Same 28 questions, budget 1500, no graph (`--no-graph`), Ollama 0.40.6 with `bge-m3` on an RTX 3060 reached over the LAN. Reproduce: `docker compose up -d` (or another Ollama), the config in the README "Embeddings" section, prepare the three fixture sources, `bun scripts/eval.ts --modes combined,lexical,vector`.
+
+| Model, mode | Pass | Must-pass | Passage recall | MRR | p95 ms |
+| --- | --- | --- | --- | --- | --- |
+| bge-small, combined | 27/28 | 16/16 | 0.963 | 0.872 | 13.4 |
+| bge-m3, combined, bge-small thresholds (0.65 / 0.5) | 27/28 | 15/16 | 0.963 | 0.858 | 104.9 |
+| bge-m3, combined, thresholds 0.58 / 0.48 | 28/28 | 16/16 | 1.000 | 0.872 | 26.4 |
+| bge-m3, vector, thresholds 0.58 / 0.48 | 27/28 | 16/16 | 0.963 | 0.892 | 25.1 |
+
+bge-m3 similarities run about 0.08 below bge-small on this corpus. With the bge-small thresholds the evidence gate hid must-pass q06 (`no_match`): its best similarity is 0.497. The best absent-question similarities are 0.497 (q26) and 0.491 (q19), so similarity alone does not separate them here either; both come back as `weak_match`. The thresholds 0.58 / 0.48 were picked after seeing these 28 questions, so the bge-m3 rows are optimistic for unseen questions. On this small English corpus bge-m3 does not change MRR in combined mode; the measured gain is larger on a bigger corpus (next section). p95 includes the LAN round trip to the embedding server.
+
+## Findings from a larger corpus (ocdocs, 2026-11-04)
+
+Measured in a separate project, ocdocs (hybrid BM25 plus embeddings with reciprocal rank fusion over docs.openclaw.ai: 1443 pages, 18405 chunks), on 50 questions whose relevant pages were labelled independently by a different model family, without using the search engine (219 relevant pages, 4.4 per question). They are not docify measurements; they say what to try and what to skip here.
+
+- **Single-answer labels understated quality.** With one hand-picked page per question, hit@1 was 0.54; with every page that answers it, 0.66 for the same engine. Label all acceptable passages, and have them labelled by someone who has not seen the results.
+- **bge-m3 beat bge-small:** hit@1 0.78 vs 0.66, hit@10 0.98 vs 0.92, MRR 0.855 vs 0.759. Dense-only bge-m3 was worse than hybrid (hit@1 0.76).
+- **The BGE query prefix matters for bge-small** (hit@1 +0.04 to +0.06). fastembed and Ollama do not add it; docify already does (`embeddingQueryPrefix`). bge-m3 takes no prefix.
+- **Cross-encoder rerankers did not help.** MiniLM-L6, MiniLM-L12 and jina-reranker-v1-turbo were equal or worse on every metric at 600 to 1800 ms per query, against 40 ms without. bge-reranker-v2-m3 (int8) reached 19 GB RSS and was killed.
+- **Down-weighting navigation chunks** (link lists, "where each section moved" pages) changed hit@1 and hit@10 by one question each in opposite directions: noise.
+- **Release notes crowd out guides** when they repeat feature names. Halving their score helped bge-small (unless the query names a release or version); with bge-m3 it made no difference.
+- **Non-English questions:** five Polish questions went from hit@1 0.2 to 0.8 when the agent translated them to English before searching (bge-small). bge-m3 handles Polish better on its own (dense-only 0.6).
+- **Never-cut code fences make huge passages.** On that corpus 76 chunks exceeded 20,000 characters and one reached 309,000. bge-small sees only the first 512 tokens of such a passage; Ollama answers HTTP 413. docify keeps fences whole too (`chunk.ts`), so the Ollama client splits batches and halves a single input on 413, and cuts inputs at 16,000 characters.
