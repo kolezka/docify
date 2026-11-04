@@ -14,6 +14,10 @@ These are design defaults, not choices the user previously made between offline,
 
 - One-screen local web UI, backed by the same core as the CLI and MCP server.
 - Queries run entirely locally and offline once sources, models, and indices are prepared.
+  Amendment 2026-11-04: the optional Ollama embedding provider embeds each query on its server.
+  With the bundled `docker-compose.yml` that server is on `127.0.0.1`, so queries stay local.
+  Pointing `embeddingUrl` at another machine is an explicit user choice in `config.json`, and
+  queries then depend on that server; the default in-process provider is unchanged.
 - Ingestion uses a local semantic provider by default. Provider selection and preparation cost are explicit. Discovered API keys do not authorize remote processing or spending.
 - Sources are local Markdown/HTML files or directories and public static URLs, with bounded crawling restricted to the registered origin and path.
 
