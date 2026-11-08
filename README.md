@@ -35,6 +35,23 @@ Then put this in `~/.cache/docify/config.json` and run `docify setup` (it checks
 
 `embeddingUrl` (or `DOCIFY_EMBED_URL`) points at another Ollama server. With a server on another machine, every search embeds its query over the network, so queries are no longer offline. The similarity thresholds are per model: bge-m3 scores about 0.08 lower than bge-small, and the bge-small defaults turned a must-pass question into `no_match` (`docs/evaluation.md`). Each generation records the provider and model (`ollama:bge-m3`); after a switch, search skips vector mode for sources prepared with the other model until they are prepared again.
 
+Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLLM proxy. `config.json` holds only the names of the variables with the base URL and API key (by default the same `LITELLM_BASE_URL` and `LITELLM_API_KEY` the graph uses), never the values:
+
+```json
+{
+  "embeddingProvider": "openai",
+  "embeddingModel": "text-embedding-3-small",
+  "embeddingDims": 1536,
+  "embeddingQueryPrefix": ""
+}
+```
+
+`/v1` is added to the base URL unless it already ends with it. Every search then sends the query text to that server. The similarity thresholds have not been measured for remote models, so check `strongVectorSim` and `weakVectorSim` on your own questions before trusting `no_match`.
+
+## macOS app
+
+`apps/macos` is a small SwiftUI window for sources (add, prepare, cancel, remove) and provider settings. See `apps/macos/README.md`.
+
 ## Prepare documentation
 
 ```bash

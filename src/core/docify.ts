@@ -354,7 +354,12 @@ export class Docify {
         const vecs = await embedTexts(
           this.config,
           batch.map((p) => [p.headingPath.join(" > "), p.text].filter(Boolean).join("\n")),
-        );
+          "",
+          opts.signal,
+        ).catch((err) => {
+          if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
+          throw err;
+        });
         this.db.transaction(() => vecs.forEach((v, j) => insertVec.run(batch[j]!.rowid, genId, new Uint8Array(v.buffer))))();
         await checkpoint("embed", `${Math.min(i + 64, all.length)}/${all.length}`);
       }
