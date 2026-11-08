@@ -1,5 +1,7 @@
 import { test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { crawl, DEFAULT_LIMITS, type Fetcher } from "../src/core/collect.ts";
+import { newDocify, tempDir } from "./helpers.ts";
 
 const base = "https://docs.example.test/docs/";
 const markdown = "# Example docs\n\nDocumentation for the kestrelSpeed setting.\n";
@@ -67,4 +69,45 @@ test("Markdown indexes honor page, depth and byte limits", async () => {
 test("ordinary plain text URLs remain unsupported", async () => {
   const fetcher: Fetcher = async () => new Response(markdown, { headers: { "content-type": "text/plain" } });
   await expect(crawl(base + "notes.txt", DEFAULT_LIMITS, fetcher)).rejects.toThrow("no documents fetched");
+});
+
+// A route can be a page and the parent of other pages, and two routes can differ only by a
+// trailing slash or by case. Each page still needs its own preserved file.
+test("every crawled page keeps its own snapshot files whatever its route looks like", async () => {
+  const pages: Record<string, string> = {
+    automation: "# Automation\n\nThe overview page mentions the heron.\n",
+    "automation/": "# Automation slash\n\nThe trailing slash twin mentions the osprey.\n",
+    "automation/cron-jobs": "# Cron jobs\n\nThe cron page mentions the kestrel.\n",
+    "automation/cron-jobs/gmail": "# Gmail\n\nThe gmail page mentions the plover.\n",
+    API: "# API upper\n\nThe upper case route mentions the bittern.\n",
+    api: "# API lower\n\nThe lower case route mentions the curlew.\n",
+  };
+  const index = "# Docs\n" + Object.keys(pages).map((p) => `- [${p}](${p})`).join("\n") + "\n";
+  const fetcher: Fetcher = async (url) => {
+    const path = url.slice(base.length);
+    const body = path === "llms.txt" ? index : pages[path];
+    return body === undefined ? new Response("missing", { status: 404 }) : new Response(body, { headers: { "content-type": "text/markdown" } });
+  };
+  const d = newDocify(tempDir());
+  d.addSource({ library: "routes", version: null, kind: "url", locator: base + "llms.txt" });
+  const result = await d.prepare("routes@unknown", { graph: false, fetcher });
+  expect(result.status).toBe("activated");
+
+  const rows = d.db
+    .query<{ path: string; raw_file: string; normalized_file: string }, [number]>("SELECT path, raw_file, normalized_file FROM documents WHERE generation_id = ?")
+    .all(result.generationId);
+  expect(rows.map((r) => r.path).sort()).toEqual(["llms.txt", ...Object.keys(pages)].sort());
+  for (const row of rows) {
+    if (row.path === "llms.txt") continue;
+    expect(readFileSync(row.raw_file, "utf8")).toBe(pages[row.path]!);
+    expect(readFileSync(row.normalized_file, "utf8")).toContain(pages[row.path]!.split("mentions the ")[1]!.trim());
+  }
+  // Distinct even on a case-insensitive file system.
+  expect(new Set(rows.map((r) => r.raw_file.toLowerCase())).size).toBe(rows.length);
+  expect(new Set(rows.map((r) => r.normalized_file.toLowerCase())).size).toBe(rows.length);
+  // Routes that clash with nothing keep their readable mirrored names.
+  const gmail = rows.find((r) => r.path === "automation/cron-jobs/gmail")!;
+  expect(gmail.raw_file.endsWith("/raw/automation/cron-jobs/gmail")).toBe(true);
+  expect(gmail.normalized_file.endsWith("/normalized/automation/cron-jobs/gmail.md")).toBe(true);
+  d.close();
 });

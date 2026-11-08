@@ -312,11 +312,12 @@ export class Docify {
         "INSERT INTO passages (id, generation_id, document_id, ord, heading_path, anchor, start_line, end_line, text, content_sha256, tokens, has_code, has_warning) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       const insertFts = this.db.prepare("INSERT INTO passages_fts (rowid, heading, body, symbols) VALUES (?, ?, ?, ?)");
-      for (const { d, rawSha } of docHashes) {
+      const fileNames = snapshotNames(docHashes.map((x) => x.d.path));
+      for (const [i, { d, rawSha }] of docHashes.entries()) {
         const text = new TextDecoder().decode(d.bytes);
         const norm = normalize(text, d.kind);
-        const rawFile = join(snapshotDir, "raw", safeRel(d.path));
-        const normFile = join(snapshotDir, "normalized", safeRel(d.path) + ".md");
+        const rawFile = join(snapshotDir, "raw", fileNames[i]!);
+        const normFile = join(snapshotDir, "normalized", fileNames[i]! + ".md");
         mkdirSync(dirname(rawFile), { recursive: true });
         mkdirSync(dirname(normFile), { recursive: true });
         writeFileSync(rawFile, d.bytes);
@@ -542,4 +543,26 @@ export class Docify {
 function safeRel(path: string): string {
   const parts = path.split(/[\\/]+/).filter((p) => p && p !== "." && p !== "..");
   return parts.join("/") || "index";
+}
+
+// File names under raw/ and normalized/, one per path, in order. A name mirrors its path and gets
+// a "~n" suffix only when it would sit on a directory another path needs or on another document's file.
+function snapshotNames(paths: string[]): string[] {
+  const rels = paths.map(safeRel);
+  // Compared in lower case so names also stay apart on a case-insensitive file system.
+  const key = (name: string) => name.toLowerCase();
+  const dirs = new Set<string>();
+  for (const rel of rels) {
+    const parts = rel.split("/");
+    for (let i = 1; i < parts.length; i++) dirs.add(key(parts.slice(0, i).join("/")));
+  }
+  const used = new Set<string>();
+  // The normalized copy adds ".md", so that name must stay off directories too.
+  const taken = (name: string) => used.has(key(name)) || dirs.has(key(name)) || dirs.has(key(name + ".md"));
+  return rels.map((rel) => {
+    let name = rel;
+    for (let n = 1; taken(name); n++) name = `${rel}~${n}`;
+    used.add(key(name));
+    return name;
+  });
 }
