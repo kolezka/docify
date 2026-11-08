@@ -48,6 +48,10 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 
 `/v1` is added to the base URL unless it already ends with it. Every search then sends the query text to that server. The similarity thresholds have not been measured for remote models, so check `strongVectorSim` and `weakVectorSim` on your own questions before trusting `no_match`.
 
+## macOS app
+
+`apps/macos` is a small SwiftUI window for sources (add, prepare, cancel, remove) and provider settings. See `apps/macos/README.md`.
+
 ## Prepare documentation
 
 ```bash
