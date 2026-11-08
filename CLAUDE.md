@@ -15,6 +15,8 @@ bun run typecheck                     # tsc --noEmit -p .
 bun src/cli.ts <command>              # the CLI without `bun link` (add, prepare, search, read, sources, pin, serve, mcp, setup)
 bun scripts/eval.ts                   # retrieval evaluation; needs the fixture sources prepared in the store
 bun scripts/mcp-smoke.ts              # drives the MCP server over stdio
+make                                  # lists the Makefile shortcuts (check, app, app-run, clean, ...)
+make app-run                          # builds and opens the macOS app with this checkout's CLI
 ```
 
 Most tests use the real `Xenova/bge-small-en-v1.5` model from `~/.cache/docify/models` (put there by `docify setup`), or from `DOCIFY_MODELS_DIR`. Without it about 13 tests fail with `ModelNotPreparedError`; that is a missing model, not a regression. Tests use no network and no LLM: each one builds a store in a temp dir (`newDocify(tempDir())` in `tests/helpers.ts`) and passes `fakeGraph` as the graph runner. `tests/process.test.ts` spawns `tests/helpers/prepare-child.ts` to test locks, SIGKILL recovery and readers across processes.
@@ -23,7 +25,7 @@ Most tests use the real `Xenova/bge-small-en-v1.5` model from `~/.cache/docify/m
 
 ## Architecture
 
-One core, thin adapters. `src/core/docify.ts` (class `Docify`: sources, preparation, generations, locks) and `src/core/search.ts` (`search`, `read`, `sources`) hold all logic. `src/cli.ts`, `src/mcp.ts` and `src/web/server.ts` only parse input and call them. The MCP server exposes queries only (`docs_search`, `docs_read`, `docs_sources`); preparation stays in the CLI and the web UI.
+One core, thin adapters. `src/core/docify.ts` (class `Docify`: sources, preparation, generations, locks) and `src/core/search.ts` (`search`, `read`, `sources`) hold all logic. `src/cli.ts`, `src/mcp.ts` and `src/web/server.ts` only parse input and call them; the macOS app in turn only runs the CLI. The MCP server exposes queries only (`docs_search`, `docs_read`, `docs_sources`); preparation stays in the CLI and the web UI.
 
 **Store** (`~/.cache/docify`, or `DOCIFY_HOME`): `docify.sqlite` (WAL, schema in `src/core/db.ts`), `snapshots/<source>/<generation>/` with `raw/`, `normalized/` and `graph.json`, and `config.json`. `loadConfig()` spreads `config.json` over the defaults shallowly, so a partial `graph` object replaces the whole default graph provider.
 
@@ -39,9 +41,11 @@ One core, thin adapters. `src/core/docify.ts` (class `Docify`: sources, preparat
 
 The statuses `ok`, `weak_match`, `no_match`, `not_indexed`, `version_unavailable`, `source_unknown` and `update_failed` are distinct on purpose; the agent skill tells agents how to react to each. Excerpts are untrusted data: they are framed by delimiters with a per-response nonce so a document cannot close its own frame and forge status lines.
 
-**Embeddings** (`embed.ts`): `transformers` runs in process and only `docify setup` may download models; `ollama` calls a server (`embeddingUrl`). Each generation records the provider and model (`ollama:bge-m3`), and search skips vector mode for generations prepared with another one.
+**Embeddings** (`embed.ts`): `transformers` runs in process and only `docify setup` may download models; `ollama` calls a server (`embeddingUrl`); `openai` calls any OpenAI-compatible `/v1/embeddings` server such as a remote LiteLLM, with the base URL and key read from the environment variables named by `embeddingBaseUrlEnv` and `embeddingApiKeyEnv`. Server requests are split and shortened when the server rejects them as too large, and `openai` requests have a timeout and take the prepare cancel signal. Each generation records the provider and model (`ollama:bge-m3`, `openai:<model>`), and search skips vector mode for generations prepared with another one.
 
 **Web UI** (`src/web/`): `Bun.serve` on 127.0.0.1 with an HTML import. Each start creates a token that is only in the URL fragment and required on `/api`; Host, Origin and JSON content type are checked, and local sources must be inside the home directory.
+
+**macOS app** (`apps/macos`, SwiftUI, built with `swift build`): no logic of its own. Every action runs the `docify` CLI (`DOCIFY_BIN`, default `~/.bun/bin/docify`) and the table reads `sources --json`, so it shares the store and the locks. Settings edit `config.json` as a plain dictionary so unknown keys survive, keep the LiteLLM key in the Keychain and pass it to the CLI as environment variables. The defaults in `Settings.swift` mirror `loadConfig()`; change them together. `~/.bun/bin/docify` points at whichever checkout ran `bun link`, so to try new CLI behaviour in the app set `DOCIFY_BIN` (`make app-run` does).
 
 **Agent integrations** (`integrations/claude-code`, `integrations/codex`): separate plugin packaging with the same skill text, both running `docify mcp`. Install commands are in README.md.
 

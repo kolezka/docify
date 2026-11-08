@@ -1,5 +1,7 @@
 # Start implementation in a new session
 
+> Historical. This is the prompt that started the MVP implementation on 2026-10-21. The MVP is done (`docs/implementation-plan.md`), so the prompt is kept as a record and is not meant to be run again.
+
 Copy the prompt below into a new coding session. The project documents should be at `/Users/me/Development/ai-docify/docs/design.md` and `/Users/me/Development/ai-docify/docs/implementation-plan.md`.
 
 ```text

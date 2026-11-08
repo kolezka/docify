@@ -12,6 +12,8 @@ docify setup             # pinned Graphify into ~/.cache/docify/graphify-venv, e
 
 `setup` is the only command that downloads models. The store lives in `~/.cache/docify` (override with `DOCIFY_HOME`), outside any plugin directory.
 
+`make` lists shortcuts for these and the other commands below: `make check` type-checks and tests, `make app-run` builds and opens the macOS app with this checkout's CLI.
+
 ## Embeddings
 
 The default is `Xenova/bge-small-en-v1.5` in process, with no server. For multilingual or larger corpora, docify can embed with `bge-m3` on an Ollama server instead:
