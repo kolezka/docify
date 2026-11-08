@@ -470,7 +470,7 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
     ];
     const fused = new Map<number, { score: number; via: string[] }>();
     for (const [name, list] of lists) {
-      const weight = mode === "combined" && name === "graph" ? graphWeight : 1;
+      const weight = mode !== "combined" ? 1 : name === "graph" ? graphWeight : name === "lexical" ? Math.max(0, docify.config.lexicalWeight) : 1;
       if (!weight) continue;
       list.forEach((r, i) => {
         const e = fused.get(r.rowid) ?? { score: 0, via: [] };

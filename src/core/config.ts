@@ -30,6 +30,9 @@ export interface DocifyConfig {
   // Evidence gate thresholds on cosine similarity. They depend on the model's score scale.
   strongVectorSim: number;
   weakVectorSim: number;
+  // Weight of lexical hits in combined fusion. Below 1, a page found only by words cannot push
+  // vector hits down; 0.5 measured better with bge-m3 (docs/evaluation.md).
+  lexicalWeight: number;
   graph: GraphProviderConfig | null;
   graphifyBin: string;
   modelsDir: string;
@@ -69,6 +72,7 @@ export function loadConfig(home = docifyHome()): DocifyConfig {
     graphifyBin: process.env.DOCIFY_GRAPHIFY_BIN ?? join(home, "graphify-venv", "bin", "graphify"),
     modelsDir: process.env.DOCIFY_MODELS_DIR ?? join(home, "models"),
     keepGenerations: 3,
+    lexicalWeight: 1,
     ...user,
   };
 }
