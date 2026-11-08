@@ -74,3 +74,19 @@ Measured in a separate project, ocdocs (hybrid BM25 plus embeddings with recipro
 - **Release notes crowd out guides** when they repeat feature names. Halving their score helped bge-small (unless the query names a release or version); with bge-m3 it made no difference.
 - **Non-English questions:** five Polish questions went from hit@1 0.2 to 0.8 when the agent translated them to English before searching (bge-small). bge-m3 handles Polish better on its own (dense-only 0.6).
 - **Never-cut code fences make huge passages.** On that corpus 76 chunks exceeded 20,000 characters and one reached 309,000. bge-small sees only the first 512 tokens of such a passage; Ollama answers HTTP 413. docify keeps fences whole too (`chunk.ts`), so the Ollama client splits batches and halves a single input on 413, and cuts inputs at 16,000 characters.
+
+## Page-level evaluation on docs.openclaw.ai (2026-11-08)
+
+The 28 fixture questions are saturated for bge-m3 (28/28, recall 1.0), so they cannot show smaller changes. This run uses the corpus from the previous section: 1,442 pages of docs.openclaw.ai, one Markdown file per page, 16,601 docify passages. Its 50 questions are labelled with every page that answers them (168 distinct pages; 10 keyword, 33 paraphrase, 5 Polish, 2 about releases). The questions belong to that project and are not in this repository. `scripts/eval-pages.ts` takes a question file in that format and reports hit@1, hit@3, hit@10 and MRR over the distinct pages a search cites.
+
+bge-m3 through a remote LiteLLM, thresholds 0.58 / 0.48, no graph, a token budget large enough to return every candidate:
+
+| Mode | hit@1 | hit@3 | hit@10 | MRR | p50 ms | p95 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| combined (default) | 0.76 | 0.86 | 0.94 | 0.822 | 200.8 | 325.5 |
+| vector | 0.74 | 0.94 | 0.96 | 0.843 | 178.6 | 329.4 |
+| lexical | 0.56 | 0.72 | 0.84 | 0.652 | 30.5 | 142.5 |
+
+- **Embedding long passages in windows did not help.** The 93 passages longer than 16,000 characters were embedded as the length-weighted mean of windows of at most 16,000 characters instead of being cut. Their vectors moved (cosine to the old vector 0.89 to 1.00, median 0.96) and no other vector changed, yet every metric above stayed the same to three decimals in both modes. Only 3 of the 50 questions have an answer page with such a passage. The change was not merged.
+- **Vector alone beat combined** at hit@3 (0.94 against 0.86) and MRR (0.843 against 0.822). That is 4 questions at hit@3, close to the noise level of a 50-question set, and the reverse of ocdocs, where hybrid beat dense-only. Not acted on yet.
+- Preparing the corpus took 761 s of embedding through LiteLLM, about 22 passages per second. On the first attempt LiteLLM began answering every request with HTTP 502 after about 2,700 passages and recovered later; the cause was not established.
