@@ -115,7 +115,8 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
       continue;
     }
     const type = res.headers.get("content-type") ?? "";
-    const kind: DocKind | null = /text\/html|application\/xhtml/.test(type) ? "html" : /markdown/.test(type) ? "markdown" : kindFromPath(current.pathname);
+    const isMarkdownIndex = /\/llms?\.txt$/i.test(current.pathname);
+    const kind: DocKind | null = /text\/html|application\/xhtml/.test(type) ? "html" : /markdown/.test(type) || isMarkdownIndex ? "markdown" : kindFromPath(current.pathname);
     if (!kind) continue;
     const bytes = await readCapped(res, limits.maxBytesPerPage);
     if (!bytes) continue;
@@ -123,17 +124,23 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded ${limits.maxTotalBytes} bytes`);
     const path = current.pathname.slice(scopePath.length) || "index.html";
     docs.push({ path, url: canonical(current), kind, bytes });
-    if (kind === "html" && depth < limits.maxDepth) {
-      const html = new TextDecoder().decode(bytes);
-      for (const m of html.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)) {
+    if ((kind === "html" || isMarkdownIndex) && depth < limits.maxDepth) {
+      const text = new TextDecoder().decode(bytes);
+      const links = kind === "html"
+        ? [...text.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((m) => m[1]!)
+        : [...text.matchAll(/(?<!!)\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"\n]*")?\s*\)/g)].map((m) => m[1] ?? m[2]!);
+      for (const href of links) {
         let link: URL;
         try {
-          link = new URL(m[1]!, current);
+          link = new URL(href, current);
         } catch {
           continue;
         }
         const key = canonical(link);
-        if (!inScope(link) || seen.has(key) || !/(\.html?|\/|\.mdx?)$/.test(link.pathname)) continue;
+        // Indexes commonly link to routes without a file extension.
+        const documentPath = /(\.html?|\/|\.mdx?)$/.test(link.pathname)
+          || (isMarkdownIndex && !/\.[^/]+$/.test(link.pathname));
+        if (!inScope(link) || seen.has(key) || !documentPath) continue;
         seen.add(key);
         queue.push({ url: link, depth: depth + 1 });
       }
