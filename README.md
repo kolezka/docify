@@ -42,13 +42,15 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 ```json
 {
   "embeddingProvider": "openai",
-  "embeddingModel": "text-embedding-3-small",
-  "embeddingDims": 1536,
-  "embeddingQueryPrefix": ""
+  "embeddingModel": "bge-m3",
+  "embeddingDims": 1024,
+  "embeddingQueryPrefix": "",
+  "strongVectorSim": 0.58,
+  "weakVectorSim": 0.48
 }
 ```
 
-`embeddingBaseUrlEnv` and `embeddingApiKeyEnv` change the variable names. `/v1` is added to the base URL unless it already ends with it, and each request gives up after `embeddingTimeoutSeconds` (default 120). Run `docify setup` to check the server, then prepare each source again. Every search sends the query text to that server. The similarity thresholds have not been measured for remote models, so check `strongVectorSim` and `weakVectorSim` on your own questions before trusting `no_match`.
+`embeddingModel` is the model name your server lists. The thresholds above were measured for `bge-m3` behind LiteLLM, and `bge-small-en` behind LiteLLM works with the defaults (`docs/evaluation.md`); for any other model, run `bun scripts/eval-similarity.ts` on the evaluation corpus before trusting `no_match`. `embeddingBaseUrlEnv` and `embeddingApiKeyEnv` change the variable names. `/v1` is added to the base URL unless it already ends with it, and each request gives up after `embeddingTimeoutSeconds` (default 120). Run `docify setup` to check the server, then prepare each source again. Every search sends the query text to that server, which adds its round trip to each search: about 170 to 250 ms with a remote LiteLLM, against about 13 ms in process.
 
 ## macOS app
 
