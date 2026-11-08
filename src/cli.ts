@@ -21,7 +21,9 @@ Queries (local and offline only):
   pin <library> [version]       pin (or unpin) a version in ./.docify.json
 
 Servers:
-  serve [--port 4747]           local web UI on 127.0.0.1
+  serve [--port 4747] [--host 127.0.0.1] [--allowed-host HOST]
+                                web UI; DOCIFY_WEB_TOKEN, DOCIFY_ALLOWED_HOSTS
+                                and DOCIFY_SOURCE_ROOTS are read from the environment
   mcp                           MCP server on stdio
 `;
 
@@ -41,6 +43,8 @@ async function main(argv: string[]) {
       "no-graph": { type: "boolean" },
       force: { type: "boolean" },
       port: { type: "string" },
+      host: { type: "string" },
+      "allowed-host": { type: "string", multiple: true },
       "graph-weight": { type: "string" },
     },
   });
@@ -53,7 +57,9 @@ async function main(argv: string[]) {
     return;
   }
   if (command === "serve") {
-    await import("./web/server.ts").then((m) => m.startServer(Number(values.port ?? 4747)));
+    const port = Number(values.port ?? process.env.DOCIFY_PORT ?? 4747);
+    const host = values.host ?? process.env.DOCIFY_HOST;
+    await import("./web/server.ts").then((m) => m.startServer(port, { host, allowedHosts: values["allowed-host"] }));
     return;
   }
   const docify = new Docify();

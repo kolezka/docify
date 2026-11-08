@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
 import { realpathSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { Docify, DocifyError } from "../core/docify.ts";
@@ -18,15 +18,106 @@ const PAGE_HEADERS = {
   "referrer-policy": "no-referrer",
 };
 
-export async function startServer(port: number, opts: { docify?: Docify; quiet?: boolean; token?: string; project?: string } = {}) {
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+function splitList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+// DOCIFY_ALLOWED_HOSTS: comma or space separated Host values, with or without a port.
+export function parseAllowedHosts(value = process.env.DOCIFY_ALLOWED_HOSTS): string[] {
+  return splitList(value);
+}
+
+function hostnameOf(host: string): string | null {
+  try {
+    return new URL(`http://${host}`).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+// A request is accepted when its Host matches an entry exactly, or when the entry has no
+// port and the hostnames match. "*" accepts any Host; the token still guards /api.
+// Loopback is always accepted so local checks keep working when a container publishes
+// the port under a different host port.
+export function hostAllowed(hostHeader: string | null, allowed: Iterable<string>): boolean {
+  if (!hostHeader) return false;
+  const host = hostHeader.trim().toLowerCase();
+  const hostname = hostnameOf(host);
+  if (hostname && LOOPBACK_HOSTS.has(hostname)) return true;
+  for (const entry of allowed) {
+    if (entry === "*" || host === entry) return true;
+    if (!entry.includes(":") && hostname === entry) return true;
+  }
+  return false;
+}
+
+// Behind a TLS-terminating proxy the Origin scheme is https while the app speaks http,
+// so compare hostnames instead of full origins.
+export function originAllowed(origin: string | null, hostHeader: string): boolean {
+  if (!origin) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  const hostname = hostnameOf(hostHeader);
+  return !!hostname && parsed.hostname.toLowerCase() === hostname;
+}
+
+// Local sources are readable through the API, so they must stay inside DOCIFY_SOURCE_ROOTS
+// (path list, default: the home directory).
+export function parseSourceRoots(value = process.env.DOCIFY_SOURCE_ROOTS): string[] {
+  const parts = (value ?? "").split(delimiter).map((s) => s.trim()).filter(Boolean);
+  return (parts.length ? parts : [homedir()]).map((p) => p.replace(/^~(?=$|\/)/, homedir()));
+}
+
+export function withinSourceRoots(realPath: string, roots: string[]): boolean {
+  return roots.some((root) => {
+    try {
+      const realRoot = realpathSync(root);
+      return realPath === realRoot || realPath.startsWith(realRoot + sep);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export interface StartServerOptions {
+  docify?: Docify;
+  quiet?: boolean;
+  token?: string;
+  host?: string;
+  allowedHosts?: string[];
+  project?: string;
+}
+
+export async function startServer(port: number, opts: StartServerOptions = {}) {
   const docify = opts.docify ?? new Docify();
   // The directory whose .docify.json pins apply, as for `docify search` run there.
   const project = resolve(opts.project ?? process.cwd());
   const running = new Map<string, AbortController>();
+  const sourceRoots = parseSourceRoots();
+  const host = opts.host ?? process.env.DOCIFY_HOST ?? "127.0.0.1";
   let boundPort = port;
   // Loopback is shared by every local user, so each server start gets a secret that is shown
   // only in the URL fragment (never sent to the server or logged) and required on /api.
-  const token = opts.token ?? Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("hex");
+  // A hosted deployment sets DOCIFY_WEB_TOKEN, which keeps the URL stable across restarts.
+  const envToken = process.env.DOCIFY_WEB_TOKEN?.trim();
+  const token = opts.token ?? envToken ?? Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("hex");
+  if (token.length < 16) throw new Error("the web access token must be at least 16 characters (DOCIFY_WEB_TOKEN)");
+  const tokenFromEnv = !opts.token && !!envToken;
+  const configuredHosts = opts.allowedHosts?.length ? splitList(opts.allowedHosts.join(",")) : parseAllowedHosts();
+  // Binding beyond loopback without an allowlist: keep working behind any reverse proxy,
+  // but say so, because the Host check then only protects against nothing.
+  const allowAnyHost = configuredHosts.length === 0 && !LOOPBACK_HOSTS.has(host);
+  const allowedHosts = new Set(configuredHosts);
   const tokenOk = (given: string | null) => !!given && given.length === token.length && timingSafeEqual(Buffer.from(given), Buffer.from(token));
 
   const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -39,15 +130,15 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
     return json({ error: String(err instanceof Error ? err.message : err), code: "internal" }, 500);
   };
 
-  // DNS rebinding and cross-site requests: only our own loopback origin, JSON bodies only.
+  // DNS rebinding and cross-site requests: only a known Host, JSON bodies only.
   const guard = (req: Request): Response | null => {
-    const host = req.headers.get("host");
-    if (host !== `127.0.0.1:${boundPort}` && host !== `localhost:${boundPort}`) return json({ error: "forbidden host", code: "forbidden" }, 403);
+    const hostHeader = req.headers.get("host") ?? "";
+    if (!allowAnyHost && !hostAllowed(hostHeader, allowedHosts)) return json({ error: "forbidden host", code: "forbidden" }, 403);
     if (!tokenOk(req.headers.get("x-docify-token"))) return json({ error: "missing or wrong access token; open the URL printed by docify serve", code: "unauthorized" }, 401);
     if (req.method !== "GET") {
       if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) return json({ error: "JSON body required", code: "unsupported" }, 415);
       const origin = req.headers.get("origin");
-      if (origin && origin !== `http://${host}`) return json({ error: "forbidden origin", code: "forbidden" }, 403);
+      if (origin && !originAllowed(origin, hostHeader)) return json({ error: "forbidden origin", code: "forbidden" }, 403);
     }
     return null;
   };
@@ -75,10 +166,11 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
   const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
 
   const server = Bun.serve({
-    hostname: "127.0.0.1",
+    hostname: host,
     port,
     development: false,
     routes: {
+      "/healthz": { GET: () => json({ ok: true }) },
       "/api/logs": {
         GET: api((req) => {
           const params = new URL(req.url).searchParams;
@@ -101,15 +193,16 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
           const library = str(b.library);
           if (!locator || !library) throw new DocifyError("invalid_input", "library and locator are required");
           if (kind === "local") {
-            // The UI may only register paths inside the user's home directory.
+            // The UI may only register paths inside DOCIFY_SOURCE_ROOTS.
             let real: string;
             try {
               real = realpathSync(resolve(locator.replace(/^~(?=$|\/)/, homedir())));
             } catch {
               throw new DocifyError("invalid_input", `path does not exist: ${locator}`);
             }
-            const home = realpathSync(homedir());
-            if (real !== home && !real.startsWith(home + sep)) throw new DocifyError("invalid_input", "local sources must be inside your home directory");
+            if (!withinSourceRoots(real, sourceRoots)) {
+              throw new DocifyError("invalid_input", `local sources must be inside DOCIFY_SOURCE_ROOTS (${sourceRoots.join(delimiter)})`);
+            }
             return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator: real }), 201);
           }
           return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator }), 201);
@@ -217,6 +310,12 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
     },
   });
   boundPort = server.port!;
-  if (!opts.quiet) console.log(`Docify UI on http://127.0.0.1:${boundPort}/#token=${token}`);
+  for (const loopback of LOOPBACK_HOSTS) allowedHosts.add(`${loopback}:${boundPort}`);
+  if (!opts.quiet) {
+    const where = `${host}:${boundPort}`;
+    const warning = allowAnyHost ? " DOCIFY_ALLOWED_HOSTS is unset, so any Host is accepted; set it to your public domain." : "";
+    if (tokenFromEnv) console.log(`Docify UI listening on ${where}; the access token comes from DOCIFY_WEB_TOKEN.${warning}`);
+    else console.log(`Docify UI on http://${host === "0.0.0.0" ? "localhost" : host}:${boundPort}/#token=${token}${warning}`);
+  }
   return Object.assign(server, { token });
 }
