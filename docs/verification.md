@@ -53,3 +53,26 @@ Reviewer: `kolezka-bootstrap:route-gpt-sol` (`gpt-6-sol[1m]`), read-only, on com
 | 12 | Truncated `~~~` fences closed with backticks | Closing marker matches the opening one | tilde test |
 
 Each regression test with a "fails on old code" claim was run against the pre-fix source (7 of 8 in `tests/review.test.ts` failed there, the eighth was rewritten until it did). Final state: `bun test` 38 pass, 0 fail; tsc exit 0; eval combined 27/28, must-pass 16/16; MCP smoke and browser smoke pass on the token build.
+
+## 2026-11-08: remote LiteLLM embeddings, macOS app, Makefile
+
+Apple M4 Pro, macOS 27, Bun 1.4.4, Swift 6.4. bge-small came from `DOCIFY_MODELS_DIR=/tmp/docify-models`; without the model, 13 tests fail with `ModelNotPreparedError` on `main` and on the branch alike.
+
+### Automated checks
+
+- `make check` on the commit that adds this section: `tsc` exit 0, `bun test` 49 pass, 0 fail. `main` before this work (`9c2f351`) had 41, all passing in two runs; the 8 new tests are in `tests/openai-embed.test.ts`. The 3 Ollama tests from 2026-11-04 (`tests/ollama.test.ts`) pass in both.
+- `make app` and `swift build`: exit 0.
+- Re-break checks for the `openai` provider: each change below made exactly its own test fail, and the restored file was byte-identical to the original (`cmp`). Dropping the reorder by `index`; dropping the key masking in error bodies; the old identity without the `openai:` prefix; always appending `/v1`; dropping the `Authorization` header; not treating a 400 context-length error as too large; dropping the request timeout; not passing the cancel signal from prepare; not mapping the aborted request to `cancelled`.
+- One full-suite run, the first after the model download, had one failure in `tests/generations.test.ts` ("a new process on the same store returns the same passage ids": the 9th hit differed). It did not repeat in five later runs on the branch and was not seen on `main`. Cause unknown.
+
+### macOS app, end to end
+
+Against a temporary store and a fake OpenAI-compatible server on `127.0.0.1`, with the app started without any `LITELLM_*` variables and pointed at the branch CLI through `DOCIFY_BIN`. The app was driven with AppleScript (System Events) and real keystrokes; `agent-device` could not drive the unbundled binary because its runner took focus.
+
+- Settings: typing provider LiteLLM, model, `4` dimensions and `0,6` (Polish decimal comma) and clicking Save while the dimensions field still had focus wrote `openai`, the model, `4`, `0.6` and `"graph": null` to `config.json`. The base URL was stored without the trailing `/v1/`, the key was in the Keychain and not in `config.json`, and the window said every source must be prepared again.
+- Prepare from the window: the fake server received `POST /v1/embeddings` with `Authorization: Bearer <test key>`, so the key reached the CLI from the Keychain. The source became `ready` with `openai:<model>` in the Embeddings column. A vector search through the same server returned `ok`.
+- Add (sheet), Remove (with confirmation) and Cancel worked. Before the cancel fix, Cancel took effect only after the request in flight finished; the source ended `failed` with "preparation cancelled".
+- Found and fixed during this run: number fields only committed on Enter or focus loss, so Save could store the old value; a remote server that stopped answering could hang prepare and ignore Cancel.
+- `make app-run` started the app with `DOCIFY_BIN` set to the checkout's `src/cli.ts` (read from the process environment).
+
+Not verified: a real LiteLLM server, similarity thresholds for any remote model, Settings with Ollama selected, and day-to-day use beyond the scripted run. `make link`, `setup`, `serve`, `mcp`, `eval` and `mcp-smoke` were checked with `make -n` only.

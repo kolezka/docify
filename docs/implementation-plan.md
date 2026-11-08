@@ -12,6 +12,15 @@ Status (2026-10-21, branch `feat/docify-mvp`): phases 0 to 6 implemented and ver
 | 5 Clients | done | Claude Code and Codex installed and exercised separately |
 | 6 Evaluate and close | done | 28 questions, targets met in combined mode; known limits in `docs/evaluation.md` |
 
+Work after the MVP, outside these phases:
+
+| Change | Date | Evidence |
+| --- | --- | --- |
+| Ollama embedding provider (`bge-m3`), per-model similarity thresholds, docker-compose | 2026-11-04 | `docs/evaluation.md` |
+| OpenAI-compatible embedding provider for a remote LiteLLM, with request timeout and cancel | 2026-11-08 | `docs/verification.md` |
+| macOS app (`apps/macos`) for sources and provider settings | 2026-11-08 | `docs/verification.md` |
+| `Makefile` shortcuts and a project `CLAUDE.md` | 2026-11-08 | `docs/verification.md` |
+
 Implement the MVP in small, reviewable commits, with a working vertical slice early. Use `docs/design.md` for scope and contracts. Do not remove Graphify, embeddings, or either client integration to declare completion. Proposed defaults become working assumptions when the implementation prompt is used; record any subsequent user decisions.
 
 ## Phase 0: establish the workspace and prove feasibility
