@@ -72,6 +72,13 @@ docify remove mylib@2.1                              # deletes the source, its g
 
 The source id is `library@version` (`library@unknown` without `--version`) unless `add --id` sets one.
 
+URLs ending in `llm.txt` or `llms.txt` are read as Markdown indexes, including when served as `text/plain`. Docify follows their inline Markdown links to documentation pages, including extensionless routes, within the registered origin and directory. The usual crawl limits apply: at most 50 documents (including the index), two link levels, 5 MB per page and 50 MB total. This is a bounded crawl, not a guarantee that the whole site is indexed.
+
+```bash
+docify add openclaw https://docs.openclaw.ai/llms.txt --id openclaw
+docify prepare openclaw --no-graph
+```
+
 Unknown versions stay `unknown`; `downloaded_at` is recorded separately. Each prepare builds a new generation in staging and activates it atomically. A failed or interrupted prepare keeps the previous generation and marks the source `stale`.
 
 Graph extraction calls an LLM. The default provider is the LiteLLM proxy named by `LITELLM_BASE_URL` and `LITELLM_API_KEY`, model `deepseek/deepseek-flash-nothink`, passed to Graphify only for that subprocess. Change it in `~/.cache/docify/config.json` (`graph`), or set `"graph": null` to disable it.
