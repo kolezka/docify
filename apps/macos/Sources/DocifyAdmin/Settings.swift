@@ -106,12 +106,12 @@ final class SettingsModel: ObservableObject {
         apiKey = Credentials.apiKey
     }
 
-    /// Starting values when switching provider. Thresholds stay as they are: they are only measured for bge models.
+    /// Starting values when switching provider: the configurations measured in docs/evaluation.md.
+    /// bge-m3 needs lower thresholds; with the bge-small ones it hides a must-pass question.
     func applyPreset(for provider: String) {
         switch provider {
-        case "transformers": (model, dims, queryPrefix) = (Defaults.model, String(Defaults.dims), Defaults.prefix)
-        case "ollama": (model, dims, queryPrefix) = ("bge-m3", "1024", "")
-        case "openai": (model, dims, queryPrefix) = ("text-embedding-3-small", "1536", "")
+        case "transformers": (model, dims, queryPrefix, strong, weak) = (Defaults.model, String(Defaults.dims), Defaults.prefix, String(Defaults.strong), String(Defaults.weak))
+        case "ollama", "openai": (model, dims, queryPrefix, strong, weak) = ("bge-m3", "1024", "", "0.58", "0.48")
         default: break
         }
     }

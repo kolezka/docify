@@ -62,6 +62,22 @@ Same 28 questions, budget 1500, no graph (`--no-graph`), Ollama 0.40.6 with `bge
 
 bge-m3 similarities run about 0.08 below bge-small on this corpus. With the bge-small thresholds the evidence gate hid must-pass q06 (`no_match`): its best similarity is 0.497. The best absent-question similarities are 0.497 (q26) and 0.491 (q19), so similarity alone does not separate them here either; both come back as `weak_match`. The thresholds 0.58 / 0.48 were picked after seeing these 28 questions, so the bge-m3 rows are optimistic for unseen questions. On this small English corpus bge-m3 does not change MRR in combined mode; the measured gain is larger on a bigger corpus (next section). p95 includes the LAN round trip to the embedding server.
 
+## Embeddings through a remote LiteLLM (2026-11-08)
+
+Same 28 questions, budget 1500, no graph, provider `openai` against a LiteLLM proxy on another machine that serves `bge-m3` (`ollama/bge-m3`) and `bge-small-en` (`ollama/bge-small-en:v1.5`). Reproduce: a store with the matching config from the README, the three fixture sources prepared with `--no-graph`, then `bun scripts/eval.ts --modes combined,vector` and `bun scripts/eval-similarity.ts`, which prints each question's best vector similarity.
+
+| Model through LiteLLM, mode | Pass | Must-pass | Passage recall | MRR | p50 ms | p95 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| bge-m3, combined, 0.58 / 0.48 | 28/28 | 16/16 | 1.000 | 0.872 | 167.8 | 234.8 |
+| bge-m3, vector, 0.58 / 0.48 | 27/28 | 16/16 | 0.963 | 0.892 | 169.0 | 209.6 |
+| bge-small-en, combined, 0.65 / 0.5 | 27/28 | 16/16 | 0.963 | 0.858 | 181.2 | 262.2 |
+| bge-small-en, vector, 0.65 / 0.5 | 27/28 | 16/16 | 0.963 | 0.858 | 175.6 | 296.8 |
+
+- bge-m3 through LiteLLM gives the same similarities as Ollama reached directly (q06 0.497, q26 0.497, q19 0.491) and the same scores, so 0.58 / 0.48 apply unchanged.
+- bge-small-en through LiteLLM scores about 0.03 to 0.04 above the in-process bge-small: q04 0.614, absent q27 0.652 and q26 0.600, against 0.576, 0.616 and 0.572 in process. The in-process thresholds 0.65 / 0.5 still pass every must-pass question. Absent q27 is above 0.65 on similarity alone, yet it still ends as `no_match`, because `Bun.redis` occurs nowhere in scope. A weak threshold above 0.614 would hide must-pass q04, so the defaults stay.
+- Latency misses the 150 ms p95 target. A bare `/v1/embeddings` request for one query took a median of 246 ms for bge-m3 and 196 ms for bge-small-en (10 requests each, outliers up to 1 s), so search time is the round trip to LiteLLM and its Ollama, not docify. Embedding one fixture source during prepare took 1.2 to 2 s.
+- As before, the thresholds were chosen after seeing these questions.
+
 ## Findings from a larger corpus (ocdocs, 2026-11-04)
 
 Measured in a separate project, ocdocs (hybrid BM25 plus embeddings with reciprocal rank fusion over docs.openclaw.ai: 1443 pages, 18405 chunks), on 50 questions whose relevant pages were labelled independently by a different model family, without using the search engine (219 relevant pages, 4.4 per question). They are not docify measurements; they say what to try and what to skip here.
