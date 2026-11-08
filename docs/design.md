@@ -18,6 +18,9 @@ These are design defaults, not choices the user previously made between offline,
   With the bundled `docker-compose.yml` that server is on `127.0.0.1`, so queries stay local.
   Pointing `embeddingUrl` at another machine is an explicit user choice in `config.json`, and
   queries then depend on that server; the default in-process provider is unchanged.
+  Amendment 2026-11-07: the optional `openai` embedding provider (any OpenAI-compatible server,
+  such as a remote LiteLLM) sends every query to that server. It runs only when `config.json`
+  selects it; credentials present in the environment never switch it on.
 - Ingestion uses a local semantic provider by default. Provider selection and preparation cost are explicit. Discovered API keys do not authorize remote processing or spending.
 - Sources are local Markdown/HTML files or directories and public static URLs, with bounded crawling restricted to the registered origin and path.
 

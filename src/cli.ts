@@ -149,6 +149,11 @@ async function setup(docify: Docify) {
     console.log(`checking Ollama at ${docify.config.embeddingUrl} for ${docify.config.embeddingModel}`);
     await embedTexts(docify.config, ["docify setup check"]);
     console.log(`setup complete; queries embed through ${docify.config.embeddingUrl}`);
+  } else if (docify.config.embeddingProvider === "openai") {
+    const urlEnv = docify.config.embeddingBaseUrlEnv;
+    console.log(`checking the embedding server in ${urlEnv} for ${docify.config.embeddingModel}`);
+    await embedTexts(docify.config, ["docify setup check"]);
+    console.log(`setup complete; queries embed through the server in ${urlEnv}, so they need the network`);
   } else {
     console.log(`downloading embedding model ${docify.config.embeddingModel} into ${docify.config.modelsDir}`);
     await loadEmbedder(docify.config, true);
