@@ -1,6 +1,6 @@
 <script lang="ts">
   import StatusChip from "../components/StatusChip.svelte";
-  import { api, errorText, type SourceInfo } from "../lib/api.ts";
+  import { api, downloadArtifact, errorText, type SourceInfo } from "../lib/api.ts";
   import { ago, fraction } from "../lib/format.ts";
   import { button, input, panel, sourceTone } from "../lib/ui.ts";
 
@@ -8,6 +8,44 @@
 
   let busy = $state(false);
   let confirmRemove = $state(false);
+  let editingCrawl4ai = $state(false);
+  let stream = $state("");
+  let waitUntil = $state("");
+  let waitFor = $state("");
+  let delay = $state("");
+  let scanFullPage = $state("");
+  let captureScreenshot = $state("");
+  let capturePdf = $state("");
+
+  type Crawl4aiSettings = { stream?: boolean; waitUntil?: string; waitFor?: string; delayBeforeReturnHtml?: number; scanFullPage?: boolean; captureScreenshot?: boolean; capturePdf?: boolean };
+  const crawl4ai = $derived((s as SourceInfo & { crawl4ai?: Crawl4aiSettings | null }).crawl4ai ?? {});
+
+  function editCrawl4ai() {
+    stream = crawl4ai.stream === undefined ? "" : String(crawl4ai.stream);
+    waitUntil = crawl4ai.waitUntil ?? "";
+    waitFor = crawl4ai.waitFor ?? "";
+    delay = crawl4ai.delayBeforeReturnHtml === undefined ? "" : String(crawl4ai.delayBeforeReturnHtml);
+    scanFullPage = crawl4ai.scanFullPage === undefined ? "" : String(crawl4ai.scanFullPage);
+    captureScreenshot = crawl4ai.captureScreenshot === undefined ? "" : String(crawl4ai.captureScreenshot);
+    capturePdf = crawl4ai.capturePdf === undefined ? "" : String(crawl4ai.capturePdf);
+    editingCrawl4ai = true;
+  }
+
+  function saveCrawl4ai(event: SubmitEvent) {
+    event.preventDefault();
+    const options: Crawl4aiSettings = { ...crawl4ai };
+    if (stream === "") delete options.stream; else options.stream = stream === "true";
+    if (waitUntil.trim()) options.waitUntil = waitUntil.trim(); else delete options.waitUntil;
+    if (waitFor.trim()) options.waitFor = waitFor.trim(); else delete options.waitFor;
+    if (delay === "") delete options.delayBeforeReturnHtml; else options.delayBeforeReturnHtml = Number(delay);
+    if (scanFullPage === "") delete options.scanFullPage; else options.scanFullPage = scanFullPage === "true";
+    if (captureScreenshot === "") delete options.captureScreenshot; else options.captureScreenshot = captureScreenshot === "true";
+    if (capturePdf === "") delete options.capturePdf; else options.capturePdf = capturePdf === "true";
+    run(async () => {
+      await api(path, { method: "PATCH", body: { crawl4ai: options } });
+      editingCrawl4ai = false;
+    });
+  }
   let confirmTimer: ReturnType<typeof setTimeout> | undefined;
 
   const path = $derived(`/api/sources/${encodeURIComponent(s.id)}`);
@@ -28,6 +66,14 @@
       busy = false;
     }
     onchanged();
+  }
+
+  async function saveArtifact(kind: "screenshot" | "pdf") {
+    try {
+      await downloadArtifact(`${path}/artifacts/${kind}`, kind === "screenshot" ? "screenshot.png" : "page.pdf");
+    } catch (err) {
+      onerror(errorText(err));
+    }
   }
 
   function remove() {
@@ -83,6 +129,45 @@
         <option value="browserless">Browserless</option>
       </select>
     </label>
+    {#if editingCrawl4ai}
+      <form class="flex flex-wrap items-end gap-2 text-[12px] text-zinc-500 dark:text-zinc-400" onsubmit={saveCrawl4ai}>
+        <label class="flex flex-col gap-1">Stream
+          <select class={input({ class: "w-auto" })} bind:value={stream} disabled={busy || preparing}>
+            <option value="">Default</option><option value="true">On</option><option value="false">Off</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1">Wait until
+          <select class={input({ class: "w-auto" })} bind:value={waitUntil} disabled={busy || preparing}>
+            <option value="">Default</option><option value="load">Load</option><option value="domcontentloaded">DOM content loaded</option><option value="networkidle">Network idle</option><option value="commit">Commit</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1">Wait for
+          <input class={input({ class: "w-40" })} bind:value={waitFor} placeholder="Default" disabled={busy || preparing} />
+        </label>
+        <label class="flex flex-col gap-1">Delay (seconds)
+          <input class={input({ class: "w-24" })} type="number" min="0" step="any" value={delay} oninput={(event) => (delay = event.currentTarget.value)} placeholder="Default" disabled={busy || preparing} />
+        </label>
+        <label class="flex flex-col gap-1">Scan full page
+          <select class={input({ class: "w-auto" })} bind:value={scanFullPage} disabled={busy || preparing}>
+            <option value="">Default</option><option value="true">On</option><option value="false">Off</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1">Capture screenshot
+          <select class={input({ class: "w-auto" })} bind:value={captureScreenshot} disabled={busy || preparing}>
+            <option value="">Default</option><option value="true">On</option><option value="false">Off</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1">Capture PDF
+          <select class={input({ class: "w-auto" })} bind:value={capturePdf} disabled={busy || preparing}>
+            <option value="">Default</option><option value="true">On</option><option value="false">Off</option>
+          </select>
+        </label>
+        <button type="submit" class={button({ size: "xs" })} disabled={busy || preparing}>Save</button>
+        <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingCrawl4ai = false)}>Cancel</button>
+      </form>
+    {:else}
+      <div><button type="button" class={button({ size: "xs" })} disabled={busy || preparing} onclick={editCrawl4ai}>Crawl4AI settings</button></div>
+    {/if}
   {/if}
 
   {#if preparing}
@@ -104,6 +189,17 @@
     </div>
   {:else if !failure}
     <div class="text-[12px] text-zinc-500 dark:text-zinc-400">Not prepared yet.</div>
+  {/if}
+
+  {#if Array.isArray(g?.stats.artifacts)}
+    <div class="flex flex-wrap gap-1">
+      {#if g.stats.artifacts.includes("screenshot")}
+        <button type="button" class={button({ size: "xs" })} onclick={() => saveArtifact("screenshot")}>Download screenshot</button>
+      {/if}
+      {#if g.stats.artifacts.includes("pdf")}
+        <button type="button" class={button({ size: "xs" })} onclick={() => saveArtifact("pdf")}>Download PDF</button>
+      {/if}
+    </div>
   {/if}
 
   {#if failure}

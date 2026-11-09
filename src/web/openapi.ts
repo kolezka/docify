@@ -81,13 +81,26 @@ export function openApiSpec() {
         patch: {
           summary: "Change a URL source crawler",
           parameters: [idParam("Source id")],
-          requestBody: jsonBody({ type: "object", required: ["crawlProvider"], properties: { crawlProvider: { type: ["string", "null"], enum: ["builtin", "crawl4ai", "browserless", null], description: "null inherits the global crawler" } } }),
+          requestBody: jsonBody({ type: "object", properties: {
+            crawlProvider: { type: ["string", "null"], enum: ["builtin", "crawl4ai", "browserless", null], description: "null inherits the global crawler" },
+            crawl4ai: { type: "object", description: "Replaces the Crawl4AI options for this URL source", additionalProperties: false, properties: {
+              stream: { type: "boolean" }, waitUntil: { type: "string", enum: ["load", "domcontentloaded", "networkidle", "commit"] },
+              waitFor: { type: "string", maxLength: 1000 }, delayBeforeReturnHtml: { type: "number", minimum: 0, maximum: 60 }, scanFullPage: { type: "boolean" }, captureScreenshot: { type: "boolean" }, capturePdf: { type: "boolean" },
+            } },
+          } }),
           responses: { "200": ok("Crawler updated"), ...errors(400, 401, 404, 409, 415) },
         },
         delete: {
           summary: "Remove a source",
           parameters: [idParam("Source id")],
           responses: { "200": ok("Removed", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(401, 404, 409) },
+        },
+      },
+      "/api/sources/{id}/artifacts/{kind}": {
+        get: {
+          summary: "Download an artifact from the active generation",
+          parameters: [idParam("Source id"), { name: "kind", in: "path", required: true, schema: { type: "string", enum: ["screenshot", "pdf"] } }],
+          responses: { "200": { description: "PNG or PDF attachment" }, ...errors(401, 404) },
         },
       },
       "/api/sources/{id}/graph": {

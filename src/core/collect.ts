@@ -1,12 +1,14 @@
 import { readdirSync, statSync, readFileSync, realpathSync, lstatSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { kindFromPath, type DocKind } from "./normalize.ts";
+import { extractPdfText } from "./pdf.ts";
 
 export interface RawDoc {
   path: string; // relative path or URL path, unique within the snapshot
   url: string | null;
   kind: DocKind;
   bytes: Uint8Array;
+  extracted?: boolean;
 }
 
 export interface CrawlLimits {
@@ -80,6 +82,8 @@ export interface CrawlOptions {
   // Probe `<route>.md` exports before linked routes (default true). Off for a rendering service,
   // where each probe costs a full browser render and plain text comes back wrapped in HTML.
   markdownExports?: boolean;
+  pdfFetcher?: Fetcher;
+  onAcceptedPage?: (url: string) => void;
 }
 
 // Breadth-first crawl limited to the start URL's origin and directory path.
@@ -96,12 +100,12 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     return c.toString();
   };
 
-  const fetchInScope = async (url: URL) => {
+  const fetchInScope = async (url: URL, selectedFetcher: Fetcher = fetcher) => {
     let res: Response | null = null;
     let current = url;
     for (let hop = 0; hop <= limits.maxRedirects; hop++) {
       const timeout = AbortSignal.timeout(limits.timeoutMs);
-      res = await fetcher(current.toString(), { redirect: "manual", signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout });
+      res = await selectedFetcher(current.toString(), { redirect: "manual", signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout });
       if (res.status < 300 || res.status >= 400) break;
       const loc = res.headers.get("location");
       if (!loc) break;
@@ -140,7 +144,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
         fetched = null;
       }
     }
-    fetched ??= await fetchInScope(url);
+    fetched ??= await fetchInScope(url, options.pdfFetcher && /\.pdf$/i.test(url.pathname) ? options.pdfFetcher : fetcher);
     if (!fetched) continue;
     const { res, current } = fetched;
     if (collected.has(canonical(current))) {
@@ -152,8 +156,9 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
       continue;
     }
     const type = res.headers.get("content-type") ?? "";
+    const isPdf = !!options.pdfFetcher && (/^application\/pdf(?:\s*;|\s*$)/i.test(type) || (/\.pdf$/i.test(current.pathname) && /^(?:application\/octet-stream)?(?:\s*;|\s*$)/i.test(type)));
     const isMarkdownIndex = /\/llms?\.txt$/i.test(current.pathname);
-    const kind: DocKind | null = /text\/html|application\/xhtml/.test(type) ? "html" : /markdown/.test(type) || isMarkdownIndex ? "markdown" : kindFromPath(current.pathname);
+    const kind: DocKind | null = isPdf ? "markdown" : /text\/html|application\/xhtml/.test(type) ? "html" : /markdown/.test(type) || isMarkdownIndex ? "markdown" : kindFromPath(current.pathname);
     if (!kind) continue;
     const bytes = await readCapped(res, limits.maxBytesPerPage);
     if (!bytes) continue;
@@ -161,9 +166,18 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded ${limits.maxTotalBytes} bytes`);
     const path = current.pathname.slice(scopePath.length) || "index.html";
     collected.add(canonical(current));
-    docs.push({ path, url: canonical(current), kind, bytes });
+    let content = bytes;
+    if (isPdf) {
+      try {
+        content = new TextEncoder().encode(await extractPdfText(bytes));
+      } catch (error) {
+        throw new Error(`failed to extract PDF ${current}: ${error instanceof Error ? error.message : error}`);
+      }
+    }
+    docs.push({ path, url: canonical(current), kind, bytes: content, ...(isPdf ? { extracted: true } : {}) });
+    options.onAcceptedPage?.(current.toString());
     // Ordinary Markdown pages also contain navigation, not just llms.txt indexes.
-    if (depth < limits.maxDepth) {
+    if (!isPdf && depth < limits.maxDepth) {
       const text = new TextDecoder().decode(bytes);
       const links = kind === "html"
         ? [...text.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((m) => m[1]!)
@@ -178,6 +192,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
         const key = canonical(link);
         // Documentation routes often have no extension, including links from HTML.
         const documentPath = /(\.html?|\/|\.mdx?)$/.test(link.pathname)
+          || (!!options.pdfFetcher && /\.pdf$/i.test(link.pathname))
           || !/\.[^/]+$/.test(link.pathname);
         if (!inScope(link) || seen.has(key) || !documentPath) continue;
         seen.add(key);

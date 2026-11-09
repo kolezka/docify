@@ -124,6 +124,12 @@ Pages that only fill in with JavaScript can be rendered by a [Crawl4AI](https://
 
 `crawl4aiApiKeyEnv` names the environment variable holding the server's bearer token, never the token itself. To select Crawl4AI for only one source, leave the global default unchanged and use `--crawler crawl4ai` instead.
 
+Each URL source card has Crawl4AI settings for streaming, SPA waits and optional captures. `stream` selects `/crawl/stream` instead of `/crawl`; Docify buffers the bounded response and requires one result and a completion record. `waitUntil` accepts `load`, `domcontentloaded`, `networkidle` or `commit`; `waitFor` is at most 1,000 characters; `delayBeforeReturnHtml` is 0 to 60 seconds; and `scanFullPage` is a boolean. Unset fields use the service defaults, except streaming defaults to off. These settings apply on the next prepare and only to Crawl4AI. The source API's `PATCH /api/sources/:id` accepts a `crawl4ai` object that replaces these per-source options.
+
+For Crawl4AI sources, linked `.pdf` URLs are fetched directly by Docify, not rendered by Crawl4AI. Responses identified as `application/pdf`, or `.pdf` responses served without a type or as `application/octet-stream`, are extracted as text and indexed as Markdown. The stored raw document is extracted text, not the original PDF; citation lines refer to normalized text, not PDF page or line numbers. Extraction allows at most 20 MiB, 500 pages and 2,000,000 characters, in addition to the crawl's byte limits. It does not perform OCR; a scan without extractable text fails preparation. Local sources and the other URL providers do not use this PDF extraction path.
+
+Optional screenshot and PDF captures use the same Crawl4AI request and SPA settings as the start page, not every crawled page. They are output artifacts, not PDF inputs or indexed text. Each is limited to the per-page byte limit (5 MB by default), validated, saved in the generation's `artifacts/` directory and downloadable from the active source card. A capture failure fails preparation. Docify checks the reported final URL after rendering, not each browser navigation; it cannot guarantee the capture and HTML came from the same URL if the page navigates during capture.
+
 Browserless uses its `/function` endpoint to render pages. Configure its base URL and token variable name, then select `browserless` for each source that needs it:
 
 ```json

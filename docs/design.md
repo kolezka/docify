@@ -32,7 +32,12 @@ These are design defaults, not choices the user previously made between offline,
   do not use these providers. The selected collector is recorded with the generation and a change
   prevents the unchanged shortcut.
 
-  Crawl4AI renders one URL per `POST /crawl`; Browserless renders one URL per `POST /function`.
+  Crawl4AI renders one URL per `POST /crawl`, or `POST /crawl/stream` when the source's `stream` option is true; Browserless renders one URL per `POST /function`. Crawl4AI's stream is buffered with a response size cap and must contain exactly one result and a completion record. The source card and `PATCH /api/sources/:id` set per-source `crawl4ai` options: boolean `stream`, `scanFullPage`, `captureScreenshot` and `capturePdf`; `waitUntil` (`load`, `domcontentloaded`, `networkidle`, `commit`); `waitFor` (at most 1,000 characters); and `delayBeforeReturnHtml` (0 to 60 seconds). A supplied options object replaces the previous one. Unset rendering options defer to the service, except `stream` defaults to false. Changes apply on the next prepare.
+
+  Crawl4AI sources can follow in-scope `.pdf` links using a direct Docify fetch. A response with `application/pdf`, or a `.pdf` response without a type or with `application/octet-stream`, is converted to text and indexed as Markdown. Its stored raw content is extracted text, not PDF bytes, and citation lines are marked as normalized rather than original PDF lines. PDF extraction caps input at 20 MiB, 500 pages and 2,000,000 text characters, in addition to crawl byte limits (normally 5 MB per page and 50 MB total). There is no OCR; a PDF with no extractable text fails preparation. This input path is not enabled for local sources or the other URL providers.
+
+  Optional screenshot and PDF output captures use the start page's Crawl4AI request and SPA settings. The artifacts are not indexed; their bytes affect the snapshot hash and are saved under the generation's `artifacts/` directory. The web UI downloads artifacts from the active generation. Each decoded artifact is limited to the crawl's per-page byte limit and checked for a valid image or PDF signature; a capture failure fails preparation. Docify checks the reported final URL after rendering, not each navigation. A page navigating during capture may produce HTML and artifacts from different URLs.
+
   Browserless settings are `browserlessUrl` (default `http://127.0.0.1:3000`, HTTP(S) without
   credentials, query or fragment), `browserlessApiKeyEnv` (default `BROWSERLESS_API_KEY`) and
   `browserlessTimeoutSeconds` (default 120). The named environment variable supplies an optional
@@ -48,7 +53,7 @@ These are design defaults, not choices the user previously made between offline,
 
 If no adequate local model is available, continue independent work and ask one focused question about provider and budget before remote or paid semantic processing. Model downloads belong to explicit preparation, never a query side effect.
 
-Defer remote Git cloning, PDFs, authenticated sources, browser-rendered crawling beyond the optional Crawl4AI and Browserless providers, terminal or native desktop interfaces, multiuser access, and deployment. A graph canvas is unnecessary for the first UI.
+The original MVP deferred remote Git cloning, PDFs, authenticated sources, other browser-rendered crawling, terminal or native desktop interfaces, multiuser access, and deployment. The Crawl4AI PDF input exception is described above. A graph canvas was not required for the first UI.
 
 ## Repository starting point
 

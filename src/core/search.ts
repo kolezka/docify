@@ -1317,6 +1317,7 @@ export interface SourceInfo {
   locator: string;
   crawlProvider: string | null;
   effectiveCrawlProvider: string | null;
+  crawl4ai?: import("./docify.ts").Crawl4aiSourceOptions;
   state: "ready" | "stale" | "preparing" | "failed" | "not_indexed";
   activeGeneration: null | {
     id: number;
@@ -1345,6 +1346,7 @@ export function sources(docify: Docify): SourceInfo[] {
       locator: s.locator,
       crawlProvider: s.kind === "url" ? (JSON.parse(s.options).crawlProvider ?? null) : null,
       effectiveCrawlProvider: s.kind === "url" ? (JSON.parse(s.options).crawlProvider ?? docify.config.crawlProvider) : null,
+      crawl4ai: s.kind === "url" ? (JSON.parse(s.options).crawl4ai ?? {}) : undefined,
       state,
       activeGeneration: active
         ? {

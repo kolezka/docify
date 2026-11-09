@@ -52,6 +52,18 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   return data as T;
 }
 
+export async function downloadArtifact(path: string, name: string): Promise<void> {
+  const res = await fetch(path, { headers: { "x-docify-token": token } });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(data?.code ?? String(res.status), data?.error ?? res.statusText);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const link = Object.assign(document.createElement("a"), { href: url, download: name });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 // The whole store as a .tar.gz, saved through a temporary link.
 export async function downloadBackup(): Promise<string> {
   const res = await fetch("/api/export", { headers: { "x-docify-token": token } });
