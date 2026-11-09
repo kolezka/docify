@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 export interface GraphProviderConfig {
   backend: string; // Graphify --backend value
@@ -49,17 +49,44 @@ export const DEFAULT_GRAPH: GraphProviderConfig = {
   timeoutSeconds: 900,
 };
 
+export class ConfigError extends Error {
+  constructor(
+    message: string,
+    readonly field?: string,
+  ) {
+    super(message);
+  }
+}
+
+type Env = Record<string, string | undefined>;
+
 export function docifyHome(): string {
   return process.env.DOCIFY_HOME ?? join(homedir(), ".cache", "docify");
 }
 
-export function loadConfig(home = docifyHome()): DocifyConfig {
-  const file = join(home, "config.json");
-  const user = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<DocifyConfig>) : {};
+export function configFilePath(home: string): string {
+  return join(home, "config.json");
+}
+
+// A missing file is an empty config. A malformed one throws, so a save never overwrites it blindly.
+export function readConfigFile(home: string): Record<string, unknown> {
+  const file = configFilePath(home);
+  if (!existsSync(file)) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new ConfigError(`${file} is not valid JSON: ${err instanceof Error ? err.message : err}`);
+  }
+  if (!isPlainObject(parsed)) throw new ConfigError(`${file} is not a JSON object`);
+  return parsed;
+}
+
+export function defaultConfig(home: string, env: Env = process.env): DocifyConfig {
   return {
     home,
     embeddingProvider: "transformers",
-    embeddingUrl: process.env.DOCIFY_EMBED_URL ?? "http://localhost:11434",
+    embeddingUrl: env.DOCIFY_EMBED_URL ?? "http://localhost:11434",
     embeddingBaseUrlEnv: "LITELLM_BASE_URL",
     embeddingApiKeyEnv: "LITELLM_API_KEY",
     embeddingTimeoutSeconds: 120,
@@ -69,10 +96,271 @@ export function loadConfig(home = docifyHome()): DocifyConfig {
     strongVectorSim: 0.65,
     weakVectorSim: 0.5,
     graph: DEFAULT_GRAPH,
-    graphifyBin: process.env.DOCIFY_GRAPHIFY_BIN ?? join(home, "graphify-venv", "bin", "graphify"),
-    modelsDir: process.env.DOCIFY_MODELS_DIR ?? join(home, "models"),
+    graphifyBin: env.DOCIFY_GRAPHIFY_BIN ?? join(home, "graphify-venv", "bin", "graphify"),
+    modelsDir: env.DOCIFY_MODELS_DIR ?? join(home, "models"),
     keepGenerations: 3,
     lexicalWeight: 1,
-    ...user,
+  };
+}
+
+export function loadConfig(home = docifyHome()): DocifyConfig {
+  return { ...defaultConfig(home), ...(readConfigFile(home) as Partial<DocifyConfig>) };
+}
+
+// ---- editing (web UI) --------------------------------------------------------
+
+export const EDITABLE_KEYS = [
+  "embeddingProvider",
+  "embeddingModel",
+  "embeddingDims",
+  "embeddingQueryPrefix",
+  "embeddingUrl",
+  "embeddingBaseUrlEnv",
+  "embeddingApiKeyEnv",
+  "embeddingTimeoutSeconds",
+  "strongVectorSim",
+  "weakVectorSim",
+  "lexicalWeight",
+  "graph",
+  "keepGenerations",
+] as const;
+export type EditableKey = (typeof EDITABLE_KEYS)[number];
+export type EditableConfig = Pick<DocifyConfig, EditableKey>;
+export type ConfigPatch = Partial<Omit<EditableConfig, "graph">> & { graph?: Partial<GraphProviderConfig> | null };
+
+// graphifyBin is executed during prepare and modelsDir is where model code is loaded from, so a
+// browser must never be able to point them somewhere else. They stay editable in config.json.
+const LOCKED_KEYS: Record<string, string> = { home: "DOCIFY_HOME", graphifyBin: "DOCIFY_GRAPHIFY_BIN", modelsDir: "DOCIFY_MODELS_DIR" };
+
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+// Model names reach argv and the model loader: no leading dash, no path traversal.
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
+const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds"];
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function numberField(field: string, v: unknown, min: number, max: number, integer = false): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new ConfigError(`${field} must be a number`, field);
+  if (integer && !Number.isInteger(v)) throw new ConfigError(`${field} must be a whole number`, field);
+  if (v < min || v > max) throw new ConfigError(`${field} must be between ${min} and ${max}`, field);
+  return v;
+}
+
+function stringField(field: string, v: unknown, max: number, pattern?: RegExp, hint?: string): string {
+  if (typeof v !== "string") throw new ConfigError(`${field} must be text`, field);
+  const s = v.trim();
+  if (s.length > max) throw new ConfigError(`${field} is longer than ${max} characters`, field);
+  if (pattern && !pattern.test(s)) throw new ConfigError(`${field} ${hint ?? "has an invalid format"}`, field);
+  return s;
+}
+
+const envNameField = (field: string, v: unknown) =>
+  stringField(field, v, 128, ENV_NAME, "must be an environment variable name (letters, digits, underscore)");
+
+function modelField(field: string, v: unknown): string {
+  const s = stringField(field, v, 200, MODEL_NAME, "must be a model name such as bge-m3 or org/model");
+  if (s.split("/").includes("..")) throw new ConfigError(`${field} must not contain ..`, field);
+  return s;
+}
+
+function urlField(field: string, v: unknown): string {
+  const s = stringField(field, v, 500);
+  let url: URL;
+  try {
+    url = new URL(s);
+  } catch {
+    throw new ConfigError(`${field} must be a URL such as http://localhost:11434`, field);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new ConfigError(`${field} must use http or https`, field);
+  return s.replace(/\/+$/, "");
+}
+
+function graphField(v: unknown): Partial<GraphProviderConfig> | null {
+  if (v === null) return null;
+  if (!isPlainObject(v)) throw new ConfigError("graph must be an object or null", "graph");
+  const out: Partial<GraphProviderConfig> = {};
+  for (const [k, value] of Object.entries(v)) {
+    const field = `graph.${k}`;
+    switch (k) {
+      case "backend":
+        out.backend = stringField(field, value, 40, /^[A-Za-z0-9][A-Za-z0-9_-]*$/, "must be a Graphify backend name such as openai");
+        break;
+      case "model":
+        out.model = modelField(field, value);
+        break;
+      case "baseUrlEnv":
+        out.baseUrlEnv = envNameField(field, value);
+        break;
+      case "apiKeyEnv":
+        out.apiKeyEnv = envNameField(field, value);
+        break;
+      case "baseUrlSuffix":
+        out.baseUrlSuffix = stringField(field, value, 100, /^(\/[A-Za-z0-9._~/-]*)?$/, "must be empty or a path starting with /");
+        break;
+      case "maxConcurrency":
+        out.maxConcurrency = numberField(field, value, 1, 64, true);
+        break;
+      case "timeoutSeconds":
+        out.timeoutSeconds = numberField(field, value, 1, 86_400);
+        break;
+      default:
+        throw new ConfigError(`unknown graph setting: ${k} (known: ${GRAPH_KEYS.join(", ")})`, field);
+    }
+  }
+  return out;
+}
+
+// Strict on purpose: a value of the wrong type or an unknown key is an error, never ignored.
+export function validateConfigPatch(input: unknown): ConfigPatch {
+  if (!isPlainObject(input)) throw new ConfigError("settings must be a JSON object");
+  const out: ConfigPatch = {};
+  for (const [key, v] of Object.entries(input)) {
+    if (key in LOCKED_KEYS) {
+      throw new ConfigError(`${key} cannot be changed from the web UI; edit config.json or set ${LOCKED_KEYS[key]}`, key);
+    }
+    switch (key as EditableKey) {
+      case "embeddingProvider":
+        if (v !== "transformers" && v !== "ollama" && v !== "openai") throw new ConfigError("embeddingProvider must be transformers, ollama or openai", key);
+        out.embeddingProvider = v;
+        break;
+      case "embeddingModel":
+        out.embeddingModel = modelField(key, v);
+        break;
+      case "embeddingDims":
+        out.embeddingDims = numberField(key, v, 1, 65_536, true);
+        break;
+      case "embeddingQueryPrefix":
+        // Not trimmed: a trailing space can be part of the prefix the model expects.
+        if (typeof v !== "string" || v.length > 500) throw new ConfigError("embeddingQueryPrefix must be text of at most 500 characters", key);
+        out.embeddingQueryPrefix = v;
+        break;
+      case "embeddingUrl":
+        out.embeddingUrl = urlField(key, v);
+        break;
+      case "embeddingBaseUrlEnv":
+        out.embeddingBaseUrlEnv = envNameField(key, v);
+        break;
+      case "embeddingApiKeyEnv":
+        out.embeddingApiKeyEnv = envNameField(key, v);
+        break;
+      case "embeddingTimeoutSeconds":
+        out.embeddingTimeoutSeconds = numberField(key, v, 1, 3600);
+        break;
+      case "strongVectorSim":
+        out.strongVectorSim = numberField(key, v, 0, 1);
+        break;
+      case "weakVectorSim":
+        out.weakVectorSim = numberField(key, v, 0, 1);
+        break;
+      case "lexicalWeight":
+        out.lexicalWeight = numberField(key, v, 0, 10);
+        break;
+      case "keepGenerations":
+        out.keepGenerations = numberField(key, v, 1, 100, true);
+        break;
+      case "graph":
+        out.graph = graphField(v);
+        break;
+      default:
+        throw new ConfigError(`unknown setting: ${key}`, key);
+    }
+  }
+  return out;
+}
+
+// Writes only the changed keys; keys the UI does not know survive. A partial graph object is
+// merged over the current one (or the default), because a partial graph in config.json would
+// otherwise replace the whole default provider.
+export function saveConfig(home: string, input: unknown, env: Env = process.env): DocifyConfig {
+  const patch = validateConfigPatch(input);
+  const file = readConfigFile(home);
+  const next: Record<string, unknown> = { ...file };
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "graph" && value !== null) {
+      next.graph = { ...(isPlainObject(file.graph) ? file.graph : DEFAULT_GRAPH), ...(value as Partial<GraphProviderConfig>) };
+    } else next[key] = value;
+  }
+  const effective = { ...defaultConfig(home, env), ...next } as DocifyConfig;
+  if (effective.weakVectorSim > effective.strongVectorSim) {
+    throw new ConfigError("weakVectorSim must not be above strongVectorSim", "weakVectorSim");
+  }
+  const g = effective.graph;
+  if (g && (typeof g.backend !== "string" || !g.backend || typeof g.model !== "string" || !g.model)) {
+    throw new ConfigError("graph needs a backend and a model", "graph");
+  }
+  mkdirSync(home, { recursive: true });
+  const target = configFilePath(home);
+  const tmp = `${target}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+  renameSync(tmp, target);
+  return { ...defaultConfig(home, env), ...(next as Partial<DocifyConfig>) };
+}
+
+// ---- describing (web UI) -----------------------------------------------------
+
+export interface PathSetting {
+  value: string;
+  source: "config.json" | "environment" | "default";
+  variable: string;
+}
+
+export interface EnvEntry {
+  name: string;
+  purpose: string;
+  set: boolean;
+  // Only for Docify's own path and URL variables; credential variables never expose a value.
+  value: string | null;
+}
+
+export interface ConfigDescription {
+  values: EditableConfig;
+  defaults: EditableConfig;
+  inFile: string[];
+  paths: { home: string; configFile: string; graphifyBin: PathSetting; modelsDir: PathSetting };
+  environment: EnvEntry[];
+}
+
+function pick(config: DocifyConfig): EditableConfig {
+  return Object.fromEntries(EDITABLE_KEYS.map((k) => [k, config[k]])) as EditableConfig;
+}
+
+export function describeConfig(config: DocifyConfig, env: Env = process.env): ConfigDescription {
+  const file = readConfigFile(config.home);
+  const pathSetting = (key: "graphifyBin" | "modelsDir", variable: string): PathSetting => ({
+    value: config[key],
+    source: key in file ? "config.json" : env[variable] !== undefined ? "environment" : "default",
+    variable,
+  });
+  const own: [string, string][] = [
+    ["DOCIFY_HOME", "store location"],
+    ["DOCIFY_MODELS_DIR", "embedding model cache, unless config.json sets modelsDir"],
+    ["DOCIFY_GRAPHIFY_BIN", "Graphify executable, unless config.json sets graphifyBin"],
+    ["DOCIFY_EMBED_URL", "Ollama URL, unless config.json sets embeddingUrl"],
+    ["DOCIFY_PROJECT", "project whose .docify.json pins apply in CLI search and MCP"],
+  ];
+  const credentials = new Map<string, string[]>();
+  const addCredential = (name: string | undefined, purpose: string) => {
+    if (name) credentials.set(name, [...(credentials.get(name) ?? []), purpose]);
+  };
+  addCredential(config.embeddingBaseUrlEnv, "embedding base URL");
+  addCredential(config.embeddingApiKeyEnv, "embedding API key");
+  addCredential(config.graph?.baseUrlEnv, "graph base URL");
+  addCredential(config.graph?.apiKeyEnv, "graph API key");
+  return {
+    values: pick(config),
+    defaults: pick(defaultConfig(config.home, env)),
+    inFile: Object.keys(file),
+    paths: {
+      home: config.home,
+      configFile: configFilePath(config.home),
+      graphifyBin: pathSetting("graphifyBin", "DOCIFY_GRAPHIFY_BIN"),
+      modelsDir: pathSetting("modelsDir", "DOCIFY_MODELS_DIR"),
+    },
+    environment: [
+      ...own.map(([name, purpose]) => ({ name, purpose, set: env[name] !== undefined, value: env[name] ?? null })),
+      ...[...credentials].map(([name, purposes]) => ({ name, purpose: purposes.join(", "), set: !!env[name], value: null })),
+    ],
   };
 }

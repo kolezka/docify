@@ -3,52 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
     <title>Docify</title>
     <link rel="stylesheet" href="./app.css" />
   </head>
   <body>
-    <header><h1>Docify</h1><span class="muted">local documentation for agents</span></header>
-    <main>
-      <section>
-        <h2>Add a source</h2>
-        <form id="add-form">
-          <input name="library" placeholder="library (e.g. bun)" required />
-          <input name="version" placeholder="version (unknown)" />
-          <input name="locator" placeholder="local path or https:// URL" required class="wide" />
-          <button type="submit">Add</button>
-        </form>
-        <p id="add-error" class="error" role="alert"></p>
-      </section>
-      <section>
-        <h2>Sources</h2>
-        <div class="scroll">
-          <table id="sources">
-            <thead>
-              <tr><th>Source</th><th>Version</th><th>Kind</th><th>State</th><th>Generation</th><th>Passages</th><th>Graph</th><th>Downloaded</th><th>Progress / error</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-      <section>
-        <h2>Search</h2>
-        <form id="search-form">
-          <input name="query" placeholder="question, API symbol or error" required class="wide" />
-          <input name="library" placeholder="library" />
-          <input name="version" placeholder="version" />
-          <select name="mode"><option>combined</option><option>lexical</option><option>vector</option><option>graph</option></select>
-          <label>max tokens <input name="maxTokens" type="number" value="1500" min="200" max="20000" /></label>
-          <label>graph weight <input name="graphWeight" type="number" value="0" min="0" max="1" step="0.05" /></label>
-          <button type="submit">Search</button>
-        </form>
-        <p id="search-meta" class="muted"></p>
-        <ul id="citations"></ul>
-        <h3>Exact text returned to agents</h3>
-        <pre id="search-text"></pre>
-        <h3>Read</h3>
-        <pre id="read-text" class="muted">Click a citation to expand it.</pre>
-      </section>
-    </main>
-    <script type="module" src="./app.ts"></script>
+    <div id="app"></div>
+    <script type="module" src="./main.ts"></script>
   </body>
 </html>

@@ -2,14 +2,25 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { realpathSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
-import index from "./index.html";
 import { Docify, DocifyError } from "../core/docify.ts";
+import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
+import { uiAssets } from "./bundle.ts";
 
 const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404 };
 
-export async function startServer(port: number, opts: { docify?: Docify; quiet?: boolean; token?: string } = {}) {
+// Documentation excerpts are untrusted. The page renders them as text; this policy is the second line.
+const PAGE_HEADERS = {
+  "content-security-policy":
+    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+};
+
+export async function startServer(port: number, opts: { docify?: Docify; quiet?: boolean; token?: string; project?: string } = {}) {
   const docify = opts.docify ?? new Docify();
+  // The directory whose .docify.json pins apply, as for `docify search` run there.
+  const project = resolve(opts.project ?? process.cwd());
   const running = new Map<string, AbortController>();
   let boundPort = port;
   // Loopback is shared by every local user, so each server start gets a secret that is shown
@@ -19,6 +30,7 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
 
   const json = (data: unknown, status = 200) => Response.json(data, { status });
   const fail = (err: unknown) => {
+    if (err instanceof ConfigError) return json({ error: err.message, code: "invalid_input", field: err.field ?? null }, 400);
     if (err instanceof DocifyError) return json({ error: err.message, code: err.code }, STATUS_BY_CODE[err.code] ?? 400);
     console.error(err);
     return json({ error: String(err instanceof Error ? err.message : err), code: "internal" }, 500);
@@ -57,13 +69,13 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
     }
   };
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port,
     development: false,
     routes: {
-      "/": index,
       "/api/sources": {
         GET: api(() => json(sources(docify))),
         POST: api(async (req) => {
@@ -132,7 +144,7 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
               mode: modes.includes(String(b.mode)) ? (b.mode as Mode) : "combined",
               maxTokens: typeof b.maxTokens === "number" ? b.maxTokens : undefined,
               graphWeight: typeof b.graphWeight === "number" ? b.graphWeight : undefined,
-              project: process.cwd(),
+              project,
             }),
           );
         }),
@@ -151,8 +163,42 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
           return new Response(Bun.file(file), { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" } });
         }),
       },
+      "/api/config": {
+        GET: api(() => json(describeConfig(docify.config))),
+        PUT: api(async (req) => {
+          const b = await body(req);
+          if (running.size) throw new DocifyError("busy", `cannot change settings while preparing ${[...running.keys()].join(", ")}; wait or cancel first`);
+          docify.saveConfig(b);
+          return json(describeConfig(docify.config));
+        }),
+      },
+      "/api/pins": {
+        GET: api(() => json(pinsView())),
+        PUT: api(async (req) => {
+          const b = await body(req);
+          const library = str(b.library);
+          if (!library) throw new DocifyError("invalid_input", "library is required");
+          if (b.version !== null && b.version !== undefined && typeof b.version !== "string") throw new DocifyError("invalid_input", "version must be text or null");
+          Docify.setPin(project, library, str(b.version) ?? null);
+          return json(pinsView());
+        }),
+      },
     },
-    fetch: () => new Response("not found", { status: 404 }),
+    fetch: async (req) => {
+      const path = new URL(req.url).pathname;
+      if (req.method !== "GET" || path.startsWith("/api/")) return new Response("not found", { status: 404 });
+      let assets;
+      try {
+        assets = await uiAssets();
+      } catch (err) {
+        console.error(err);
+        return new Response(`Docify could not build its web UI:\n${err instanceof Error ? err.message : err}`, { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+      const asset = assets.get(path);
+      if (!asset) return new Response("not found", { status: 404 });
+      const headers: Record<string, string> = { "content-type": asset.type, "x-content-type-options": "nosniff" };
+      return new Response(asset.body, { headers: path === "/" ? { ...headers, ...PAGE_HEADERS, "cache-control": "no-store" } : headers });
+    },
   });
   boundPort = server.port!;
   if (!opts.quiet) console.log(`Docify UI on http://127.0.0.1:${boundPort}/#token=${token}`);
