@@ -123,4 +123,44 @@ Measured with `bun scripts/eval-many.ts`: the 24 questions of `eval/questions.js
 | 2000 (default) | equal | 0.815 | 0 | 1963 |
 | 2000 (default) | sequential | 0.444 | 2 | 1986 |
 
-With 5 queries per call at budget 2000, equal reached 0.778 and sequential 0.444 (4 queries with nothing shown). At the default budget, three queries in one equal-split call found as many expected passages as three separate calls, in one response of at most 2000 tokens instead of three. Sequential lets the first query's long passages starve the rest. Combined and vector mode were not measured, because they need the embedding model or server; the split was chosen with these questions in view.
+With 5 queries per call at budget 2000, equal reached 0.778 and sequential 0.444 (4 queries with nothing shown). At the default budget, three queries in one equal-split call found as many expected passages as three separate calls, in one response of at most 2000 tokens instead of three. Sequential lets the first query's long passages starve the rest. The split was chosen with these questions in view.
+
+### Combined and vector mode with bge-small
+
+Same questions and batches, run offline: `bun scripts/eval-many.ts --embedder local --mode combined|vector`, which prepares the three fixture sources into a temp store without a graph and embeds them in process with `Xenova/bge-small-en-v1.5` from `DOCIFY_MODELS_DIR`. No embedding server, no network. The script refuses to score when an active generation has a different embedding identity, so vector mode cannot silently skip sources.
+
+Harness checks. `scripts/eval.ts` now runs on this machine against a temp store with the three fixture sources prepared with `--no-graph`: combined 27/28, recall 0.963, MRR 0.872; lexical 23/28, 0.815; vector 27/28, 0.963, MRR 0.859. These equal the published bge-small rows. In `eval-many.ts`, one call per question at 1500 gives 0.963 in combined and in vector, the same as the main table.
+
+Each row ran 5 times on fresh stores. Recall moves by one passage (0.037) between runs in a few rows, because passage ids and the response nonce change and so change token counts at the budget edge; the table gives the mean and the range where it moved. "One call per question at N" gives each question alone the batch budget divided by the batch size, so it spends the same tokens as one batched call.
+
+| Mode | Batch | Budget | Policy | Passage recall | Queries with no hit shown | Max tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| combined | 3 | 1500 | one call per question | 0.963 | - | - |
+| combined | 3 | 1500 | one call per question at 500 | 0.726 (0.704 to 0.741) | - | - |
+| combined | 3 | 1500 | equal | 0.741 | 0 | 1494 |
+| combined | 3 | 1500 | sequential | 0.519 | 5 | 1494 |
+| combined | 3 | 2000 (default) | one call per question | 1.000 | - | - |
+| combined | 3 | 2000 (default) | one call per question at 666 | 0.778 | - | - |
+| combined | 3 | 2000 (default) | equal | 0.815 | 0 | 1985 |
+| combined | 3 | 2000 (default) | sequential | 0.556 | 3 to 4 | 1985 |
+| combined | 5 | 2000 (default) | one call per question at 400 | 0.704 | - | - |
+| combined | 5 | 2000 (default) | equal | 0.778 | 0 | 1973 |
+| combined | 5 | 2000 (default) | sequential | 0.519 | 5 to 6 | 1980 |
+| vector | 3 | 1500 | one call per question | 0.963 | - | - |
+| vector | 3 | 1500 | one call per question at 500 | 0.704 | - | - |
+| vector | 3 | 1500 | equal | 0.741 | 0 | 1485 |
+| vector | 3 | 1500 | sequential | 0.407 | 5 | 1488 |
+| vector | 3 | 2000 (default) | one call per question | 1.000 | - | - |
+| vector | 3 | 2000 (default) | one call per question at 666 | 0.808 (0.778 to 0.815) | - | - |
+| vector | 3 | 2000 (default) | equal | 0.867 (0.852 to 0.889) | 0 | 1990 |
+| vector | 3 | 2000 (default) | sequential | 0.444 | 4 to 5 | 1983 |
+| vector | 5 | 2000 (default) | one call per question at 400 | 0.704 | - | - |
+| vector | 5 | 2000 (default) | equal | 0.815 | 0 | 1990 |
+| vector | 5 | 2000 (default) | sequential | 0.370 | 5 to 7 | 1990 |
+
+Larger budgets for a batch, combined mode, one run each: 3 queries at 4000 tokens, equal 1.000 and sequential 0.889; at 6000, equal 1.000. 5 queries at 6000 and at 10000, equal 1.000.
+
+- **At the default budget, equal is clearly worse than separate calls in combined mode:** 0.815 against 1.000 with 3 queries, 0.778 with 5. The split rule is not the cause. Separate calls given the same total tokens do worse than equal (0.778 and 0.704), and equal never leaves a query with nothing shown. The loss comes from fitting three questions into the budget of one: combined and vector often need more than 666 tokens per query to reach the expected passage. Lexical has a lower ceiling (0.815) and lost nothing at 2000.
+- Sequential stays far behind in every mode.
+- **Adopted:** when `queries` has more than one entry and the caller gives no `max_tokens`, the budget defaults to 1400 tokens per query (3 queries 4200, 5 queries 7000, capped at the existing 20000 limit) instead of 2000 for the whole call (`MANY_TOKENS_PER_QUERY` in `search.ts`). Here about 1300 tokens per query already gave 1.000. The rejected alternative was to keep 2000 and only have the skill tell agents to raise `max_tokens`. This trades a larger response for recall, and the number was found with these questions in view, so recheck it on another corpus.
+- Rerun of the lexical rows above at this commit with the stub embedder, 5 runs: the same within one passage, except sequential at 1500, now 0.481 in every run, and maximum tokens up to 1486 at 1500. The lexical table was left as first measured.

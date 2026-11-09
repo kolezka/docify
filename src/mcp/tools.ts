@@ -32,7 +32,7 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
         version: z.string().optional().describe("Library version; omit to use the project pin"),
         sources: z.array(z.string()).optional().describe("Restrict to source ids from docs_sources"),
         mode: z.enum(["combined", "lexical", "vector", "graph"]).optional().describe("Retrieval mode, default combined"),
-        max_tokens: z.number().int().min(200).max(20000).optional().describe("Output budget, default 2000"),
+        max_tokens: z.number().int().min(200).max(20000).optional().describe("Output budget; default 2000, or 1400 per query with several queries"),
         graph_weight: z.number().min(0).max(1).optional().describe("Weight of graph-related passages in combined mode, default 0"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },

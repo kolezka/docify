@@ -112,6 +112,23 @@ export function leaseAlive(pid: number | null, at: string | null): boolean {
   return at !== null && Date.now() - Date.parse(at) < LEASE_MS;
 }
 
+export const INTERRUPTED_ERROR = "interrupted: the preparing process exited before activation";
+
+// A staging generation whose writer no longer holds a live lease on its source will never
+// activate. recoverInterrupted() cleans it up; readers use this to see the same without writing.
+export function isInterrupted(gen: Pick<GenerationRow, "status" | "pid">, source: Pick<SourceRow, "lock_pid" | "lock_at"> | null): boolean {
+  if (gen.status !== "staging") return false;
+  return !(source && source.lock_pid === gen.pid && leaseAlive(source.lock_pid, source.lock_at));
+}
+
+// The generation as readers should report it: interrupted reads as failed, as after recovery.
+// The failure time is the writer's last heartbeat when known, else its start.
+export function effectiveGeneration(gen: GenerationRow, source: SourceRow | null): GenerationRow {
+  if (!isInterrupted(gen, source)) return gen;
+  const lastSeen = source && source.lock_pid === gen.pid ? source.lock_at : null;
+  return { ...gen, status: "failed", error: INTERRUPTED_ERROR, finished_at: gen.finished_at ?? lastSeen ?? gen.started_at };
+}
+
 export class Docify {
   readonly db: Database;
   readonly logs: LogStore;
@@ -227,22 +244,18 @@ export class Docify {
 
   // Marks staging generations and locks left by dead writers as interrupted. Every decision is
   // re-checked inside an immediate transaction, so a lock taken meanwhile is never cleared.
+  // Only writer paths call this (prepare, serve startup); queries use effectiveGeneration().
   recoverInterrupted(): number {
     let n = 0;
     const candidates = this.db.query<{ id: number; source_id: string }, []>("SELECT id, source_id FROM generations WHERE status = 'staging'").all();
     for (const c of candidates) {
       const recovered = this.db
         .transaction(() => {
-          const g = this.db.query<{ pid: number | null; status: string }, [number]>("SELECT pid, status FROM generations WHERE id = ?").get(c.id);
+          const g = this.db.query<Pick<GenerationRow, "pid" | "status">, [number]>("SELECT pid, status FROM generations WHERE id = ?").get(c.id);
           const s = this.getSource(c.source_id);
-          if (!g || g.status !== "staging") return false;
-          if (s && s.lock_pid === g.pid && leaseAlive(s.lock_pid, s.lock_at)) return false;
+          if (!g || !isInterrupted(g, s)) return false;
           this.deleteGenerationRows(c.id);
-          this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [
-            "interrupted: the preparing process exited before activation",
-            nowIso(),
-            c.id,
-          ]);
+          this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [INTERRUPTED_ERROR, nowIso(), c.id]);
           if (s && s.lock_pid === g.pid) this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ? AND lock_pid IS ?", [s.id, g.pid]);
           return true;
         })

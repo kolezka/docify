@@ -20,6 +20,7 @@ Queries (local and offline only):
   search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
   search --query Q [--query Q ...] [same options]
                                 up to 8 queries in one call, sharing --max-tokens
+                                (default 1400 per query)
   scope [--library L] [--version V] [--source ID] [--json]
                                 show what search would search with these filters
   read <passage-id> [--max-tokens N] [--json]

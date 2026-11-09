@@ -117,6 +117,17 @@ test("a passage found by several queries is shown once and names every query", a
   expect(r.queries[1]!.hits).toContain(shared.rank);
 });
 
+test("without max_tokens several queries get about 1400 tokens each, one query keeps 2000", async () => {
+  const q = (n: number) => ["Database.serialize", "WAL sidecar file cleanup", "prepared statement parameters", "transaction"].concat(Array(8).fill("close database")).slice(0, n);
+  expect((await searchMany(d, { ...lexical, queries: q(1) })).maxTokens).toBe(2000);
+  expect((await searchMany(d, { ...lexical, queries: q(2) })).maxTokens).toBe(2800);
+  expect((await searchMany(d, { ...lexical, queries: q(3) })).maxTokens).toBe(4200);
+  expect((await searchMany(d, { ...lexical, queries: q(8) })).maxTokens).toBe(11200);
+  expect((await searchMany(d, { ...lexical, queries: q(3), maxTokens: 900 })).maxTokens).toBe(900);
+  const r = await searchMany(d, { ...lexical, queries: q(3) });
+  expect(r.tokens).toBeLessThanOrEqual(4200);
+});
+
 test("the shared budget holds on the final text and every query gets a share", async () => {
   const queries = ["Database.serialize", "WAL sidecar file cleanup", "transaction statement close database", "prepared statement parameters"];
   for (const maxTokens of [300, 800, 2000]) {

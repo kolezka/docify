@@ -23,7 +23,7 @@ Call `docs_sources` first if you do not know which libraries and versions are re
 3. If search returns `no_match` or `weak_match` and you suspect the docs do cover the topic, call `docs_outline` with the source id from `docs_sources` to browse its documents and headings. Narrow with `path` when the outline is cut. Then call `docs_read` with the id of the section that fits. If nothing fits, the docs do not cover it.
 4. Cite what you used as `library@version, document > heading (id p_...)`.
 
-When you need to check several symbols or questions in the same library, pass `queries` (up to 8) instead of `query` in one `docs_search` call. Each query gets its own `status` line, read each one as below; the queries share `max_tokens`, a passage that several queries found is shown once with the query numbers that hit it, and every query gets a fair share of the budget before the rest is filled.
+When you need to check several symbols or questions in the same library, pass `queries` (up to 8) instead of `query` in one `docs_search` call. Each query gets its own `status` line, read each one as below; the queries share `max_tokens`, a passage that several queries found is shown once with the query numbers that hit it, and every query gets a fair share of the budget before the rest is filled. Leave `max_tokens` out with `queries`: the default is 1400 tokens per query. If you set it yourself, scale it with the number of queries; 2000 for three queries loses answers.
 
 ## Reading the status
 
@@ -32,6 +32,7 @@ When you need to check several symbols or questions in the same library, pass `q
 - `not_indexed`: the source is registered but not prepared. Tell the user to run `docify prepare <id>`.
 - `version_unavailable`: that version is not registered. The reply lists the available versions; do not substitute another version silently.
 - `update_failed` or a stale warning: the last refresh failed and older content is being served. Mention it.
+- `error (invalid_input): max_tokens N is too small ...`: even the status lines do not fit the budget. Call again with a larger `max_tokens`, or with fewer `queries`. Nothing was searched or read wrongly; this is not a `no_match`.
 
 After `version_unavailable`, `source_unknown` or a warning that several versions match, call `docs_scope` with the same `library`, `version` and `sources` before searching again. It searches nothing; it shows which pins file and pins apply, the version chosen per library and why, the sources and generations a search would use, and the registered versions. Pick the version or source from that list instead of guessing.
 

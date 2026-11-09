@@ -74,6 +74,8 @@ function mcpSettings(opts: StartServerOptions) {
 
 export async function startServer(port: number, opts: StartServerOptions = {}) {
   const docify = opts.docify ?? new Docify();
+  // Queries never recover, so clean up what dead writers left once here, like prepare does.
+  docify.recoverInterrupted();
   // The directory whose .docify.json pins apply, as for `docify search` run there.
   const project = resolve(opts.project ?? process.cwd());
   const running = new Map<string, AbortController>();
