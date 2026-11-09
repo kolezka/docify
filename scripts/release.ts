@@ -16,6 +16,8 @@ export const VERSION_FILES: { path: string; pattern: RegExp }[] = [
   { path: "integrations/claude-code/docify/.claude-plugin/plugin.json", pattern: /("--require",\s*")([^"]+)(")/ },
   { path: "integrations/codex/docify/.codex-plugin/plugin.json", pattern: /("version":\s*")([^"]+)(")/ },
   { path: "integrations/codex/docify/.mcp.json", pattern: /("--require",\s*")([^"]+)(")/ },
+  { path: "integrations/claude-code/docify/dsh/package.json", pattern: /("version":\s*")([^"]+)(")/ },
+  { path: "integrations/claude-code/docify/dsh/cordis.patch.yml", pattern: /(--require,\s*")([^"]+)(")/ },
 ];
 
 export function readVersions(root: string): { path: string; version: string | null }[] {

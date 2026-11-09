@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "docify",
+    "description": "Search locally prepared documentation with cited, token-bounded excerpts. Queries run offline."
+  }
+}
