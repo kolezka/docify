@@ -1,0 +1,15 @@
+- insert:
+    - id: claude-compat-docify
+      name: '@kolezka/docify-dsh'
+# The plugin's `docify` MCP server (mcpServers in plugin.json). claude-compat does not read
+# MCP config, so this row starts it. Queries are local and read-only, so it ships enabled.
+# DOCIFY_BIN overrides the binary when ~/.bun/bin is not on the DSH process PATH.
+- insert:
+    - id: claude-compat-docify-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: docify
+        transport: stdio
+        command: !!js 'process.env.DOCIFY_BIN || "docify"'
+        args: [mcp, --require, "0.1.0"]
+        failOnStartupError: false

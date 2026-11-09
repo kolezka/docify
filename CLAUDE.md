@@ -60,7 +60,7 @@ The Graph tab (`views/Graph.svelte`) reads `/api/sources/:id/graph`, built by `g
 
 **macOS app** (`apps/macos`, SwiftUI, built with `swift build`): no logic of its own. Every action runs the `docify` CLI (`DOCIFY_BIN`, default `~/.bun/bin/docify`) and the table reads `sources --json`, so it shares the store and the locks. Settings edit `config.json` as a plain dictionary so unknown keys survive, keep the LiteLLM key in the Keychain and pass it to the CLI as environment variables. The defaults in `Settings.swift` mirror `loadConfig()`; change them together. `~/.bun/bin/docify` points at whichever checkout ran `bun link`, so to try new CLI behaviour in the app set `DOCIFY_BIN` (`make app-run` does).
 
-**Agent integrations** (`integrations/claude-code`, `integrations/codex`): separate plugin packaging with the same skill text, both running `docify mcp`. Install commands are in README.md.
+**Agent integrations** (`integrations/claude-code`, `integrations/codex`): separate plugin packaging with the same skill text, both running `docify mcp`. `integrations/claude-code/docify/dsh/` loads the Claude Code plugin into DeepSeek Harness through the vendored `claude-compat.js` (refresh it with `@kolezka/claude-plugins-dsh sync`, never edit it) and starts `docify mcp` through its own `dsh-mcp-client` row. Install commands are in README.md.
 
 ## Rules that are easy to break
 
@@ -69,7 +69,7 @@ The Graph tab (`views/Graph.svelte`) reads `/api/sources/:id/graph`, built by `g
 - Readers must never see a mix of generations; keep activation in one transaction.
 - Build snapshot paths from `config.home`, never from the stored `snapshot_dir`, so a moved store keeps working and never deletes at its old path.
 - Thresholds and fusion weights come from `docs/evaluation.md`. Change them with a measurement, not by feel.
-- Docify and both plugins share one version (`src/version.ts` reads `package.json`). Change it only with `scripts/release.ts`; a new manifest or MCP config under `integrations/` goes into its `VERSION_FILES`.
+- Docify, both plugins and the DSH adapter share one version (`src/version.ts` reads `package.json`). Change it only with `scripts/release.ts`; a new manifest or MCP config under `integrations/` goes into its `VERSION_FILES`.
 
 ## Bun
 

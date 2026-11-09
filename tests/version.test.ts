@@ -13,8 +13,8 @@ test("package.json, both plugin manifests and the version the plugins require al
   expect(versions.length).toBe(VERSION_FILES.length);
   for (const v of versions) expect({ path: v.path, version: v.version }).toEqual({ path: v.path, version: VERSION });
   // A manifest or MCP config added later must be listed, or release would leave it behind.
-  const manifests = [...new Bun.Glob("integrations/**/{plugin.json,.mcp.json}").scanSync({ cwd: repoRoot, dot: true })];
-  expect(manifests.length).toBeGreaterThanOrEqual(3);
+  const manifests = ["integrations/**/{plugin.json,.mcp.json}", "integrations/**/dsh/{package.json,cordis.patch.yml}"].flatMap((pattern) => [...new Bun.Glob(pattern).scanSync({ cwd: repoRoot, dot: true })]);
+  expect(manifests.length).toBeGreaterThanOrEqual(5);
   for (const path of manifests) expect(VERSION_FILES.map((f) => f.path)).toContain(path);
 });
 

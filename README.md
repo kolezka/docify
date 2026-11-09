@@ -207,13 +207,37 @@ codex plugin add docify@docify-local
 # remove: codex plugin remove docify@docify-local && codex plugin marketplace remove docify-local
 ```
 
-Both plugins start `docify mcp`, so `docify` must be on PATH. They ship a skill that tells the agent when to search and how to read statuses. Neither installs hooks, and neither forces the agent to search.
+DeepSeek Harness loads the Claude Code plugin through the adapter in `integrations/claude-code/docify/dsh/`. Install the bundle, which brings the `docify` skill and the MCP server:
+
+```bash
+dsh plugin --profile <profile> add file:/path/to/ai-docify/integrations/claude-code/docify/dsh
+```
+
+Or, for every profile, add the rows from `dsh/cordis.patch.yml` to `~/.dsh/cordis.patch.yml` (DSH picks them up without a restart). The adapter reads skills only, so the MCP server needs its own row:
+
+```yaml
+- insert:
+    - id: claude-compat-docify
+      name: "file:///path/to/ai-docify/integrations/claude-code/docify/dsh/index.js"
+    - id: claude-compat-docify-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: docify
+        transport: stdio
+        command: !!js 'process.env.DOCIFY_BIN || "docify"'
+        args: [mcp, --require, "0.1.0"]
+        failOnStartupError: false
+```
+
+The tools appear as `mcp__docify__docs_search` and so on. DSH starts the server with its own environment: set `DOCIFY_BIN` when `~/.bun/bin` is not on its PATH. DSH also drops variables whose names contain `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, so with the `openai` embedding provider pass the key variable in the row's `env:`, or queries cannot be embedded.
+
+All three start `docify mcp`, so `docify` must be on PATH. They ship a skill that tells the agent when to search and how to read statuses. Neither installs hooks, and neither forces the agent to search.
 
 The plugins start `docify mcp --require <their version>`. If the `docify` on PATH is older, the MCP server does not start and the error names both versions; run `bun link` in a current checkout. A `docify` from before this check does not know `--require` and fails on the unknown option, which also means it needs updating.
 
 ## Versions and releases
 
-Docify and both plugins share one version. `package.json` holds it; `docify --version`, the MCP server info and `/healthz` report it. `scripts/release.ts` is the only thing that should change it:
+Docify, both plugins and the DeepSeek Harness adapter share one version. `package.json` holds it; `docify --version`, the MCP server info and `/healthz` report it. `scripts/release.ts` is the only thing that should change it:
 
 ```bash
 bun scripts/release.ts patch --dry-run   # show the next version and its changelog section, write nothing
@@ -221,7 +245,7 @@ bun scripts/release.ts minor             # or patch, major, or an explicit X.Y.Z
 git push --follow-tags
 ```
 
-It needs a clean working tree. It writes the new version into `package.json`, both plugin manifests and the `--require` arguments, adds a `CHANGELOG.md` section built from the Conventional Commits since the last `v*` tag, then commits `chore: release vX.Y.Z` and creates an annotated tag. It does not push. `tests/version.test.ts` fails when the files disagree.
+It needs a clean working tree. It writes the new version into `package.json`, both plugin manifests, the DSH adapter's `package.json` and the `--require` arguments, adds a `CHANGELOG.md` section built from the Conventional Commits since the last `v*` tag, then commits `chore: release vX.Y.Z` and creates an annotated tag. It does not push. `tests/version.test.ts` fails when the files disagree.
 
 ## Hosting (Docker, Coolify)
 
