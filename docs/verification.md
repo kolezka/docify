@@ -86,3 +86,14 @@ Svelte 5 and Tailwind v4 rebuild with the Settings view, branch `feat/web-ui-red
 - Browser (agent-browser, Chrome, 1280x577, scratch store, server started without `LITELLM_*`): a search showed the status chip, token meter, warnings and citations, and a citation opened its passage. System theme followed the OS; Light and Dark overrode it and were remembered. Add with a path outside home showed the server error. Add inside home, then "No graph", went not indexed, preparing (progress bar, Cancel), ready with 22 passages. Remove asked for confirmation and the CLI no longer listed the source. Settings: switching to LiteLLM applied the bge-m3 preset, the variable chips matched the server environment, weak above strong showed an inline error and disabled Save, and a save wrote exactly the changed keys with no secret values.
 - Found and fixed during this run: pasting the link of a restarted server into the same tab changed only the fragment, so the page kept the old token and got 401; the hidden switch checkbox had no positioned parent and stretched the page so the window scrolled.
 - Not verified: Cancel from the page (the fixture prepared too fast to catch), pins edited from the page (covered by tests in temp directories), widths below 1280 px, Safari and Firefox.
+
+## Partial graph extraction (2026-11-09)
+
+Branch `fix/partial-graph-extraction`, Bun 1.4.4, Graphify 0.9.70.
+
+- The failure: `openclaw@1.0.0` generation 7 failed with "graphify extract returned partial results: 1/50 dispatched file(s) produced no nodes". Graphify had exited 0 and written `graph.json` with nodes for 49 of the 50 staged files, and cached the complete ones; the omitted file had no cache entry and one truncated file had a `partial: true` entry, which Graphify does not serve.
+- `tests/graph-partial.test.ts` runs the real `runGraphify` against a stand-in executable that prints Graphify's own warning lines (copied from `graphify/llm.py` and `graphify/cli.py`). On `main` (`16daf00`) the 4 tests that existed then all failed with the production error; on the branch all 6 pass.
+- Re-break checks: each change below made its own test fail at its target assertion, and every file was restored byte-identical (`cmp`). Search ignoring `partial` graphs; the grounded-node check only for `ok` graphs; ignoring Graphify's incomplete lines (truncated files that kept nodes); ignoring documents missing from `graph.json` when Graphify printed nothing.
+- `bun test`: 80 pass, 0 fail, 13 files. `bun run typecheck`: exit 0.
+- CLI against a scratch store and the stand-in: `prepare` activated, printed `warning: graph is partial, no nodes for 1 document(s): b.md`, `sources` showed `graph partial`, and `search --mode graph` returned the covered passage.
+- Not verified: a real Graphify run against an LLM after the fix. Graphify's shrink guard (exit 1 when an incomplete run has fewer nodes than the previous `graph.json`) can still fail a retry; that path is unchanged.
