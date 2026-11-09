@@ -23,7 +23,8 @@ Queries (local and offline only):
 Servers:
   serve [--port 4747] [--host 127.0.0.1] [--allowed-host HOST]
                                 web UI; DOCIFY_WEB_TOKEN, DOCIFY_ALLOWED_HOSTS
-                                and DOCIFY_SOURCE_ROOTS are read from the environment
+                                and DOCIFY_SOURCE_ROOTS are read from the environment;
+                                DOCIFY_MCP_TOKENS also serves MCP over HTTP at /mcp
   mcp                           MCP server on stdio
 `;
 
@@ -53,7 +54,7 @@ async function main(argv: string[]) {
     return;
   }
   if (command === "mcp") {
-    await import("./mcp.ts").then((m) => m.startMcp());
+    await import("./mcp/stdio.ts").then((m) => m.startMcp());
     return;
   }
   if (command === "serve") {
