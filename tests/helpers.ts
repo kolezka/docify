@@ -43,5 +43,5 @@ export const fakeGraph = async (_config: unknown, _sourceId: string, docs: { pat
     });
   }
   const graph = { nodes, links };
-  return { graph, graphJsonText: JSON.stringify(graph), fileToPath, durationMs: 0, tokensIn: 0, tokensOut: 0, costEstimate: null, log: "" };
+  return { graph, graphJsonText: JSON.stringify(graph), fileToPath, durationMs: 0, tokensIn: 0, tokensOut: 0, costEstimate: null, log: "", incomplete: [] };
 };

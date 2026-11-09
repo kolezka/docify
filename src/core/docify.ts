@@ -403,7 +403,8 @@ export class Docify {
         const result = await runner(this.config, sourceId, normalizedDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force);
         writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
         graphStats = this.importGraph(genId, result, normalizedDocs);
-        graphStatus = "ok";
+        // Partial still activates and is searchable; it never counts as unchanged, so the next prepare retries the gaps.
+        graphStatus = (graphStats.graphMissing as string[]).length || result.incomplete.length ? "partial" : "ok";
       }
 
       await checkpoint("validate");
@@ -415,7 +416,7 @@ export class Docify {
       if (counts.p !== passageCount || counts.v !== passageCount) {
         throw new DocifyError("invalid_generation", `validation failed: ${counts.p} passages, ${counts.v} vectors, expected ${passageCount}`);
       }
-      if (graphStatus === "ok" && !(graphStats.groundedNodes as number)) {
+      if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
         throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
       }
       const stats = { pipeline: PIPELINE_VERSION, documents: raw.length, passages: passageCount, embedMs, ...graphStats };
@@ -463,10 +464,12 @@ export class Docify {
     const insertGround = this.db.prepare("INSERT OR IGNORE INTO node_passages (generation_id, node_id, passage_rowid) VALUES (?, ?, ?)");
     let grounded = 0;
     let edges = 0;
+    const covered = new Set<string>();
     this.db.transaction(() => {
       for (const n of result.graph.nodes) {
         const path = n.source_file ? result.fileToPath.get(n.source_file.split("/").pop()!) : undefined;
         const doc = path ? byPath.get(path) : undefined;
+        if (doc) covered.add(doc.path);
         insertNode.run(genId, n.id, n.label, (n.norm_label ?? n.label).toLowerCase(), n.file_type ?? null, doc?.docId ?? null);
         const pool = doc ? doc.passages : docs.flatMap((d) => d.passages);
         const terms = groundingTerms(n.label);
@@ -508,6 +511,9 @@ export class Docify {
       graphTokensOut: result.tokensOut,
       graphCostEstimate: result.costEstimate,
       graphModel: this.config.graph?.model ?? null,
+      // Documents no node maps to; a non-empty list makes the graph partial.
+      graphMissing: docs.filter((d) => !covered.has(d.path)).map((d) => d.path),
+      graphWarnings: result.incomplete,
     };
   }
 
