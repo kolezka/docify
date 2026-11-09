@@ -23,6 +23,8 @@ Call `docs_sources` first if you do not know which libraries and versions are re
 3. If search returns `no_match` or `weak_match` and you suspect the docs do cover the topic, call `docs_outline` with the source id from `docs_sources` to browse its documents and headings. Narrow with `path` when the outline is cut. Then call `docs_read` with the id of the section that fits. If nothing fits, the docs do not cover it.
 4. Cite what you used as `library@version, document > heading (id p_...)`.
 
+When you need to check several symbols or questions in the same library, pass `queries` (up to 8) instead of `query` in one `docs_search` call. Each query gets its own `status` line, read each one as below; the queries share `max_tokens`, a passage that several queries found is shown once with the query numbers that hit it, and every query gets a fair share of the budget before the rest is filled.
+
 ## Reading the status
 
 - `ok`: excerpts found. They may still not answer the question; say so if they do not.

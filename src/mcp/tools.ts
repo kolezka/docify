@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Docify, DocifyError } from "../core/docify.ts";
-import { open, outline, read, renderSources, scope, search, sources } from "../core/search.ts";
+import { MAX_QUERIES, open, outline, read, renderSources, scope, search, searchMany, sources } from "../core/search.ts";
 import { VERSION } from "../version.ts";
 
 const pkg = { name: "docify", version: VERSION };
@@ -24,9 +24,10 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     {
       title: "Search local documentation",
       description:
-        "Search prepared local documentation and get cited excerpts within a token budget. Status tells apart no_match, not_indexed, version_unavailable, source_unknown and update_failed. Project pins in .docify.json apply when version is omitted.",
+        "Search prepared local documentation and get cited excerpts within a token budget. Status tells apart no_match, not_indexed, version_unavailable, source_unknown and update_failed. Project pins in .docify.json apply when version is omitted. Pass queries instead of query to check up to 8 questions or symbols in one call: each keeps its own status and they share max_tokens.",
       inputSchema: {
-        query: z.string().min(1).describe("Question, API symbol or error message"),
+        query: z.string().min(1).optional().describe("Question, API symbol or error message; give this or queries"),
+        queries: z.array(z.string().min(1)).min(1).max(MAX_QUERIES).optional().describe("1 to 8 queries searched with the same filters; give this or query"),
         library: z.string().optional().describe("Library name, e.g. bun"),
         version: z.string().optional().describe("Library version; omit to use the project pin"),
         sources: z.array(z.string()).optional().describe("Restrict to source ids from docs_sources"),
@@ -38,8 +39,22 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     },
     async (args) => {
       try {
+        if ((args.query === undefined) === (args.queries === undefined)) throw new DocifyError("invalid_input", "give exactly one of query or queries");
+        if (args.queries) {
+          const many = await searchMany(docify, {
+            queries: args.queries,
+            library: args.library,
+            version: args.version,
+            sources: args.sources,
+            mode: args.mode,
+            maxTokens: args.max_tokens,
+            graphWeight: args.graph_weight,
+            project,
+          });
+          return { content: [{ type: "text", text: many.text }] };
+        }
         const r = await search(docify, {
-          query: args.query,
+          query: args.query!,
           library: args.library,
           version: args.version,
           sources: args.sources,

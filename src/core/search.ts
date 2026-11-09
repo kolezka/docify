@@ -637,6 +637,167 @@ function finalize<T extends Renderable & { status: SearchStatus }>(draft: T, max
   }
 }
 
+export const MAX_QUERIES = 8;
+// Per-query search budget before packing: large enough that search() itself rarely cuts.
+const MANY_INNER_BUDGET = 20000;
+
+export interface SearchManyInput extends Omit<SearchInput, "query"> {
+  queries: string[];
+  // "equal" is the default; "sequential" exists for scripts/eval-many.ts.
+  budgetSplit?: "equal" | "sequential";
+}
+
+export interface ManyHit extends SearchHit {
+  queries: number[]; // 1-based indexes of every query whose results contain this passage
+}
+
+export interface QueryOutcome {
+  query: string;
+  status: SearchStatus;
+  hits: number[]; // ranks in SearchManyResult.hits
+  omitted: number;
+  warnings: string[];
+}
+
+export interface SearchManyResult {
+  mode: Mode;
+  maxTokens: number;
+  tokens: number;
+  tokenizer: string;
+  queries: QueryOutcome[];
+  hits: ManyHit[];
+  warnings: string[]; // shared by every query
+  notIndexed: string[];
+  availableVersions?: Record<string, (string | null)[]>;
+  text: string;
+}
+
+type ManyDraft = Omit<SearchManyResult, "tokens" | "text" | "mode" | "maxTokens" | "tokenizer">;
+
+// Every status line comes before the first excerpt, so no document text can precede or forge one.
+function renderMany(r: ManyDraft, tokens: number, nonce: string): string {
+  const lines = [...headerLines(nonce), `queries: ${r.queries.length} | tokens: ${tokens}`];
+  for (const w of r.warnings) lines.push(`warning: ${oneLine(w)}`);
+  if (r.notIndexed.length) lines.push(`not indexed: ${r.notIndexed.join(", ")}`);
+  if (r.availableVersions) for (const [lib, v] of Object.entries(r.availableVersions)) lines.push(`available ${lib} versions: ${v.map((x) => x ?? "unknown").join(", ")}`);
+  r.queries.forEach((q, i) => {
+    lines.push("", `query ${i + 1}: ${oneLine(q.query).split(nonce).join("?".repeat(nonce.length))}`, `status: ${q.status}`);
+    for (const w of q.warnings) lines.push(`warning: ${oneLine(w)}`);
+    lines.push(`hits: ${q.hits.length ? q.hits.map((n) => `[${n}]`).join(" ") : "none"}`);
+    if (q.omitted) lines.push(`${q.omitted} more matching passages omitted to stay within the token budget.`);
+  });
+  for (const h of r.hits) {
+    lines.push("", `[${h.rank}] ${citationLine(h.citation, h.id)} | queries ${h.queries.join(", ")}`, ...framed(h.excerpt, nonce));
+    if (h.truncated) lines.push(`(truncated: call read("${h.id}") for the full passage)`);
+  }
+  return lines.join("\n");
+}
+
+// Runs search() per query with the same filters and packs all hits into one budget.
+// Budget rule: each query first gets an equal share of what the header leaves, filled with
+// its own hits in rank order (a passage another query already shows costs nothing). Leftover
+// tokens then go round-robin by rank across queries, so every query gets a fair start before
+// the strongest overall leftovers. Status lines are per query and never merged.
+export async function searchMany(docify: Docify, input: SearchManyInput): Promise<SearchManyResult> {
+  const { queries: raw, budgetSplit = "equal", ...common } = input;
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_QUERIES) throw new DocifyError("invalid_input", `queries must hold 1 to ${MAX_QUERIES} items`);
+  const queries = raw.map((q) => String(q ?? "").trim());
+  const empty = queries.findIndex((q) => !q);
+  if (empty >= 0) throw new DocifyError("invalid_input", `query ${empty + 1} is empty`);
+  const mode: Mode = common.mode ?? "combined";
+  const maxTokens = Math.max(200, Math.min(common.maxTokens ?? 2000, 20000));
+  const nonce = newNonce();
+
+  const results: SearchResult[] = [];
+  for (const query of queries) results.push(await search(docify, { ...common, query, maxTokens: MANY_INNER_BUDGET }));
+
+  // Warnings every query reported (scope warnings) are shown once at the top.
+  const shared = results[0]!.warnings.filter((w) => results.every((r) => r.warnings.includes(w)));
+  const hitQueries = new Map<string, number[]>();
+  results.forEach((r, i) => r.hits.forEach((h) => hitQueries.set(h.id, [...(hitQueries.get(h.id) ?? []), i + 1])));
+
+  const skeleton = (hits: ManyHit[]): ManyDraft => ({
+    queries: results.map((r, i) => {
+      const shown = r.hits.filter((h) => hits.some((x) => x.id === h.id));
+      return {
+        query: r.query,
+        status: r.status,
+        hits: hits.filter((x) => r.hits.some((h) => h.id === x.id)).map((x) => x.rank),
+        omitted: r.omitted + r.hits.length - shown.length,
+        warnings: r.warnings.filter((w) => !shared.includes(w)),
+      };
+    }),
+    hits,
+    warnings: shared,
+    notIndexed: results[0]!.notIndexed,
+    availableVersions: results[0]!.availableVersions,
+  });
+
+  const note = (id: string) => countTokens(`\n(truncated: call read("${id}") for the full passage)`);
+  const blockCost = (h: SearchHit, excerpt: string, qs: number[]) =>
+    countTokens(`\n[${MAX_QUERIES * 8}] ${citationLine(h.citation, h.id)} | queries ${qs.join(", ")}\n${frameOpen(nonce)}\n\n${frameClose(nonce)}`) + 2 + countTokens(excerpt) + 3 * qs.length;
+  const picked: ManyHit[] = [];
+  const pickedIds = new Set<string>();
+  let used = countTokens(renderMany(skeleton([]), 99999, nonce));
+  const take = (h: SearchHit, room: number, allowCut: boolean): number => {
+    const qs = hitQueries.get(h.id)!;
+    let excerpt = h.excerpt;
+    let truncated = h.truncated;
+    let cost = blockCost(h, excerpt, qs) + (truncated ? note(h.id) : 0);
+    if (cost > room) {
+      const frame = cost - countTokens(excerpt) - (truncated ? note(h.id) : 0);
+      const fit = room - frame - note(h.id);
+      if (!allowCut || fit < 120) return 0;
+      excerpt = truncateExcerpt(h.excerpt, fit);
+      truncated = true;
+      cost = frame + countTokens(excerpt) + note(h.id);
+    }
+    picked.push({ ...h, rank: picked.length + 1, excerpt, truncated, queries: qs });
+    pickedIds.add(h.id);
+    used += cost;
+    return cost;
+  };
+
+  const share = Math.floor((maxTokens - used) / queries.length);
+  for (const r of results) {
+    let spent = 0;
+    let cut = false;
+    for (const h of r.hits) {
+      if (pickedIds.has(h.id)) continue;
+      const room = budgetSplit === "equal" ? share - spent : maxTokens - used;
+      const cost = take(h, room, !cut);
+      if (cost && picked.at(-1)!.truncated && !h.truncated) cut = true;
+      spent += cost;
+    }
+  }
+  const depth = Math.max(0, ...results.map((r) => r.hits.length));
+  for (let rank = 0; rank < depth; rank++) {
+    for (const r of results) {
+      const h = r.hits[rank];
+      if (h && !pickedIds.has(h.id)) take(h, maxTokens - used, false);
+    }
+  }
+
+  // Same fixed-point enforcement as finalize(): the last picked hit goes first, then warnings.
+  const hits = [...picked];
+  let dropped = 0;
+  for (;;) {
+    const draft = skeleton(hits);
+    if (dropped) draft.warnings = [...draft.warnings.slice(0, -dropped), `${dropped} more warnings omitted to stay within the token budget`];
+    let tokens = countTokens(renderMany(draft, 0, nonce));
+    let text = renderMany(draft, tokens, nonce);
+    for (let i = 0; i < 3 && countTokens(text) !== tokens; i++) {
+      tokens = countTokens(text);
+      text = renderMany(draft, tokens, nonce);
+    }
+    if (tokens <= maxTokens || (!hits.length && dropped >= shared.length)) {
+      return { ...draft, mode, maxTokens, tokens, tokenizer: TOKENIZER, text };
+    }
+    if (hits.length) hits.pop();
+    else dropped++;
+  }
+}
+
 export interface ReadResult {
   status: "ok" | "superseded" | "unavailable";
   id: string;

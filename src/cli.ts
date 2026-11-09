@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { Docify, DocifyError } from "./core/docify.ts";
-import { open, outline, read, renderSources, scope, search, sources, type Mode } from "./core/search.ts";
+import { open, outline, read, renderSources, scope, search, searchMany, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
 import { VERSION, requireVersion } from "./version.ts";
 
@@ -18,6 +18,8 @@ Preparation (may use the network or the configured graph provider):
 Queries (local and offline only):
   sources                       list sources, versions and preparation state
   search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
+  search --query Q [--query Q ...] [same options]
+                                up to 8 queries in one call, sharing --max-tokens
   scope [--library L] [--version V] [--source ID] [--json]
                                 show what search would search with these filters
   read <passage-id> [--max-tokens N] [--json]
@@ -51,6 +53,7 @@ async function main(argv: string[]) {
       id: { type: "string" },
       library: { type: "string" },
       source: { type: "string", multiple: true },
+      query: { type: "string", multiple: true },
       mode: { type: "string" },
       "max-tokens": { type: "string" },
       path: { type: "string" },
@@ -134,8 +137,7 @@ async function main(argv: string[]) {
       }
       case "search": {
         const query = positionals.join(" ");
-        const r = await search(docify, {
-          query,
+        const common = {
           library: values.library,
           version: values.version,
           sources: values.source,
@@ -143,7 +145,15 @@ async function main(argv: string[]) {
           maxTokens: values["max-tokens"] ? Number(values["max-tokens"]) : undefined,
           project: process.env.DOCIFY_PROJECT ?? process.cwd(),
           graphWeight: values["graph-weight"] ? Number(values["graph-weight"]) : undefined,
-        });
+        };
+        if (values.query) {
+          if (query) throw new DocifyError("invalid_input", "give a positional query or --query, not both");
+          const m = await searchMany(docify, { ...common, queries: values.query });
+          console.log(values.json ? JSON.stringify(m, null, 2) : m.text);
+          if (m.queries.some((q) => q.status !== "ok")) process.exitCode = 3;
+          break;
+        }
+        const r = await search(docify, { ...common, query });
         console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
         if (r.status !== "ok") process.exitCode = 3;
         break;
