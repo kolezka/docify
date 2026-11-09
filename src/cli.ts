@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { Docify, DocifyError } from "./core/docify.ts";
 import { read, renderSources, search, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
+import { VERSION, requireVersion } from "./version.ts";
 
 const USAGE = `docify <command> [options]
 
@@ -25,11 +26,18 @@ Servers:
                                 web UI; DOCIFY_WEB_TOKEN, DOCIFY_ALLOWED_HOSTS
                                 and DOCIFY_SOURCE_ROOTS are read from the environment;
                                 DOCIFY_MCP_TOKENS also serves MCP over HTTP at /mcp
-  mcp                           MCP server on stdio
+  mcp [--require X.Y.Z]         MCP server on stdio; refuses to start when docify is older than X.Y.Z
+
+  --version                     print the docify version
 `;
 
 async function main(argv: string[]) {
   const [command, ...rest] = argv;
+  // Checked before parseArgs: elsewhere --version is the library version option.
+  if (command === "--version" || command === "-v") {
+    console.log(VERSION);
+    return;
+  }
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
@@ -47,6 +55,7 @@ async function main(argv: string[]) {
       host: { type: "string" },
       "allowed-host": { type: "string", multiple: true },
       "graph-weight": { type: "string" },
+      require: { type: "string" },
     },
   });
   if (!command || command === "help" || command === "--help") {
@@ -54,6 +63,13 @@ async function main(argv: string[]) {
     return;
   }
   if (command === "mcp") {
+    if (values.require) {
+      try {
+        requireVersion(values.require);
+      } catch (err) {
+        throw new DocifyError("version_mismatch", err instanceof Error ? err.message : String(err));
+      }
+    }
     await import("./mcp/stdio.ts").then((m) => m.startMcp());
     return;
   }

@@ -5,6 +5,7 @@ import { delimiter, join } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
 import { parseSourceRoots, startServer, withinSourceRoots } from "../src/web/server.ts";
+import { VERSION } from "../src/version.ts";
 import { hostAllowed, originAllowed, parseAllowedHosts } from "../src/http/host.ts";
 import { newDocify, tempDir } from "./helpers.ts";
 
@@ -77,7 +78,7 @@ test("a hosted server accepts its configured Host, serves healthz and rejects an
     expect((await fetch(`${base}/api/sources`, { headers: { ...auth, host: "docs.example.test:443" } })).status).toBe(200);
     expect((await fetch(`${base}/api/sources`, { headers: { ...auth, host: "evil.test" } })).status).toBe(403);
     expect((await fetch(`${base}/healthz`)).status).toBe(200);
-    expect(await (await fetch(`${base}/healthz`)).json()).toEqual({ ok: true });
+    expect(await (await fetch(`${base}/healthz`)).json()).toEqual({ ok: true, version: VERSION });
   } finally {
     server.stop(true);
     d.close();

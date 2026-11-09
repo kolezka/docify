@@ -15,6 +15,7 @@ bun run typecheck                     # tsc --noEmit -p .
 bun src/cli.ts <command>              # the CLI without `bun link` (add, prepare, search, read, sources, pin, serve, mcp, setup)
 bun scripts/eval.ts                   # retrieval evaluation; needs the fixture sources prepared in the store
 bun scripts/mcp-smoke.ts              # drives the MCP server over stdio
+bun scripts/release.ts <patch|minor|major|X.Y.Z> [--dry-run]   # bump the shared version, changelog, commit and tag; no push
 make                                  # lists the Makefile shortcuts (check, app, app-run, clean, ...)
 make app-run                          # builds and opens the macOS app with this checkout's CLI
 ```
@@ -64,6 +65,7 @@ Settings go through `/api/config`: `validateConfigPatch()` and `saveConfig()` in
 - Readers must never see a mix of generations; keep activation in one transaction.
 - Build snapshot paths from `config.home`, never from the stored `snapshot_dir`, so a moved store keeps working and never deletes at its old path.
 - Thresholds and fusion weights come from `docs/evaluation.md`. Change them with a measurement, not by feel.
+- Docify and both plugins share one version (`src/version.ts` reads `package.json`). Change it only with `scripts/release.ts`; a new manifest or MCP config under `integrations/` goes into its `VERSION_FILES`.
 
 ## Bun
 

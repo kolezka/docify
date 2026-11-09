@@ -14,6 +14,7 @@ import { chain } from "../http/guard.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { mcpHttpHandler } from "../mcp/http.ts";
 import { DOCS_INIT, DOCS_PAGE, openApiSpec } from "./openapi.ts";
+import { VERSION } from "../version.ts";
 
 const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404 };
 
@@ -171,7 +172,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     port,
     development: false,
     routes: {
-      "/healthz": { GET: () => json({ ok: true }) },
+      "/healthz": { GET: () => json({ ok: true, version: VERSION }) },
       "/mcp": mcpRoute,
       "/api/docs": { GET: docs(() => DOCS_PAGE, "text/html; charset=utf-8", { ...PAGE_HEADERS, "cache-control": "no-store" }) },
       "/api/docs/openapi.json": { GET: docs(() => JSON.stringify(openApiSpec()), "application/json") },
