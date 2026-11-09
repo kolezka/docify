@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Docify, DocifyError } from "../core/docify.ts";
-import { outline, read, renderSources, scope, search, sources } from "../core/search.ts";
+import { open, outline, read, renderSources, scope, search, sources } from "../core/search.ts";
 import { VERSION } from "../version.ts";
 
 const pkg = { name: "docify", version: VERSION };
@@ -91,6 +91,29 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     async (args) => {
       try {
         return { content: [{ type: "text", text: outline(docify, { source: args.source, path: args.path, maxTokens: args.max_tokens }).text }] };
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "docs_open",
+    {
+      title: "Open a documentation page or section",
+      description:
+        "Return a whole document, or one section with its subsections, from the active generation in one call. Use it instead of repeated docs_read calls on long reference pages. Status is ok, not_found, not_indexed or source_unknown.",
+      inputSchema: {
+        source: z.string().min(1).describe("Source id from docs_sources or a citation, e.g. bun@1.4.3"),
+        path: z.string().min(1).describe("Document path or page URL as shown in a citation"),
+        heading: z.string().optional().describe("Section heading, case-insensitive; subsections are included"),
+        max_tokens: z.number().int().min(200).max(20000).optional().describe("Output budget, default 3000"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return { content: [{ type: "text", text: open(docify, { source: args.source, path: args.path, heading: args.heading, maxTokens: args.max_tokens }).text }] };
       } catch (err) {
         return fail(err);
       }

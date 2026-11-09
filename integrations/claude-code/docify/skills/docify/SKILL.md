@@ -19,6 +19,7 @@ Call `docs_sources` first if you do not know which libraries and versions are re
 
 1. `docs_search` with a focused query. Pass `library`, and `version` when the user or project names one. Omit `version` to use the project pin in `.docify.json`. Keep `max_tokens` small (800 to 2000) and raise it only when needed.
 2. If a hit says `truncated`, or you need the surrounding text, call `docs_read` with its id.
+   For a long reference page, or when you need a whole section, call `docs_open` once instead of `docs_read` many times. Pass the `source` id and the document `path` (or page URL) from a citation, and `heading` to get one section with its subsections. If the reply says passages were omitted, continue from the passage id it names, or ask again with a larger `max_tokens`. `not_found` lists close paths or the document's headings.
 3. If search returns `no_match` or `weak_match` and you suspect the docs do cover the topic, call `docs_outline` with the source id from `docs_sources` to browse its documents and headings. Narrow with `path` when the outline is cut. Then call `docs_read` with the id of the section that fits. If nothing fits, the docs do not cover it.
 4. Cite what you used as `library@version, document > heading (id p_...)`.
 
