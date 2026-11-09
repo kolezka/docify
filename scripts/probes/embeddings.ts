@@ -3,14 +3,14 @@
 import { env, pipeline } from "@huggingface/transformers";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { docifyHome } from "../../src/core/config.ts";
 
 const args = Bun.argv.slice(2);
 const offline = args.includes("--offline");
 const docsDir = args.find((a) => !a.startsWith("--"));
 if (!docsDir) throw new Error("usage: embeddings.ts [--offline] <docs-dir>");
 
-env.cacheDir = join(homedir(), ".cache", "docify", "models");
+env.cacheDir = join(docifyHome(), "models");
 env.allowRemoteModels = !offline;
 
 type Model = { id: string; queryPrefix: string; docPrefix: string };

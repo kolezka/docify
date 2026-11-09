@@ -1,5 +1,5 @@
 import { test, expect, describe, afterAll, beforeAll } from "bun:test";
-import { rmSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Docify, DocifyError, PIPELINE_VERSION } from "../src/core/docify.ts";
 import { read, search, sources, type Mode } from "../src/core/search.ts";
@@ -130,6 +130,29 @@ describe("refresh, deletion and old ids", () => {
     expect(r.status).toBe("activated");
     expect(r.generationId).not.toBe(active);
   });
+});
+
+test("a moved store deletes its own old snapshots and nothing at the path it was moved from", async () => {
+  const before = home();
+  const dir = writeDocs(join(tempDir("docify-src-"), "lib"), { "a.md": "# A\n\n## Heron flag\n\nThe heronFlag setting enables wading.\n" });
+  const d1 = newDocify(before, { keepGenerations: 1 });
+  d1.addSource({ library: "lib", version: "3.0", kind: "local", locator: dir });
+  const old = await d1.prepare("lib@3.0", { graphRunner: fakeGraph });
+  d1.close();
+  const after = join(home(), "moved");
+  renameSync(before, after);
+  const decoy = join(before, "snapshots", "lib@3.0", String(old.generationId));
+  mkdirSync(decoy, { recursive: true });
+  writeFileSync(join(decoy, "keep.txt"), "not part of the moved store");
+
+  const d2 = newDocify(after, { keepGenerations: 1 });
+  writeFileSync(join(dir, "a.md"), "# A\n\n## Heron flag\n\nSecond revision about egrets.\n");
+  const next = await d2.prepare("lib@3.0", { graphRunner: fakeGraph });
+  d2.close();
+  expect(next.status).toBe("activated");
+  expect(existsSync(join(after, "snapshots", "lib@3.0", String(old.generationId)))).toBe(false);
+  expect(existsSync(join(after, "snapshots", "lib@3.0", String(next.generationId)))).toBe(true);
+  expect(existsSync(join(decoy, "keep.txt"))).toBe(true);
 });
 
 describe("failed updates", () => {

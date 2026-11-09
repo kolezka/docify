@@ -7,10 +7,17 @@ Docify keeps documentation on disk and gives AI agents cited, token-bounded exce
 ```bash
 bun install
 bun link                 # puts `docify` on PATH (~/.bun/bin)
-docify setup             # pinned Graphify into ~/.cache/docify/graphify-venv, embedding model into ~/.cache/docify/models
+docify setup             # pinned Graphify into ~/.config/docify/graphify-venv, embedding model into ~/.config/docify/models
 ```
 
-`setup` is the only command that downloads models. The store lives in `~/.cache/docify` (override with `DOCIFY_HOME`), outside any plugin directory.
+`setup` is the only command that downloads models. The store lives in `~/.config/docify` (override with `DOCIFY_HOME`), outside any plugin directory.
+
+Older versions kept the store in `~/.cache/docify`. Docify keeps using it while `~/.config/docify` does not exist. To move it, first make sure every `docify` you run is this version (an older one would create a new empty store at the old path), stop `docify serve`, the macOS app and agent sessions running `docify mcp`, then:
+
+```bash
+mkdir -p ~/.config && mv ~/.cache/docify ~/.config/docify
+rm -rf ~/.config/docify/graphify-venv && docify setup   # the venv's scripts hold absolute paths
+```
 
 `make` lists shortcuts for these and the other commands below: `make check` type-checks and tests, `make app-run` builds and opens the macOS app with this checkout's CLI.
 
@@ -22,7 +29,7 @@ The default is `Xenova/bge-small-en-v1.5` in process, with no server. For multil
 docker compose up -d     # Ollama on 127.0.0.1:11434, pulls bge-m3 (about 1.5 GB the first time)
 ```
 
-Then put this in `~/.cache/docify/config.json` and run `docify setup` (it checks the server) and `docify prepare` for each source:
+Then put this in `~/.config/docify/config.json` and run `docify setup` (it checks the server) and `docify prepare` for each source:
 
 ```json
 {
@@ -87,7 +94,7 @@ docify prepare openclaw --no-graph
 
 Unknown versions stay `unknown`; `downloaded_at` is recorded separately. Each prepare builds a new generation in staging and activates it atomically. A failed or interrupted prepare keeps the previous generation and marks the source `stale`.
 
-Graph extraction calls an LLM. The default provider is the LiteLLM proxy named by `LITELLM_BASE_URL` and `LITELLM_API_KEY`, model `deepseek/deepseek-flash-nothink`, passed to Graphify only for that subprocess. Change it in `~/.cache/docify/config.json` (`graph`), or set `"graph": null` to disable it.
+Graph extraction calls an LLM. The default provider is the LiteLLM proxy named by `LITELLM_BASE_URL` and `LITELLM_API_KEY`, model `deepseek/deepseek-flash-nothink`, passed to Graphify only for that subprocess. Change it in `~/.config/docify/config.json` (`graph`), or set `"graph": null` to disable it.
 
 When the model leaves some documents out or a request fails, Graphify still returns a graph of the rest. Docify activates it with graph status `partial`, lists the documents without nodes in the generation stats (`graphMissing`) and warns in the `prepare` output. A partial graph is searched like a complete one. The next `prepare` rebuilds the source even if nothing changed, and Graphify sends only the missing documents again, because it caches the complete ones.
 
@@ -138,7 +145,7 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 
 | Variable | Effect |
 | --- | --- |
-| `DOCIFY_HOME` | Store location (default `~/.cache/docify`) |
+| `DOCIFY_HOME` | Store location (default `~/.config/docify`, or `~/.cache/docify` while only that exists) |
 | `DOCIFY_MODELS_DIR` | Embedding model cache (default `<store>/models`) |
 | `DOCIFY_EMBED_URL` | Ollama server URL when `config.json` sets none |
 | `DOCIFY_GRAPHIFY_BIN` | Graphify executable (default `<store>/graphify-venv/bin/graphify`) |

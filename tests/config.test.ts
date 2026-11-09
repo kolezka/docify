@@ -1,8 +1,20 @@
 import { expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConfigError, DEFAULT_GRAPH, describeConfig, loadConfig, saveConfig, validateConfigPatch } from "../src/core/config.ts";
+import { ConfigError, DEFAULT_GRAPH, describeConfig, docifyHome, loadConfig, saveConfig, validateConfigPatch } from "../src/core/config.ts";
 import { tempDir } from "./helpers.ts";
+
+test("the store defaults to ~/.config/docify, and a store left in ~/.cache/docify is used until it is moved", () => {
+  const user = tempDir("docify-user-");
+  const current = join(user, ".config", "docify");
+  const legacy = join(user, ".cache", "docify");
+  expect(docifyHome({}, user)).toBe(current);
+  mkdirSync(legacy, { recursive: true });
+  expect(docifyHome({}, user)).toBe(legacy);
+  mkdirSync(current, { recursive: true });
+  expect(docifyHome({}, user)).toBe(current);
+  expect(docifyHome({ DOCIFY_HOME: "/srv/docify" }, user)).toBe("/srv/docify");
+});
 
 const fileOf = (home: string) => JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
 

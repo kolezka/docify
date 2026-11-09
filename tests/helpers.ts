@@ -1,11 +1,12 @@
 import { mkdtempSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { docifyHome } from "../src/core/config.ts";
 import { Docify } from "../src/core/docify.ts";
 import { stagedName, type GraphRunResult } from "../src/core/graph.ts";
 
 export const FIXTURES = join(import.meta.dir, "..", "fixtures", "corpus");
-export const MODELS_DIR = process.env.DOCIFY_MODELS_DIR ?? join(homedir(), ".cache", "docify", "models");
+export const MODELS_DIR = process.env.DOCIFY_MODELS_DIR ?? join(docifyHome(), "models");
 
 export function tempDir(prefix = "docify-test-") {
   return mkdtempSync(join(tmpdir(), prefix));

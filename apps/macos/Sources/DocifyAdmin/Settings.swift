@@ -2,9 +2,14 @@ import SwiftUI
 
 /// docify's config.json, kept as a plain dictionary so keys this app does not know survive a save.
 enum ConfigFile {
+    /// Mirrors docifyHome() in config.ts: ~/.config/docify, or a store left in ~/.cache/docify until it is moved.
     static var home: URL {
         if let custom = ProcessInfo.processInfo.environment["DOCIFY_HOME"] { return URL(fileURLWithPath: custom) }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/docify")
+        let user = FileManager.default.homeDirectoryForCurrentUser
+        let current = user.appendingPathComponent(".config/docify")
+        let legacy = user.appendingPathComponent(".cache/docify")
+        let exists = { (url: URL) in FileManager.default.fileExists(atPath: url.path) }
+        return !exists(current) && exists(legacy) ? legacy : current
     }
 
     static var url: URL { home.appendingPathComponent("config.json") }
