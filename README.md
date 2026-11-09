@@ -89,6 +89,8 @@ Unknown versions stay `unknown`; `downloaded_at` is recorded separately. Each pr
 
 Graph extraction calls an LLM. The default provider is the LiteLLM proxy named by `LITELLM_BASE_URL` and `LITELLM_API_KEY`, model `deepseek/deepseek-flash-nothink`, passed to Graphify only for that subprocess. Change it in `~/.cache/docify/config.json` (`graph`), or set `"graph": null` to disable it.
 
+When the model leaves some documents out or a request fails, Graphify still returns a graph of the rest. Docify activates it with graph status `partial`, lists the documents without nodes in the generation stats (`graphMissing`) and warns in the `prepare` output. A partial graph is searched like a complete one. The next `prepare` rebuilds the source even if nothing changed, and Graphify sends only the missing documents again, because it caches the complete ones.
+
 ## Query
 
 ```bash
