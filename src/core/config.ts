@@ -34,6 +34,14 @@ export interface DocifyConfig {
   // vector hits down; 0.5 measured better with bge-m3 (docs/evaluation.md).
   lexicalWeight: number;
   graph: GraphProviderConfig | null;
+  // How URL sources are fetched during prepare. "builtin" fetches pages directly; "crawl4ai" renders
+  // each page through a Crawl4AI server at crawl4aiUrl (POST /crawl), for JavaScript-only docs.
+  crawlProvider: "builtin" | "crawl4ai";
+  crawl4aiUrl: string;
+  // Name of the environment variable holding the Crawl4AI bearer token, never the value.
+  crawl4aiApiKeyEnv: string;
+  // Per page: a browser render is slower than a plain fetch.
+  crawl4aiTimeoutSeconds: number;
   graphifyBin: string;
   modelsDir: string;
   keepGenerations: number;
@@ -101,6 +109,10 @@ export function defaultConfig(home: string, env: Env = process.env): DocifyConfi
     strongVectorSim: 0.65,
     weakVectorSim: 0.5,
     graph: DEFAULT_GRAPH,
+    crawlProvider: "builtin",
+    crawl4aiUrl: "http://127.0.0.1:11235",
+    crawl4aiApiKeyEnv: "CRAWL4AI_API_KEY",
+    crawl4aiTimeoutSeconds: 120,
     graphifyBin: env.DOCIFY_GRAPHIFY_BIN ?? join(home, "graphify-venv", "bin", "graphify"),
     modelsDir: env.DOCIFY_MODELS_DIR ?? join(home, "models"),
     keepGenerations: 3,
@@ -128,6 +140,10 @@ export const EDITABLE_KEYS = [
   "lexicalWeight",
   "graph",
   "keepGenerations",
+  "crawlProvider",
+  "crawl4aiUrl",
+  "crawl4aiApiKeyEnv",
+  "crawl4aiTimeoutSeconds",
 ] as const;
 export type EditableKey = (typeof EDITABLE_KEYS)[number];
 export type EditableConfig = Pick<DocifyConfig, EditableKey>;
@@ -268,6 +284,22 @@ export function validateConfigPatch(input: unknown): ConfigPatch {
       case "graph":
         out.graph = graphField(v);
         break;
+      case "crawlProvider":
+        if (v !== "builtin" && v !== "crawl4ai") throw new ConfigError("crawlProvider must be builtin or crawl4ai", key);
+        out.crawlProvider = v;
+        break;
+      case "crawl4aiUrl": {
+        out.crawl4aiUrl = urlField(key, v);
+        const url = new URL(out.crawl4aiUrl);
+        if (url.username || url.password) throw new ConfigError("crawl4aiUrl must not contain credentials; name an environment variable for the key instead", key);
+        break;
+      }
+      case "crawl4aiApiKeyEnv":
+        out.crawl4aiApiKeyEnv = envNameField(key, v);
+        break;
+      case "crawl4aiTimeoutSeconds":
+        out.crawl4aiTimeoutSeconds = numberField(key, v, 1, 3600);
+        break;
       default:
         throw new ConfigError(`unknown setting: ${key}`, key);
     }
@@ -353,6 +385,7 @@ export function describeConfig(config: DocifyConfig, env: Env = process.env): Co
   addCredential(config.embeddingApiKeyEnv, "embedding API key");
   addCredential(config.graph?.baseUrlEnv, "graph base URL");
   addCredential(config.graph?.apiKeyEnv, "graph API key");
+  if (config.crawlProvider === "crawl4ai") addCredential(config.crawl4aiApiKeyEnv, "Crawl4AI token");
   return {
     values: pick(config),
     defaults: pick(defaultConfig(config.home, env)),

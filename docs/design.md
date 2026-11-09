@@ -23,10 +23,17 @@ These are design defaults, not choices the user previously made between offline,
   selects it; credentials present in the environment never switch it on.
 - Ingestion uses a local semantic provider by default. Provider selection and preparation cost are explicit. Discovered API keys do not authorize remote processing or spending.
 - Sources are local Markdown/HTML files or directories and public static URLs, with bounded crawling restricted to the registered origin and path.
+  Amendment 2026-11-09: `crawlProvider: "crawl4ai"` in `config.json` renders URL sources through a
+  Crawl4AI server (`POST /crawl`, one URL per request) for JavaScript-only documentation. Docify
+  keeps the crawl itself: link discovery, origin and path scope, depth, page and byte limits.
+  The server's browser runs page scripts and follows redirects and subrequests on its own, so a
+  rendered page outside the scope is dropped afterwards; those fetches are not prevented. Any
+  service error, malformed response or timeout fails the prepare, the previous generation keeps
+  serving, and there is no fallback to the built-in crawler. Queries never call the server.
 
 If no adequate local model is available, continue independent work and ask one focused question about provider and budget before remote or paid semantic processing. Model downloads belong to explicit preparation, never a query side effect.
 
-Defer remote Git cloning, PDFs, authenticated sources, browser-rendered crawling, terminal or native desktop interfaces, multiuser access, and deployment. A graph canvas is unnecessary for the first UI.
+Defer remote Git cloning, PDFs, authenticated sources, browser-rendered crawling (beyond the optional Crawl4AI provider), terminal or native desktop interfaces, multiuser access, and deployment. A graph canvas is unnecessary for the first UI.
 
 ## Repository starting point
 
