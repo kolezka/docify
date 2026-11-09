@@ -1,4 +1,5 @@
-// WebGL2 graph renderer: points and lines in 3D, orbit camera, click to select.
+// WebGL2 graph renderer: shaped points and lines in 3D, orbit camera, click to select.
+// Camera moves jump rather than ease, and nothing animates, so reduced motion needs no special case.
 // No library: the page's CSP allows only bundled scripts, and the graphs are a few hundred nodes.
 
 export interface RenderNode {
@@ -21,14 +22,38 @@ export interface GraphRendererOptions {
   onFrame?: (screen: Float32Array) => void;
 }
 
+// Each type has a shape as well as a colour, so the type never rests on colour alone.
+// The index is the shader's shape code: 0 rounded square, 1 circle, 2 diamond. Unknown types draw as documents.
 const TYPES = ["document", "concept", "code"];
-// Indigo, sky and fuchsia, matching the legend swatches (Tailwind 500 in dark, 700 in light).
-const TYPE_COLOR: Record<Theme, number[][]> = {
-  dark: [[0.55, 0.47, 1.0], [0.33, 0.75, 0.98], [0.8, 0.55, 1.0]],
-  light: [[0.3, 0.25, 0.85], [0.02, 0.45, 0.72], [0.58, 0.24, 0.78]],
-};
-const EDGE_COLOR: Record<Theme, number[]> = { dark: [0.62, 0.64, 0.74], light: [0.45, 0.46, 0.53] };
-const BACKGROUND: Record<Theme, number[]> = { dark: [0.035, 0.035, 0.043], light: [0.98, 0.98, 0.98] };
+const TYPE_VARS = ["--hig-node-document", "--hig-node-concept", "--hig-node-code"];
+
+interface Palette {
+  types: number[][];
+  edge: number[];
+  selection: number[];
+  hover: number[];
+}
+
+// Colours come from the theme tokens in app.css; a 2D context turns any CSS colour into #rrggbb.
+function readPalette(): Palette {
+  const style = getComputedStyle(document.documentElement);
+  const ctx = document.createElement("canvas").getContext("2d");
+  const rgb = (name: string, fallback: number[]): number[] => {
+    const value = style.getPropertyValue(name).trim();
+    if (!ctx || !value) return fallback;
+    ctx.fillStyle = "#000";
+    ctx.fillStyle = value;
+    const hex = String(ctx.fillStyle);
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) return fallback;
+    return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  };
+  return {
+    types: TYPE_VARS.map((name) => rgb(name, [0.5, 0.5, 0.5])),
+    edge: rgb("--hig-label3", [0.56, 0.56, 0.58]),
+    selection: rgb("--hig-accent-text", [0, 0.38, 0.84]),
+    hover: rgb("--hig-label2", [0.4, 0.4, 0.41]),
+  };
+}
 
 type Mat4 = Float32Array;
 function mul(a: Mat4, b: Mat4): Mat4 {
@@ -168,24 +193,31 @@ export function layoutGraph(graph: RenderGraph): Float32Array {
   return pos;
 }
 
+// The canvas is transparent so the panel behind it shows through; every shader writes premultiplied colour.
 const POINT_VS = `#version 300 es
-in vec3 aPos; in float aSize; in vec3 aColor; in float aAlpha;
+in vec3 aPos; in float aSize; in vec3 aColor; in float aAlpha; in float aShape;
 uniform mat4 uVP; uniform float uScale;
-out vec3 vColor; out float vAlpha;
+out vec3 vColor; out float vAlpha; flat out int vShape;
 void main() {
   vec4 clip = uVP * vec4(aPos, 1.0);
   gl_Position = clip;
-  gl_PointSize = clamp(aSize * uScale / max(clip.w, 0.05), 1.5, 30.0);
-  vColor = aColor; vAlpha = aAlpha;
+  gl_PointSize = clamp(aSize * uScale / max(clip.w, 0.05), 4.0, 32.0);
+  vColor = aColor; vAlpha = aAlpha; vShape = int(aShape + 0.5);
 }`;
 const POINT_FS = `#version 300 es
 precision highp float;
-in vec3 vColor; in float vAlpha; uniform float uGlow; out vec4 outColor;
+in vec3 vColor; in float vAlpha; flat in int vShape; out vec4 outColor;
 void main() {
-  float r = length(gl_PointCoord - 0.5) * 2.0;
-  float a = uGlow > 0.5 ? pow(smoothstep(1.0, 0.0, r), 1.9) * 0.95 : smoothstep(0.95, 0.55, r);
+  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  vec2 q = abs(p);
+  float d;
+  if (vShape == 1) d = length(p) - 0.8;
+  else if (vShape == 2) d = (q.x + q.y) * 0.7071 - 0.66;
+  else d = length(max(q - 0.52, 0.0)) + min(max(q.x, q.y) - 0.52, 0.0) - 0.18;
+  float w = max(fwidth(d), 1e-3);
+  float a = (1.0 - smoothstep(-w, w, d)) * vAlpha;
   if (a <= 0.002) discard;
-  outColor = vec4(vColor, a * vAlpha);
+  outColor = vec4(vColor * a, a);
 }`;
 const LINE_VS = `#version 300 es
 in vec3 aPos; in float aAlpha; uniform mat4 uVP; out float vAlpha;
@@ -193,7 +225,7 @@ void main() { gl_Position = uVP * vec4(aPos, 1.0); vAlpha = aAlpha; }`;
 const LINE_FS = `#version 300 es
 precision highp float;
 in float vAlpha; uniform vec3 uColor; out vec4 outColor;
-void main() { outColor = vec4(uColor, vAlpha); }`;
+void main() { outColor = vec4(uColor * vAlpha, vAlpha); }`;
 const RING_VS = `#version 300 es
 uniform vec3 uPos; uniform float uSize; uniform mat4 uVP; uniform float uScale;
 void main() { vec4 clip = uVP * vec4(uPos, 1.0); gl_Position = clip; gl_PointSize = clamp(uSize * uScale / max(clip.w, 0.05), 6.0, 80.0); }`;
@@ -204,7 +236,7 @@ void main() {
   float r = length(gl_PointCoord - 0.5) * 2.0;
   float a = uStyle < 0.5 ? smoothstep(0.14, 0.0, abs(r - 0.78)) : smoothstep(1.0, 0.15, r) * 0.35;
   if (a <= 0.003) discard;
-  outColor = vec4(uColor, a);
+  outColor = vec4(uColor * a, a);
 }`;
 
 function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgram {
@@ -230,6 +262,7 @@ export class GraphRenderer {
   private gl: WebGL2RenderingContext;
   private n: number;
   private theme: Theme;
+  private palette: Palette;
   private selected = -1;
   private hovered = -1;
   private camera = { ...DEFAULT_CAMERA };
@@ -248,11 +281,12 @@ export class GraphRenderer {
     private graph: RenderGraph,
     private options: GraphRendererOptions,
   ) {
-    const gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
+    const gl = canvas.getContext("webgl2", { antialias: true, alpha: true, premultipliedAlpha: true });
     if (!gl) throw new Error("This browser cannot create a WebGL2 context.");
     this.gl = gl;
     this.n = graph.nodes.length;
     this.theme = options.theme;
+    this.palette = readPalette();
     this.positions = layoutGraph(graph);
     this.screen = new Float32Array(this.n * 4);
     this.sizes = new Float32Array(graph.nodes.map((node) => 1.4 + Math.sqrt(node.degree) * 0.55));
@@ -277,6 +311,8 @@ export class GraphRenderer {
     gl.bindVertexArray(point);
     attribute(this.programs.point, "aPos", this.positions, 3, gl.STATIC_DRAW);
     attribute(this.programs.point, "aSize", this.sizes, 1, gl.STATIC_DRAW);
+    const shapes = new Float32Array(graph.nodes.map((node) => Math.max(0, TYPES.indexOf(node.type))));
+    attribute(this.programs.point, "aShape", shapes, 1, gl.STATIC_DRAW);
     const color = attribute(this.programs.point, "aColor", new Float32Array(this.n * 3), 3, gl.DYNAMIC_DRAW);
     const alpha = attribute(this.programs.point, "aAlpha", new Float32Array(this.n), 1, gl.DYNAMIC_DRAW);
 
@@ -300,9 +336,10 @@ export class GraphRenderer {
     this.invalidate();
   }
 
+  // Re-reads the colour tokens as well, since they switch with the theme.
   setTheme(theme: Theme) {
-    if (theme === this.theme) return;
     this.theme = theme;
+    this.palette = readPalette();
     this.restyle();
   }
 
@@ -349,7 +386,7 @@ export class GraphRenderer {
     const colors = new Float32Array(this.n * 3);
     const alphas = new Float32Array(this.n);
     this.graph.nodes.forEach((node, i) => {
-      const c = TYPE_COLOR[this.theme][Math.max(0, TYPES.indexOf(node.type))]!;
+      const c = this.palette.types[Math.max(0, TYPES.indexOf(node.type))]!;
       const dim = focus >= 0 && !lit[i] ? 0.72 : 1;
       colors.set([c[0]! * dim, c[1]! * dim, c[2]! * dim], i * 3);
       // Ungrounded nodes are drawn faint: no passage backs them.
@@ -392,7 +429,6 @@ export class GraphRenderer {
   private draw() {
     const gl = this.gl;
     this.resize();
-    const dark = this.theme === "dark";
     const vp = this.viewProjection();
     const rect = this.canvas.getBoundingClientRect();
     for (let i = 0; i < this.n; i++) {
@@ -407,25 +443,22 @@ export class GraphRenderer {
       this.screen[i * 4 + 3] = visible ? 1 : 0;
     }
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    const bg = BACKGROUND[this.theme];
-    gl.clearColor(bg[0]!, bg[1]!, bg[2]!, 1);
+    gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND);
-    // Additive glow reads well on a dark stage; on light it would wash out to white.
-    gl.blendFunc(gl.SRC_ALPHA, dark ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
-    const scale = this.canvas.height * 0.034 * (dark ? 1 : 0.62);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    const scale = this.canvas.height * 0.034 * 0.72;
 
     const { line, point, ring } = this.programs;
     gl.useProgram(line);
     gl.uniformMatrix4fv(gl.getUniformLocation(line, "uVP"), false, vp);
-    gl.uniform3fv(gl.getUniformLocation(line, "uColor"), EDGE_COLOR[this.theme]);
+    gl.uniform3fv(gl.getUniformLocation(line, "uColor"), this.palette.edge);
     gl.bindVertexArray(this.vaos.line);
     gl.drawArrays(gl.LINES, 0, this.edgeCount * 2);
 
     gl.useProgram(point);
     gl.uniformMatrix4fv(gl.getUniformLocation(point, "uVP"), false, vp);
     gl.uniform1f(gl.getUniformLocation(point, "uScale"), scale);
-    gl.uniform1f(gl.getUniformLocation(point, "uGlow"), dark ? 1 : 0);
     gl.bindVertexArray(this.vaos.point);
     gl.drawArrays(gl.POINTS, 0, this.n);
 
@@ -437,7 +470,7 @@ export class GraphRenderer {
       gl.uniform1f(gl.getUniformLocation(ring, "uSize"), this.sizes[index]! * factor);
       gl.uniform1f(gl.getUniformLocation(ring, "uScale"), scale);
       gl.uniform1f(gl.getUniformLocation(ring, "uStyle"), style);
-      gl.uniform3fv(gl.getUniformLocation(ring, "uColor"), dark ? [0.85, 0.85, 1] : [0.25, 0.25, 0.35]);
+      gl.uniform3fv(gl.getUniformLocation(ring, "uColor"), style === 0 ? this.palette.selection : this.palette.hover);
       gl.bindVertexArray(this.vaos.ring);
       gl.drawArrays(gl.POINTS, 0, 1);
     };

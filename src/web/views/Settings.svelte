@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import Field from "../components/Field.svelte";
+  import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import Group from "../components/Group.svelte";
+  import Row from "../components/Row.svelte";
   import Segmented from "../components/Segmented.svelte";
-  import SettingsGroup from "../components/SettingsGroup.svelte";
-  import StatusChip from "../components/StatusChip.svelte";
+  import StatusIcon from "../components/StatusIcon.svelte";
   import Switch from "../components/Switch.svelte";
+  import Toolbar from "../components/Toolbar.svelte";
   import { api, ApiError, downloadBackup, errorText, uploadBackup, type ConfigDescription, type EditableConfig, type PathSetting, type PinsView } from "../lib/api.ts";
-  import { button, input, notice as noticeStyle, type ChipTone } from "../lib/ui.ts";
+  import { button, cn, footnote, input, notice as noticeStyle, popup } from "../lib/ui.ts";
 
   type Provider = EditableConfig["embeddingProvider"];
   type GraphForm = { backend: string; model: string; baseUrlEnv?: string; baseUrlSuffix?: string; apiKeyEnv?: string; maxConcurrency?: number; timeoutSeconds?: number };
@@ -34,6 +36,8 @@
     "browserlessTimeoutSeconds",
   ] as const;
   const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds"] as const;
+  type FieldKey = Exclude<(typeof SCALAR_KEYS)[number], "embeddingProvider" | "crawlProvider">;
+  type GraphKey = (typeof GRAPH_KEYS)[number];
 
   const providers: { value: Provider; label: string }[] = [
     { value: "transformers", label: "Built-in" },
@@ -46,11 +50,67 @@
     { value: "crawl4ai", label: "Crawl4AI server" },
   ];
 
+  // One section at a time; the first five fit the segmented control, the rest sit behind "More".
+  const SECTIONS = [
+    { id: "embeddings", title: "Embeddings", description: "How documents and queries are turned into vectors. Applies to the next preparation and to vector search." },
+    { id: "search", title: "Search Quality", description: "Evidence thresholds and fusion weight. Measured values are in docs/evaluation.md." },
+    { id: "crawling", title: "Web Crawling", description: "How URL sources are fetched when preparing. Local folders are always read from disk." },
+    { id: "graph", title: "Semantic Graph", description: "Optional Graphify knowledge graph built while preparing. It calls an LLM through the variables below." },
+    { id: "storage", title: "Storage", description: "Where Docify keeps its data. Paths that run or load code can only be changed in config.json or the environment." },
+    { id: "environment", title: "Environment", description: "Variables this server process started with. Change them where you start docify serve, then restart it." },
+    { id: "pins", title: "Project Pins", description: "Versions used when a search names a library without a version. Saved right away to .docify.json." },
+    {
+      id: "backup",
+      title: "Backup",
+      description:
+        "Export the whole store (sources, prepared snapshots, settings) to one file, or replace this store with one. Models and the Graphify runtime are not included; run docify setup on a new machine.",
+    },
+  ] as const;
+  type SectionId = (typeof SECTIONS)[number]["id"];
+  const MAIN_SECTIONS = SECTIONS.slice(0, 5).map((s) => ({ value: s.id as SectionId, label: s.title }));
+  const MORE_SECTIONS = SECTIONS.slice(5);
+  // Sections whose fields Save and Revert apply to.
+  const CONFIG_SECTIONS: SectionId[] = ["embeddings", "search", "crawling", "graph", "storage"];
+  const SECTION_KEY = "docify-settings-section";
+
+  function loadSection(): SectionId {
+    try {
+      const saved = sessionStorage.getItem(SECTION_KEY);
+      if (SECTIONS.some((s) => s.id === saved)) return saved as SectionId;
+    } catch {
+      // storage blocked: start at the first section
+    }
+    return "embeddings";
+  }
+
+  let section = $state<SectionId>(loadSection());
+  const current = $derived(SECTIONS.find((s) => s.id === section) ?? SECTIONS[0]);
+
+  function go(id: SectionId) {
+    section = id;
+    try {
+      sessionStorage.setItem(SECTION_KEY, id);
+    } catch {
+      // the section is then not kept across reloads
+    }
+  }
+
+  // Which section shows a field, so an error elsewhere can point there.
+  function sectionOf(key: string): SectionId {
+    if (key.startsWith("graph")) return "graph";
+    if (key.startsWith("embedding")) return "embeddings";
+    if (key.startsWith("crawl") || key.startsWith("browserless")) return "crawling";
+    if (key === "keepGenerations") return "storage";
+    return "search";
+  }
+  const titleOf = (id: SectionId) => SECTIONS.find((s) => s.id === id)?.title ?? id;
+
   let desc = $state<ConfigDescription | null>(null);
   let form = $state<Form | null>(null);
   let loadError = $state("");
   let saveError = $state<{ message: string; field: string | null } | null>(null);
-  let saved = $state("");
+  let justSaved = $state(false);
+  let identityNote = $state("");
   let presetNote = $state("");
   let saving = $state(false);
 
@@ -66,6 +126,8 @@
   let importFile = $state<File | null>(null);
   let importForce = $state(false);
   let importKeepConfig = $state(false);
+  let confirmImport = $state(false);
+  let fileInput = $state<HTMLInputElement | null>(null);
 
   async function exportBackup() {
     backupBusy = true;
@@ -81,8 +143,6 @@
 
   async function importBackup() {
     if (!importFile) return;
-    const replacing = importForce ? " The current store is moved aside, not deleted." : "";
-    if (!confirm(`Replace this Docify store with ${importFile.name}?${replacing}`)) return;
     backupBusy = true;
     backupError = backupNote = "";
     try {
@@ -90,6 +150,7 @@
       const aside = r.movedAside ? ` The previous store is in ${r.movedAside}.` : "";
       backupNote = `Imported ${r.sources.length} source(s) from a backup made ${new Date(r.createdAt).toLocaleString()}.${aside} Restart docify mcp clients so they read it.`;
       importFile = null;
+      if (fileInput) fileInput.value = "";
       await load();
     } catch (err) {
       backupError = errorText(err);
@@ -97,6 +158,10 @@
       backupBusy = false;
     }
   }
+
+  const importMessage = $derived(
+    importFile ? `Replace this Docify store with ${importFile.name}?${importForce ? " The current store is moved aside, not deleted." : ""}` : "",
+  );
 
   function toForm(d: ConfigDescription): Form {
     const values = JSON.parse(JSON.stringify(d.values)) as EditableConfig;
@@ -141,14 +206,14 @@
   const fieldError = (key: string) => clientErrors[key] ?? (saveError?.field === key ? saveError.message : null);
   const fieldId = (key: string) => `setting-${key.replace(".", "-")}`;
 
-  const embeddingEnvFields = [
-    { key: "embeddingBaseUrlEnv", label: "Base URL variable" },
-    { key: "embeddingApiKeyEnv", label: "API key variable" },
-  ] as const;
-  const graphEnvFields = [
-    { key: "baseUrlEnv", label: "Base URL variable" },
-    { key: "apiKeyEnv", label: "API key variable" },
-  ] as const;
+  // The first invalid field outside the shown section, so the toolbar can point to it.
+  const errorElsewhere = $derived.by(() => {
+    const keys = Object.keys(clientErrors);
+    if (saveError?.field) keys.push(saveError.field);
+    const other = keys.map(sectionOf).find((s) => s !== section);
+    return other ?? null;
+  });
+
   const pathRows = $derived(
     desc
       ? [
@@ -172,11 +237,11 @@
     }
   });
 
-  function envStatus(name: string | undefined): { tone: ChipTone; label: string } {
+  function envStatus(name: string | undefined): { tone: "ok" | "warn" | null; label: string } {
     const entry = desc?.environment.find((e) => e.name === name);
-    if (!name) return { tone: "neutral", label: "no variable" };
-    if (!entry) return { tone: "neutral", label: "save to check" };
-    return entry.set ? { tone: "ok", label: "set in server environment" } : { tone: "warn", label: "not set" };
+    if (!name) return { tone: null, label: "No variable" };
+    if (!entry) return { tone: null, label: "Save to check" };
+    return entry.set ? { tone: "ok", label: "Set" } : { tone: "warn", label: "Not set" };
   }
 
   function sourceLabel(p: PathSetting) {
@@ -222,14 +287,16 @@
     if (!desc || Object.keys(clientErrors).length) return;
     saving = true;
     saveError = null;
-    saved = "";
+    justSaved = false;
+    identityNote = "";
     const before = identity(desc.values);
     try {
       const next = await api<ConfigDescription>("/api/config", { method: "PUT", body: $state.snapshot(patch) });
       apply(next);
       presetNote = "";
       const after = identity(next.values);
-      saved = after !== before ? `Embeddings changed to ${after}. Prepare every source again; until then search skips vector mode for them.` : "Saved.";
+      justSaved = true;
+      if (after !== before) identityNote = `Embeddings changed to ${after}. Prepare every source again; until then search skips vector mode for them.`;
     } catch (err) {
       saveError = err instanceof ApiError ? { message: err.message, field: err.field } : { message: errorText(err), field: null };
     } finally {
@@ -249,291 +316,367 @@
       pinBusy = false;
     }
   }
+
+  const showSave = $derived(!!form && (CONFIG_SECTIONS.includes(section) || dirty));
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto">
-  <main class="mx-auto flex w-full max-w-[760px] flex-col gap-10 p-5 pt-8 pb-10">
-    {#if loadError}
-      <div class={noticeStyle({ tone: "bad" })} role="alert">
-        <p class="font-medium">Settings could not be read.</p>
-        <p class="mt-1 font-mono text-[12px] break-words">{loadError}</p>
-        <p class="mt-2">Fix or remove the file, then reload this page. Nothing was changed.</p>
-      </div>
-    {:else if !form || !desc}
-      <p class="text-[13px] text-zinc-500 dark:text-zinc-400">Loading settings...</p>
-    {:else}
-      <SettingsGroup title="Embeddings" description="How documents and queries are turned into vectors. Applies to the next preparation and to vector search.">
-        <div>
-          <span class="mb-2 block text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Provider</span>
-          <Segmented options={providers} bind:value={form.embeddingProvider} label="Embedding provider" onchange={onProvider} />
-          {#if presetNote}<p class="mt-2 text-[12px] text-zinc-500 dark:text-zinc-400">{presetNote}</p>{/if}
-        </div>
+{#snippet errorLine(key: string)}
+  {#if fieldError(key)}<p id="{fieldId(key)}-error" class="mt-1 text-[11px] leading-[14px] font-medium text-bad-text">{fieldError(key)}</p>{/if}
+{/snippet}
 
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Model" id={fieldId("embeddingModel")} error={fieldError("embeddingModel")}>
-            <input id={fieldId("embeddingModel")} class={input({ invalid: !!fieldError("embeddingModel") })} bind:value={form.embeddingModel} />
-          </Field>
-          <Field label="Dimensions" id={fieldId("embeddingDims")} error={fieldError("embeddingDims")}>
-            <input id={fieldId("embeddingDims")} type="number" min="1" step="1" class={input({ invalid: !!fieldError("embeddingDims") })} bind:value={form.embeddingDims} />
-          </Field>
-          <Field label="Query prefix" id={fieldId("embeddingQueryPrefix")} error={fieldError("embeddingQueryPrefix")} hint="added before every query">
-            <input id={fieldId("embeddingQueryPrefix")} placeholder="none" class={input()} bind:value={form.embeddingQueryPrefix} />
-          </Field>
-        </div>
+{#snippet envTag(name: string | undefined)}
+  {@const s = envStatus(name)}
+  {#if s.tone}
+    <span class={cn("inline-flex w-[72px] shrink-0 items-center gap-1 text-[13px] font-medium whitespace-nowrap", s.tone === "ok" ? "text-ok-text" : "text-warn-text")}>
+      <StatusIcon tone={s.tone} size={13} />{s.label}
+    </span>
+  {:else}
+    <span class="w-[72px] shrink-0 text-[11px] leading-[14px] text-label2">{s.label}</span>
+  {/if}
+{/snippet}
 
-        {#if form.embeddingProvider === "ollama"}
-          <Field
-            label="Ollama URL"
-            id={fieldId("embeddingUrl")}
-            error={fieldError("embeddingUrl")}
-            hint={desc.inFile.includes("embeddingUrl") ? "from config.json" : "default, or DOCIFY_EMBED_URL when set"}
-          >
-            <input id={fieldId("embeddingUrl")} class={input({ mono: true, invalid: !!fieldError("embeddingUrl") })} bind:value={form.embeddingUrl} />
-          </Field>
+{#snippet field(f: Form, key: FieldKey, label: string, opts: { sub?: string; number?: boolean; min?: string; max?: string; step?: string; unit?: string; mono?: boolean; width?: string; placeholder?: string; env?: boolean })}
+  {@const err = fieldError(key)}
+  <Row {label} sub={opts.sub} for={fieldId(key)}>
+    <div class={cn("flex shrink-0 flex-col items-end", opts.width ?? "w-[260px] max-w-[55%]")}>
+      <div class="flex w-full items-center gap-2">
+        {#if opts.number}
+          <input
+            id={fieldId(key)}
+            type="number"
+            min={opts.min}
+            max={opts.max}
+            step={opts.step}
+            aria-invalid={!!err}
+            aria-describedby={err ? `${fieldId(key)}-error` : undefined}
+            class={input({ mono: true, invalid: !!err, class: "text-right" })}
+            bind:value={f[key]}
+          />
+        {:else}
+          <input
+            id={fieldId(key)}
+            placeholder={opts.placeholder}
+            aria-invalid={!!err}
+            aria-describedby={err ? `${fieldId(key)}-error` : undefined}
+            class={input({ mono: opts.mono ?? true, invalid: !!err })}
+            bind:value={f[key]}
+          />
         {/if}
+        {#if opts.unit}<span class={footnote}>{opts.unit}</span>{/if}
+        {#if opts.env}{@render envTag(f[key] as string | undefined)}{/if}
+      </div>
+      {@render errorLine(key)}
+    </div>
+  </Row>
+{/snippet}
+
+{#snippet graphField(g: GraphForm, key: GraphKey, label: string, opts: { sub?: string; number?: boolean; min?: string; step?: string; unit?: string; width?: string; env?: boolean })}
+  {@const k = `graph.${key}`}
+  {@const err = fieldError(k)}
+  <Row {label} sub={opts.sub} for={fieldId(k)}>
+    <div class={cn("flex shrink-0 flex-col items-end", opts.width ?? "w-[260px] max-w-[55%]")}>
+      <div class="flex w-full items-center gap-2">
+        {#if opts.number}
+          <input
+            id={fieldId(k)}
+            type="number"
+            min={opts.min}
+            step={opts.step}
+            aria-invalid={!!err}
+            class={input({ mono: true, invalid: !!err, class: "text-right" })}
+            bind:value={g[key]}
+          />
+        {:else}
+          <input id={fieldId(k)} aria-invalid={!!err} class={input({ mono: true, invalid: !!err })} bind:value={g[key]} />
+        {/if}
+        {#if opts.unit}<span class={footnote}>{opts.unit}</span>{/if}
+        {#if opts.env}{@render envTag(g[key] as string | undefined)}{/if}
+      </div>
+      {@render errorLine(k)}
+    </div>
+  </Row>
+{/snippet}
+
+{#snippet warnLine(text: string)}
+  <p class={cn(footnote, "mx-3.5 mt-2.5 flex items-start gap-1.5")}><StatusIcon tone="warn" size={12} class="mt-px" />{text}</p>
+{/snippet}
+
+<div class="flex min-h-0 flex-1 flex-col">
+  <Toolbar>
+    <!-- Wide windows: five segments plus "More". Narrow ones: one popup with all eight. -->
+    <div class="hidden items-center gap-2 xl:flex">
+      <Segmented options={MAIN_SECTIONS} value={section} label="Settings section" onchange={go} />
+      <select
+        aria-label="More settings sections"
+        class={popup({ class: cn(MORE_SECTIONS.some((s) => s.id === section) && "border-accent") })}
+        value={MORE_SECTIONS.some((s) => s.id === section) ? section : ""}
+        onchange={(ev) => go((ev.currentTarget as HTMLSelectElement).value as SectionId)}
+      >
+        <option value="" disabled>More</option>
+        {#each MORE_SECTIONS as s (s.id)}<option value={s.id}>{s.title}</option>{/each}
+      </select>
+    </div>
+    <select
+      aria-label="Settings section"
+      class={popup({ class: "xl:hidden" })}
+      value={section}
+      onchange={(ev) => go((ev.currentTarget as HTMLSelectElement).value as SectionId)}
+    >
+      {#each SECTIONS as s (s.id)}<option value={s.id}>{s.title}</option>{/each}
+    </select>
+
+    <span class="flex-1"></span>
+
+    <span class="flex min-w-0 items-center gap-1.5" role="status">
+      {#if saveError}
+        <StatusIcon tone="bad" size={12} />
+        <span class={cn(footnote, "truncate text-bad-text")} title={saveError.message}>Not saved</span>
+      {:else if errorElsewhere}
+        <button type="button" class={button({ intent: "link", size: "xs" })} onclick={() => errorElsewhere && go(errorElsewhere)}>Check {titleOf(errorElsewhere)}</button>
+      {:else if dirty}
+        <span class={footnote}>Unsaved changes</span>
+      {:else if justSaved}
+        <StatusIcon tone="ok" size={12} /><span class={footnote}>Saved</span>
+      {/if}
+    </span>
+    {#if showSave}
+      <button type="button" class={button({ size: "md" })} disabled={!dirty || saving} onclick={revert}>Revert</button>
+      <button type="button" class={button({ intent: "primary", size: "md" })} disabled={!dirty || saving || Object.keys(clientErrors).length > 0} onclick={save}
+        >{saving ? "Saving" : "Save"}</button
+      >
+    {/if}
+  </Toolbar>
+
+  <div class="min-h-0 flex-1 overflow-y-auto px-8 pt-1 pb-10 max-sm:px-4">
+    <div class="mx-auto w-full max-w-[720px]">
+      <h1 class="text-[26px] leading-[32px] font-bold tracking-[-0.01em]">{current.title}</h1>
+      <p class="mt-1 text-[13px] leading-[18px] text-label2">{current.description}</p>
+
+      {#if saveError}
+        <div class={noticeStyle({ tone: "bad", class: "mt-4" })} role="alert">
+          <StatusIcon tone="bad" class="mt-0.5" />
+          <span class="min-w-0 break-words">{saveError.message}</span>
+        </div>
+      {/if}
+      {#if identityNote}
+        <div class={noticeStyle({ tone: "warn", class: "mt-4" })} role="status">
+          <StatusIcon tone="warn" class="mt-0.5" />
+          <span>{identityNote}</span>
+        </div>
+      {/if}
+
+      {#if section === "pins"}
+        {#if pins}
+          <Group title="Project">
+            <Row label="Folder">
+              <span class="max-w-[60%] truncate font-mono text-[12px] text-label2" title={pins.project}>{pins.project}</span>
+            </Row>
+            <Row label="Pin file">
+              {#if pins.file}
+                <span class="max-w-[60%] truncate font-mono text-[12px] text-label2" title={pins.file}>{pins.file}</span>
+              {:else}
+                <span class={cn(footnote, "max-w-[60%] text-right")}>None yet; the first pin creates .docify.json in the project</span>
+              {/if}
+            </Row>
+          </Group>
+
+          <Group title="Pins">
+            {#each Object.entries(pins.pins) as [lib, ver] (lib)}
+              <Row>
+                {#snippet leading()}
+                  <span class="min-w-0 flex-1 truncate font-mono text-[13px]">{lib}<span class="text-label2">@</span>{ver}</span>
+                {/snippet}
+                <button type="button" class={button({ size: "xs" })} disabled={pinBusy} onclick={() => setPin(lib, null)}>Unpin</button>
+              </Row>
+            {:else}
+              <Row label="No pins" sub="Searches use every prepared version unless a version is given." />
+            {/each}
+          </Group>
+
+          <Group title="Add pin">
+            <form
+              class="contents"
+              onsubmit={(ev) => {
+                ev.preventDefault();
+                setPin(pinLibrary, pinVersion);
+              }}
+            >
+              <Row>
+                {#snippet leading()}
+                  <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                    <input class={input({ mono: true, class: "w-40 flex-none" })} placeholder="library" aria-label="Library to pin" required bind:value={pinLibrary} />
+                    <input class={input({ mono: true, class: "w-28 flex-none" })} placeholder="version" aria-label="Version to pin" required bind:value={pinVersion} />
+                  </div>
+                {/snippet}
+                <button type="submit" class={button({ intent: "primary" })} disabled={pinBusy}>Pin</button>
+              </Row>
+            </form>
+          </Group>
+        {/if}
+        {#if pinError}
+          <div class={noticeStyle({ tone: "bad", class: "mt-4" })} role="alert">
+            <StatusIcon tone="bad" class="mt-0.5" /><span class="min-w-0 break-words">{pinError}</span>
+          </div>
+        {/if}
+      {:else if section === "backup"}
+        <Group title="Export">
+          <Row label="Export store" sub="Downloads one .tar.gz file. Fails while a source is being prepared.">
+            <button type="button" class={button()} disabled={backupBusy} onclick={exportBackup}>Export Store</button>
+          </Row>
+        </Group>
+
+        <Group title="Import" hint="Importing replaces this store. Restart docify mcp clients afterwards so they read it.">
+          <Row label="Backup file" for="backup-file">
+            <input
+              id="backup-file"
+              bind:this={fileInput}
+              type="file"
+              accept=".tar.gz,.tgz,application/gzip"
+              class="max-w-[60%] min-w-0 text-[13px] text-label2 file:mr-3 file:h-6 file:rounded-md file:border file:border-sep file:bg-surface file:px-3 file:text-[13px] file:font-medium file:text-label"
+              onchange={(ev) => (importFile = (ev.currentTarget as HTMLInputElement).files?.[0] ?? null)}
+            />
+          </Row>
+          <Row label="Replace a store that already has sources" sub="The current store is moved aside, not deleted.">
+            <Switch bind:checked={importForce} label="Replace a store that already has sources" hideLabel />
+          </Row>
+          <Row label="Keep this machine's settings">
+            <Switch bind:checked={importKeepConfig} label="Keep this machine's settings" hideLabel />
+          </Row>
+          <Row label="">
+            <button type="button" class={button({ intent: "danger" })} disabled={backupBusy || !importFile} onclick={() => (confirmImport = true)}>Import…</button>
+          </Row>
+        </Group>
+
+        {#if backupNote}
+          <p class={cn(footnote, "mx-3.5 mt-3 flex items-start gap-1.5 break-words")} role="status"><StatusIcon tone="ok" size={12} class="mt-px" />{backupNote}</p>
+        {/if}
+        {#if backupError}
+          <div class={noticeStyle({ tone: "bad", class: "mt-4" })} role="alert">
+            <StatusIcon tone="bad" class="mt-0.5" /><span class="min-w-0 break-words">{backupError}</span>
+          </div>
+        {/if}
+      {:else if loadError}
+        <div class={noticeStyle({ tone: "bad", class: "mt-6 flex-col gap-1" })} role="alert">
+          <p class="flex items-center gap-2 font-medium"><StatusIcon tone="bad" />Settings could not be read.</p>
+          <p class="font-mono text-[12px] break-words">{loadError}</p>
+          <p class="mt-1">Fix or remove the file, then reload this page. Nothing was changed.</p>
+        </div>
+      {:else if !form || !desc}
+        <p class={cn(footnote, "mt-6 text-[13px]")}>Loading settings…</p>
+      {:else if section === "embeddings"}
+        <Group title="Provider" hint="Changing the embedding model means every source must be prepared again; until then search skips vector mode for them.">
+          <Row label="Embedding provider">
+            <Segmented options={providers} bind:value={form.embeddingProvider} label="Embedding provider" onchange={onProvider} />
+          </Row>
+          {@render field(form, "embeddingModel", "Model", {})}
+          {@render field(form, "embeddingDims", "Dimensions", { number: true, min: "1", step: "1" })}
+          {@render field(form, "embeddingQueryPrefix", "Query prefix", { sub: "Added before every query", placeholder: "None" })}
+          {#if form.embeddingProvider === "ollama"}
+            {@render field(form, "embeddingUrl", "Ollama URL", { sub: desc.inFile.includes("embeddingUrl") ? "From config.json" : "Default, or DOCIFY_EMBED_URL when set" })}
+          {/if}
+          {#if form.embeddingProvider === "openai"}
+            {@render field(form, "embeddingTimeoutSeconds", "Request timeout", { number: true, min: "1", unit: "seconds", width: "w-[140px]" })}
+          {/if}
+          {#snippet footer()}
+            {#if presetNote}<p class={cn(footnote, "mx-3.5 mt-1.5")}>{presetNote}</p>{/if}
+            {#if identityChanged}{@render warnLine("The model changes when you save. Prepare every source again afterwards.")}{/if}
+          {/snippet}
+        </Group>
 
         {#if form.embeddingProvider === "openai"}
-          <div class="flex flex-col gap-4 border-t border-zinc-100 pt-5 dark:border-zinc-800">
-            <div>
-              <p class="text-[13px] font-medium text-zinc-900 dark:text-zinc-100">Environment variables</p>
-              <p class="mt-0.5 text-[12px] text-zinc-500 dark:text-zinc-400">Only variable names are stored, never values. The server reads them when it starts.</p>
-            </div>
-            {#each embeddingEnvFields as v (v.key)}
-              {@const status = envStatus(form[v.key])}
-              <Field label={v.label} id={fieldId(v.key)} error={fieldError(v.key)}>
-                <div class="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
-                  <input id={fieldId(v.key)} class={input({ mono: true, invalid: !!fieldError(v.key), class: "sm:w-60" })} bind:value={form[v.key]} />
-                  <StatusChip tone={status.tone} label={status.label} />
-                </div>
-              </Field>
-            {/each}
-            <Field label="Request timeout (seconds)" id={fieldId("embeddingTimeoutSeconds")} error={fieldError("embeddingTimeoutSeconds")} class="sm:w-1/2">
-              <input id={fieldId("embeddingTimeoutSeconds")} type="number" min="1" class={input({ invalid: !!fieldError("embeddingTimeoutSeconds") })} bind:value={form.embeddingTimeoutSeconds} />
-            </Field>
-          </div>
+          <Group title="Server environment" hint="Only variable names are stored, never values. The server reads them when it starts.">
+            {@render field(form, "embeddingBaseUrlEnv", "Base URL variable", { sub: "Name only. The value stays in the environment.", env: true, width: "w-[310px] max-w-[60%]" })}
+            {@render field(form, "embeddingApiKeyEnv", "API key variable", { env: true, width: "w-[310px] max-w-[60%]" })}
+          </Group>
         {/if}
 
-        <div class="flex flex-col gap-2">
-          {#if remoteEmbeddings}
-            <div class={noticeStyle({ tone: "warn" })}>Every search sends the query to this server.</div>
-          {/if}
-          <div class={noticeStyle({ tone: identityChanged ? "warn" : "info" })}>
-            Changing the embedding model means every source must be prepared again; until then search skips vector mode for them.
-          </div>
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup title="Search quality" description="Evidence thresholds and fusion weight. Measured values are in docs/evaluation.md.">
-        <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Strong match similarity" id={fieldId("strongVectorSim")} error={fieldError("strongVectorSim")} hint="0 to 1, measured for bge models">
-            <input id={fieldId("strongVectorSim")} type="number" min="0" max="1" step="0.01" class={input({ invalid: !!fieldError("strongVectorSim") })} bind:value={form.strongVectorSim} />
-          </Field>
-          <Field label="Weak match similarity" id={fieldId("weakVectorSim")} error={fieldError("weakVectorSim")} hint="0 to 1, at most the strong value">
-            <input id={fieldId("weakVectorSim")} type="number" min="0" max="1" step="0.01" class={input({ invalid: !!fieldError("weakVectorSim") })} bind:value={form.weakVectorSim} />
-          </Field>
-          <Field label="Lexical weight" id={fieldId("lexicalWeight")} error={fieldError("lexicalWeight")} hint="weight of word matches in combined search">
-            <input id={fieldId("lexicalWeight")} type="number" min="0" step="0.1" class={input({ invalid: !!fieldError("lexicalWeight") })} bind:value={form.lexicalWeight} />
-          </Field>
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup title="Web crawling" description="How URL sources are fetched when preparing. Local folders are always read from disk.">
-        <span class="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Default for sources without a crawler selection</span>
-        <Segmented options={crawlProviders} bind:value={form.crawlProvider} label="Default crawl provider" />
-          <div class="grid grid-cols-1 gap-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 dark:border-zinc-800">
-            <Field label="Crawl4AI URL" id={fieldId("crawl4aiUrl")} error={fieldError("crawl4aiUrl")} hint="the server's base URL, without credentials">
-              <input id={fieldId("crawl4aiUrl")} class={input({ mono: true, invalid: !!fieldError("crawl4aiUrl") })} bind:value={form.crawl4aiUrl} />
-            </Field>
-            <Field label="Page timeout (seconds)" id={fieldId("crawl4aiTimeoutSeconds")} error={fieldError("crawl4aiTimeoutSeconds")}>
-              <input id={fieldId("crawl4aiTimeoutSeconds")} type="number" min="1" class={input({ invalid: !!fieldError("crawl4aiTimeoutSeconds") })} bind:value={form.crawl4aiTimeoutSeconds} />
-            </Field>
-            <Field label="Token variable" id={fieldId("crawl4aiApiKeyEnv")} error={fieldError("crawl4aiApiKeyEnv")} hint="name only; the value stays in the environment">
-              <input id={fieldId("crawl4aiApiKeyEnv")} class={input({ mono: true, invalid: !!fieldError("crawl4aiApiKeyEnv") })} bind:value={form.crawl4aiApiKeyEnv} />
-              <StatusChip tone={envStatus(form.crawl4aiApiKeyEnv).tone} label={envStatus(form.crawl4aiApiKeyEnv).label} class="mt-2" />
-            </Field>
-          </div>
-          <div class={noticeStyle({ tone: "info" })}>
-            Docify still decides which pages to crawl, but the server's browser loads each page with its scripts and subrequests. Pages that end up outside the source are dropped after rendering, not prevented. If the server fails, preparing fails and the previous version keeps serving.
-          </div>
-          <div class="grid grid-cols-1 gap-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 dark:border-zinc-800">
-            <Field label="Browserless URL" id={fieldId("browserlessUrl")} error={fieldError("browserlessUrl")} hint="base URL without credentials or query parameters">
-              <input id={fieldId("browserlessUrl")} class={input({ mono: true, invalid: !!fieldError("browserlessUrl") })} bind:value={form.browserlessUrl} />
-            </Field>
-            <Field label="Page timeout (seconds)" id={fieldId("browserlessTimeoutSeconds")} error={fieldError("browserlessTimeoutSeconds")}>
-              <input id={fieldId("browserlessTimeoutSeconds")} type="number" min="1" class={input({ invalid: !!fieldError("browserlessTimeoutSeconds") })} bind:value={form.browserlessTimeoutSeconds} />
-            </Field>
-            <Field label="Token variable" id={fieldId("browserlessApiKeyEnv")} error={fieldError("browserlessApiKeyEnv")} hint="name only; the value stays in the environment">
-              <input id={fieldId("browserlessApiKeyEnv")} class={input({ mono: true, invalid: !!fieldError("browserlessApiKeyEnv") })} bind:value={form.browserlessApiKeyEnv} />
-              <StatusChip tone={envStatus(form.browserlessApiKeyEnv).tone} label={envStatus(form.browserlessApiKeyEnv).label} class="mt-2" />
-            </Field>
-          </div>
-      </SettingsGroup>
-
-      <SettingsGroup title="Semantic graph" description="Optional Graphify knowledge graph built while preparing. It calls an LLM through the variables below.">
-        <Switch bind:checked={form.graphEnabled} label="Build a graph when preparing" />
-        {#if form.graphEnabled}
-          <div class="grid grid-cols-1 gap-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 dark:border-zinc-800">
-            <Field label="Backend" id={fieldId("graph.backend")} error={fieldError("graph.backend")}>
-              <input id={fieldId("graph.backend")} class={input({ invalid: !!fieldError("graph.backend") })} bind:value={form.graph.backend} />
-            </Field>
-            <Field label="Model" id={fieldId("graph.model")} error={fieldError("graph.model")}>
-              <input id={fieldId("graph.model")} class={input({ invalid: !!fieldError("graph.model") })} bind:value={form.graph.model} />
-            </Field>
-            {#each graphEnvFields as v (v.key)}
-              {@const status = envStatus(form.graph[v.key])}
-              <Field label={v.label} id={fieldId(`graph.${v.key}`)} error={fieldError(`graph.${v.key}`)}>
-                <input id={fieldId(`graph.${v.key}`)} class={input({ mono: true, invalid: !!fieldError(`graph.${v.key}`) })} bind:value={form.graph[v.key]} />
-                <StatusChip tone={status.tone} label={status.label} class="mt-2" />
-              </Field>
-            {/each}
-            <Field label="Base URL suffix" id={fieldId("graph.baseUrlSuffix")} error={fieldError("graph.baseUrlSuffix")} hint="appended to the base URL">
-              <input id={fieldId("graph.baseUrlSuffix")} class={input({ mono: true, invalid: !!fieldError("graph.baseUrlSuffix") })} bind:value={form.graph.baseUrlSuffix} />
-            </Field>
-            <div class="grid grid-cols-2 gap-4">
-              <Field label="Max concurrency" id={fieldId("graph.maxConcurrency")} error={fieldError("graph.maxConcurrency")}>
-                <input id={fieldId("graph.maxConcurrency")} type="number" min="1" step="1" class={input({ invalid: !!fieldError("graph.maxConcurrency") })} bind:value={form.graph.maxConcurrency} />
-              </Field>
-              <Field label="Timeout (s)" id={fieldId("graph.timeoutSeconds")} error={fieldError("graph.timeoutSeconds")}>
-                <input id={fieldId("graph.timeoutSeconds")} type="number" min="1" class={input({ invalid: !!fieldError("graph.timeoutSeconds") })} bind:value={form.graph.timeoutSeconds} />
-              </Field>
-            </div>
-          </div>
-        {/if}
-      </SettingsGroup>
-
-      <SettingsGroup title="Storage" description="Where Docify keeps its data. Paths that run or load code can only be changed in config.json or the environment.">
-        <Field label="Keep generations" id={fieldId("keepGenerations")} error={fieldError("keepGenerations")} hint="active one plus older ones, so recent citations stay readable" class="sm:w-1/2">
-          <input id={fieldId("keepGenerations")} type="number" min="1" step="1" class={input({ invalid: !!fieldError("keepGenerations") })} bind:value={form.keepGenerations} />
-        </Field>
-        <dl class="flex flex-col gap-2 border-t border-zinc-100 pt-5 dark:border-zinc-800">
-          {#each pathRows as row (row.label)}
-            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-6">
-              <dt class="w-20 shrink-0 text-[12px] font-medium text-zinc-500 dark:text-zinc-400">{row.label}</dt>
-              <dd class="flex min-w-0 items-center gap-2">
-                <span class="truncate rounded border border-zinc-200/60 bg-zinc-50 px-2 py-1 font-mono text-[13px] text-zinc-800 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200" title={row.value}>{row.value}</span>
-                {#if row.note}<span class="shrink-0 text-[12px] text-zinc-400 dark:text-zinc-500">{row.note}</span>{/if}
-              </dd>
-            </div>
-          {/each}
-        </dl>
-      </SettingsGroup>
-
-      <SettingsGroup title="Environment" description="Variables this server process started with. Change them where you start docify serve, then restart it.">
-        <div class="-mx-5 -my-5 overflow-x-auto">
-          <table class="w-full text-left text-[13px]">
-            <thead class="text-[12px] text-zinc-500 dark:text-zinc-400">
-              <tr class="border-b border-zinc-100 dark:border-zinc-800">
-                <th class="px-5 py-2.5 font-medium">Variable</th>
-                <th class="px-2 py-2.5 font-medium">Used for</th>
-                <th class="px-2 py-2.5 font-medium">Status</th>
-                <th class="px-5 py-2.5 font-medium">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each desc.environment as e (e.name)}
-                <tr class="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                  <td class="px-5 py-2.5 font-mono text-[12px] whitespace-nowrap text-zinc-800 dark:text-zinc-200">{e.name}</td>
-                  <td class="px-2 py-2.5 text-zinc-500 dark:text-zinc-400">{e.purpose}</td>
-                  <td class="px-2 py-2.5"><StatusChip tone={e.set ? "ok" : "neutral"} label={e.set ? "set" : "not set"} /></td>
-                  <td class="max-w-56 truncate px-5 py-2.5 font-mono text-[12px] text-zinc-500 dark:text-zinc-400" title={e.value ?? undefined}
-                    >{e.value ?? (e.set ? "hidden" : "")}</td
-                  >
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </SettingsGroup>
-    {/if}
-
-    <SettingsGroup title="Project pins" description="Versions used when a search names a library without a version. Saved right away to .docify.json.">
-      {#if pins}
-        <dl class="flex flex-col gap-1 text-[12px]">
-          <div class="flex gap-2"><dt class="w-14 shrink-0 text-zinc-500 dark:text-zinc-400">Project</dt><dd class="truncate font-mono text-zinc-700 dark:text-zinc-300" title={pins.project}>{pins.project}</dd></div>
-          <div class="flex gap-2">
-            <dt class="w-14 shrink-0 text-zinc-500 dark:text-zinc-400">File</dt>
-            <dd class="truncate font-mono text-zinc-700 dark:text-zinc-300">{pins.file ?? "none yet; the first pin creates .docify.json in the project"}</dd>
-          </div>
-        </dl>
-        {#if Object.keys(pins.pins).length}
-          <ul class="flex flex-col divide-y divide-zinc-100 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
-            {#each Object.entries(pins.pins) as [lib, ver] (lib)}
-              <li class="flex items-center justify-between gap-3 px-3 py-2">
-                <span class="font-mono text-[13px]">{lib}<span class="text-zinc-400">@</span>{ver}</span>
-                <button type="button" class={button({ intent: "ghost", size: "xs" })} disabled={pinBusy} onclick={() => setPin(lib, null)}>Unpin</button>
-              </li>
-            {/each}
-          </ul>
-        {:else}
-          <p class="text-[13px] text-zinc-500 dark:text-zinc-400">No pins. Searches use every prepared version unless a version is given.</p>
-        {/if}
-        <form
-          class="flex flex-wrap items-center gap-2"
-          onsubmit={(ev) => {
-            ev.preventDefault();
-            setPin(pinLibrary, pinVersion);
-          }}
+        {#if remoteEmbeddings}{@render warnLine("Every search sends the query to this server.")}{/if}
+      {:else if section === "search"}
+        <Group title="Evidence thresholds">
+          {@render field(form, "strongVectorSim", "Strong match similarity", { sub: "0 to 1, measured for bge models", number: true, min: "0", max: "1", step: "0.01", width: "w-[120px]" })}
+          {@render field(form, "weakVectorSim", "Weak match similarity", { sub: "0 to 1, at most the strong value", number: true, min: "0", max: "1", step: "0.01", width: "w-[120px]" })}
+        </Group>
+        <Group title="Fusion">
+          {@render field(form, "lexicalWeight", "Lexical weight", { sub: "Weight of word matches in combined search", number: true, min: "0", step: "0.1", width: "w-[120px]" })}
+        </Group>
+      {:else if section === "crawling"}
+        <Group title="Default crawler" hint="Used for URL sources without their own crawler selection.">
+          <Row label="Crawler">
+            <Segmented options={crawlProviders} bind:value={form.crawlProvider} label="Default crawl provider" />
+          </Row>
+        </Group>
+        <Group
+          title="Crawl4AI"
+          hint="Docify still decides which pages to crawl, but the server's browser loads each page with its scripts and subrequests. Pages that end up outside the source are dropped after rendering, not prevented. If the server fails, preparing fails and the previous version keeps serving."
         >
-          <input class={input({ class: "w-36 flex-none" })} placeholder="library" aria-label="Library to pin" required bind:value={pinLibrary} />
-          <input class={input({ class: "w-28 flex-none" })} placeholder="version" aria-label="Version to pin" required bind:value={pinVersion} />
-          <button type="submit" class={button()} disabled={pinBusy}>Pin</button>
-        </form>
+          {@render field(form, "crawl4aiUrl", "Server URL", { sub: "The server's base URL, without credentials" })}
+          {@render field(form, "crawl4aiApiKeyEnv", "Token variable", { sub: "Name only. The value stays in the environment.", env: true, width: "w-[310px] max-w-[60%]" })}
+          {@render field(form, "crawl4aiTimeoutSeconds", "Page timeout", { number: true, min: "1", unit: "seconds", width: "w-[140px]" })}
+        </Group>
+        <Group title="Browserless">
+          {@render field(form, "browserlessUrl", "Server URL", { sub: "Base URL without credentials or query parameters" })}
+          {@render field(form, "browserlessApiKeyEnv", "Token variable", { sub: "Name only. The value stays in the environment.", env: true, width: "w-[310px] max-w-[60%]" })}
+          {@render field(form, "browserlessTimeoutSeconds", "Page timeout", { number: true, min: "1", unit: "seconds", width: "w-[140px]" })}
+        </Group>
+      {:else if section === "graph"}
+        <Group>
+          <Row label="Build a graph when preparing">
+            <Switch bind:checked={form.graphEnabled} label="Build a graph when preparing" hideLabel />
+          </Row>
+        </Group>
+        {#if form.graphEnabled}
+          <Group title="Model">
+            {@render graphField(form.graph, "backend", "Backend", {})}
+            {@render graphField(form.graph, "model", "Model", {})}
+            {@render graphField(form.graph, "baseUrlSuffix", "Base URL suffix", { sub: "Appended to the base URL" })}
+          </Group>
+          <Group title="Server environment" hint="Only variable names are stored, never values.">
+            {@render graphField(form.graph, "baseUrlEnv", "Base URL variable", { env: true, width: "w-[310px] max-w-[60%]" })}
+            {@render graphField(form.graph, "apiKeyEnv", "API key variable", { env: true, width: "w-[310px] max-w-[60%]" })}
+          </Group>
+          <Group title="Limits">
+            {@render graphField(form.graph, "maxConcurrency", "Max concurrency", { number: true, min: "1", step: "1", width: "w-[140px]" })}
+            {@render graphField(form.graph, "timeoutSeconds", "Timeout", { number: true, min: "1", unit: "seconds", width: "w-[140px]" })}
+          </Group>
+        {/if}
+      {:else if section === "storage"}
+        <Group title="Generations">
+          {@render field(form, "keepGenerations", "Keep generations", { sub: "Active one plus older ones, so recent citations stay readable", number: true, min: "1", step: "1", width: "w-[120px]" })}
+        </Group>
+        <Group title="Paths" hint="Read-only here. Change them in config.json or the environment.">
+          {#each pathRows as p (p.label)}
+            <Row label={p.label} sub={p.note || undefined}>
+              <span class="max-w-[70%] truncate font-mono text-[12px] text-label2" title={p.value}>{p.value}</span>
+            </Row>
+          {/each}
+        </Group>
+      {:else if section === "environment"}
+        <Group title="Variables" hint="Secret values are never shown.">
+          {#each desc.environment as e (e.name)}
+            <Row>
+              {#snippet leading()}
+                <div class="min-w-0 flex-1">
+                  <div class="truncate font-mono text-[12px] text-label">{e.name}</div>
+                  <div class="mt-px text-[11px] leading-[14px] text-label2">{e.purpose}</div>
+                </div>
+              {/snippet}
+              {#if e.value || e.set}
+                <span class="max-w-[30%] truncate font-mono text-[12px] text-label2" title={e.value ?? undefined}>{e.value ?? "hidden"}</span>
+              {/if}
+              <!-- Most variables here are optional, so an unset one is neutral, not a warning. -->
+              <span class={cn("inline-flex w-[72px] shrink-0 items-center gap-1 text-[13px] font-medium whitespace-nowrap", e.set ? "text-ok-text" : "text-label2")}>
+                <StatusIcon tone={e.set ? "ok" : "info"} size={13} />{e.set ? "Set" : "Not set"}
+              </span>
+            </Row>
+          {/each}
+        </Group>
       {/if}
-      {#if pinError}<p class="text-[12px] break-words text-rose-600 dark:text-rose-400" role="alert">{pinError}</p>{/if}
-    </SettingsGroup>
 
-    <SettingsGroup
-      title="Backup"
-      description="Export the whole store (sources, prepared snapshots, settings) to one file, or replace this store with one. Models and the Graphify runtime are not included; run docify setup on a new machine."
-    >
-      <div class="flex flex-wrap items-center gap-3">
-        <button type="button" class={button()} disabled={backupBusy} onclick={exportBackup}>Export store</button>
-        <span class="text-[12px] text-zinc-500 dark:text-zinc-400">Fails while a source is being prepared.</span>
-      </div>
-      <form
-        class="flex flex-col gap-3"
-        onsubmit={(ev) => {
-          ev.preventDefault();
-          importBackup();
-        }}
-      >
-        <input
-          type="file"
-          accept=".tar.gz,.tgz,application/gzip"
-          aria-label="Backup file to import"
-          class="text-[13px] text-zinc-700 file:mr-3 file:rounded-md file:border file:border-zinc-200 file:bg-white file:px-3 file:py-1.5 file:text-[13px] dark:text-zinc-300 dark:file:border-zinc-700 dark:file:bg-zinc-800 dark:file:text-zinc-200"
-          onchange={(ev) => (importFile = (ev.currentTarget as HTMLInputElement).files?.[0] ?? null)}
-        />
-        <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" bind:checked={importForce} /> Replace a store that already has sources</label>
-        <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" bind:checked={importKeepConfig} /> Keep this machine's settings</label>
-        <div><button type="submit" class={button()} disabled={backupBusy || !importFile}>Import</button></div>
-      </form>
-      {#if backupNote}<p class="text-[12px] break-words text-emerald-700 dark:text-emerald-300" role="status">{backupNote}</p>{/if}
-      {#if backupError}<p class="text-[12px] break-words text-rose-600 dark:text-rose-400" role="alert">{backupError}</p>{/if}
-    </SettingsGroup>
-  </main>
-
-  {#if form && desc}
-    <div class="sticky bottom-0 z-30 border-t border-zinc-200 bg-white/95 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
-      <div class="mx-auto flex max-w-[760px] flex-wrap items-center justify-between gap-3 px-5 py-4">
-        <div class="min-w-0 text-[13px]" role="status">
-          {#if saveError}
-            <span class="font-medium break-words text-rose-600 dark:text-rose-400">{saveError.message}</span>
-          {:else if dirty}
-            <span class="font-medium text-zinc-500 dark:text-zinc-400">Unsaved changes</span>
-          {:else if saved}
-            <span class="font-medium text-emerald-700 dark:text-emerald-300">{saved}</span>
-          {:else}
-            <span class="text-zinc-400 dark:text-zinc-500">Saved to {desc.paths.configFile}</span>
-          {/if}
-        </div>
-        <div class="flex items-center gap-3">
-          <button type="button" class={button()} disabled={!dirty || saving} onclick={revert}>Revert</button>
-          <button type="button" class={button({ intent: "primary" })} disabled={!dirty || saving || Object.keys(clientErrors).length > 0} onclick={save}
-            >{saving ? "Saving" : "Save"}</button
-          >
-        </div>
-      </div>
+      {#if desc && CONFIG_SECTIONS.includes(section)}
+        <p class={cn(footnote, "mx-3.5 mt-7")}>Saved to <span class="font-mono">{desc.paths.configFile}</span></p>
+      {/if}
     </div>
-  {/if}
+  </div>
 </div>
+
+<ConfirmDialog bind:open={confirmImport} title="Replace Store?" message={importMessage} confirmLabel="Replace" onconfirm={importBackup} />

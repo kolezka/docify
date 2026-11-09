@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { parse } from "svelte/compiler";
 
 test("Crawl4AI controls are gated by the effective crawler", () => {
-  const source = readFileSync(new URL("../src/web/views/SourceCard.svelte", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/web/views/SourcePage.svelte", import.meta.url), "utf8");
   const ast = parse(source, { modern: true });
   const blocks: any[] = [];
   function visit(node: any) {
@@ -18,6 +18,6 @@ test("Crawl4AI controls are gated by the effective crawler", () => {
   const gate = blocks.find((block) => source.slice(block.test.start, block.test.end) === 's.effectiveCrawlProvider === "crawl4ai"');
   expect(gate).toBeDefined();
   const gated = source.slice(gate.start, gate.end);
-  expect(gated).toContain("Crawl4AI settings");
+  expect(gated).toContain("Crawl4AI options");
   expect(gated).toContain("onsubmit={saveCrawl4ai}");
 });

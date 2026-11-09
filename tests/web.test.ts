@@ -55,13 +55,13 @@ test("the UI bundle compiles Svelte and includes component classes when built fr
     const assets = await uiAssets();
     const pick = (ext) => [...assets].find(([p]) => p.endsWith(ext))[1].body.text();
     const [css, js] = await Promise.all([pick(".css"), pick(".js")]);
-    console.log(JSON.stringify({ dark: css.includes("dark\\\\:bg-zinc-950"), accent: css.includes("border-indigo-600"), component: js.includes("Prepare without building the semantic graph"), logs: js.includes("Application logs") && js.includes("Jump to latest") }));
+    console.log(JSON.stringify({ tokens: css.includes(".bg-window") && css.includes("--hig-window"), component: css.includes(".bg-seg-on"), source: js.includes("Update Without Graph"), logs: js.includes("Filter lines") && js.includes("No warnings or errors") }));
   `;
   const proc = Bun.spawn(["bun", "-e", script], { cwd: tempDir("docify-cwd-"), stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = [await new Response(proc.stdout).text(), await new Response(proc.stderr).text(), await proc.exited];
   expect(err).not.toMatch(/error/i);
   expect(code).toBe(0);
-  expect(JSON.parse(out.trim().split("\n").pop()!)).toEqual({ dark: true, accent: true, component: true, logs: true });
+  expect(JSON.parse(out.trim().split("\n").pop()!)).toEqual({ tokens: true, component: true, source: true, logs: true });
 });
 
 test("saving settings writes config.json and applies the values without a restart", async () => {
