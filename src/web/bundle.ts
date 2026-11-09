@@ -25,6 +25,7 @@ async function buildUi(): Promise<Map<string, UiAsset>> {
     target: "browser",
     minify: true,
     publicPath: "/",
+    tsconfig: join(import.meta.dir, "../../tsconfig.json"),
     plugins: [SveltePlugin({ development: false }), tailwind],
     define: { "process.env.NODE_ENV": JSON.stringify("production") },
   });

@@ -1,5 +1,6 @@
 // Bounded embedding model comparison on real Bun docs: paraphrase queries plus lexical controls.
 // Usage: bun scripts/probes/embeddings.ts [--offline] <docs-dir>
+import "../../src/core/onnx-telemetry.ts";
 import { env, pipeline } from "@huggingface/transformers";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

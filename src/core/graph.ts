@@ -52,6 +52,7 @@ export function providerEnv(provider: GraphProviderConfig): Record<string, strin
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: process.env.HOME ?? "",
     LANG: "en_US.UTF-8",
+    PYTHONUNBUFFERED: "1",
   };
   if (provider.backend === "openai") {
     const base = provider.baseUrlEnv ? process.env[provider.baseUrlEnv] : process.env.OPENAI_BASE_URL;
@@ -71,6 +72,7 @@ export async function runGraphify(
   docs: { path: string; markdown: string }[],
   signal?: AbortSignal,
   force = false,
+  onOutput?: (stream: "stdout" | "stderr", text: string) => void,
 ): Promise<GraphRunResult> {
   const provider = config.graph;
   if (!provider) throw new GraphProviderError("no graph provider configured");
@@ -120,15 +122,48 @@ export async function runGraphify(
   signal?.addEventListener("abort", onAbort);
   // Read while it runs (a full pipe would block Graphify), but once it exits give the pipes
   // only 5 s: a grandchild holding them open must not hang preparation.
-  const outText = new Response(proc.stdout).text();
-  const errText = new Response(proc.stderr).text();
-  const code = await proc.exited;
-  const drain = (p: Promise<string>) => Promise.race([p, Bun.sleep(5000).then(() => "")]);
-  const [stdout, stderr] = await Promise.all([drain(outText), drain(errText)]);
-  clearTimeout(timeout);
-  clearTimeout(killTimer);
-  signal?.removeEventListener("abort", onAbort);
-  const log = (stdout + stderr).trim();
+  const consume = (pipe: ReadableStream<Uint8Array>, stream: "stdout" | "stderr") => {
+    const reader = pipe.getReader();
+    const decoder = new TextDecoder();
+    let full = "";
+    let pending = "";
+    const accept = (text: string, final = false) => {
+      full += text;
+      pending += text;
+      const lines = pending.split(/\r\n|[\r\n]/);
+      pending = lines.pop() ?? "";
+      for (const line of lines) if (line) onOutput?.(stream, line);
+      if (final && pending) { onOutput?.(stream, pending); pending = ""; }
+    };
+    const done = (async () => {
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          accept(decoder.decode(chunk.value, { stream: true }));
+        }
+        accept(decoder.decode(), true);
+      } finally { reader.releaseLock(); }
+    })();
+    return { done, text: () => full, cancel: () => reader.cancel().catch(() => {}) };
+  };
+  const out = consume(proc.stdout, "stdout");
+  const err = consume(proc.stderr, "stderr");
+  let code: number;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    code = await proc.exited;
+    await Promise.race([
+      Promise.all([out.done, err.done]),
+      new Promise<void>((resolve) => { drainTimer = setTimeout(() => { void out.cancel(); void err.cancel(); resolve(); }, 5000); }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+    clearTimeout(killTimer);
+    clearTimeout(drainTimer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+  const log = (out.text() + err.text()).trim();
   if (code !== 0) {
     const tail = log.split("\n").slice(-6).join("\n");
     const hint = /semantic shrink|Refusing to overwrite/.test(log) ? " The provider returned a partial graph and Graphify cached it; rerun prepare with --force to re-extract." : "";

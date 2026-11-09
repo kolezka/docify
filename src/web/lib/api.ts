@@ -35,11 +35,12 @@ addEventListener("hashchange", () => {
   if (new URLSearchParams(location.hash.slice(1)).has("token")) token = readToken();
 });
 
-export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+export async function api<T>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
   const headers: Record<string, string> = { "x-docify-token": token };
   if (init?.body !== undefined) headers["content-type"] = "application/json";
   const res = await fetch(path, {
     method: init?.method ?? "GET",
+    signal: init?.signal,
     headers,
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });

@@ -2,11 +2,12 @@
   import ThemeSwitch from "./ThemeSwitch.svelte";
   import { cn } from "../lib/ui.ts";
 
-  type View = "workspace" | "settings";
+  type View = "workspace" | "settings" | "logs";
   let { view = $bindable() }: { view: View } = $props();
 
   const tabs: { value: View; label: string }[] = [
     { value: "workspace", label: "Workspace" },
+    { value: "logs", label: "Logs" },
     { value: "settings", label: "Settings" },
   ];
 </script>

@@ -3,12 +3,14 @@
   import Search from "./views/Search.svelte";
   import Settings from "./views/Settings.svelte";
   import Sources from "./views/Sources.svelte";
+  import Logs from "./views/Logs.svelte";
 
-  type View = "workspace" | "settings";
+  type View = "workspace" | "settings" | "logs";
 
   function initialView(): View {
     try {
-      return sessionStorage.getItem("docify-view") === "settings" ? "settings" : "workspace";
+      const stored = sessionStorage.getItem("docify-view");
+      return stored === "settings" || stored === "logs" ? stored : "workspace";
     } catch {
       return "workspace";
     }
@@ -38,5 +40,7 @@
   </main>
   {#if view === "settings"}
     <Settings />
+  {:else if view === "logs"}
+    <Logs />
   {/if}
 </div>

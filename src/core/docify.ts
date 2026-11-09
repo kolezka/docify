@@ -12,6 +12,7 @@ import { sha256 } from "./hash.ts";
 import { embedTexts, embeddingIdentity } from "./embed.ts";
 import { groundingTerms, runGraphify, type GraphRunResult } from "./graph.ts";
 import { extractSymbols } from "./symbols.ts";
+import { LogStore } from "./logs.ts";
 
 export type SourceKind = "local" | "url";
 
@@ -112,6 +113,7 @@ export function leaseAlive(pid: number | null, at: string | null): boolean {
 
 export class Docify {
   readonly db: Database;
+  readonly logs: LogStore;
   private current: DocifyConfig;
   private readonly overrides: Partial<DocifyConfig>;
 
@@ -120,6 +122,7 @@ export class Docify {
     this.overrides = config;
     this.current = { ...base, ...config };
     this.db = openDb(this.current.home);
+    this.logs = new LogStore(() => this.config);
   }
 
   get config(): DocifyConfig {
@@ -127,6 +130,7 @@ export class Docify {
   }
 
   close() {
+    this.logs.close();
     this.db.close();
   }
 
@@ -184,6 +188,7 @@ export class Docify {
       "INSERT INTO sources (id, library, version, kind, locator, options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [id, library, version, input.kind, locator, JSON.stringify({ crawl: input.crawl ?? {} }), nowIso()],
     );
+    this.logs.append(id, `Source registered (${input.kind})`);
     return this.getSource(id)!;
   }
 
@@ -198,6 +203,7 @@ export class Docify {
     })();
     rmSync(join(this.config.home, "snapshots", id), { recursive: true, force: true });
     rmSync(join(this.config.home, "graphify", id), { recursive: true, force: true });
+    this.logs.append(id, "Source removed");
   }
 
   getSource(id: string): SourceRow | null {
@@ -278,6 +284,7 @@ export class Docify {
     this.recoverInterrupted();
     const source = this.requireSource(sourceId);
     this.acquireLock(sourceId);
+    this.logs.append(sourceId, "Preparation started");
     const heartbeat = setInterval(() => {
       this.db.run("UPDATE sources SET lock_at = ? WHERE id = ? AND lock_pid = ?", [nowIso(), sourceId, process.pid]);
     }, HEARTBEAT_MS);
@@ -303,6 +310,7 @@ export class Docify {
     const checkpoint = async (phase: string, progress = "") => {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
       this.setPhase(genId, phase, progress);
+      this.logs.append(sourceId, `Generation ${genId}: ${phase}${progress ? ` (${progress})` : ""}`);
       await opts.onPhase?.(phase, genId);
     };
     try {
@@ -327,6 +335,7 @@ export class Docify {
           this.db.run("DELETE FROM generations WHERE id = ?", [genId]);
         })();
         this.releaseLock(sourceId);
+        this.logs.append(sourceId, `Unchanged: serving generation ${active.id}`);
         return { sourceId, generationId: active.id, status: "unchanged", stats: JSON.parse(active.stats) };
       }
 
@@ -400,11 +409,13 @@ export class Docify {
       if (graphWanted) {
         await checkpoint("graph", "semantic extraction");
         const runner = opts.graphRunner ?? runGraphify;
-        const result = await runner(this.config, sourceId, normalizedDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force);
+        const result = await runner(this.config, sourceId, normalizedDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force,
+          (stream, text) => this.logs.append(sourceId, text, stream, /\b(error|failed|traceback)\b/i.test(text) ? "error" : /\bwarn(?:ing)?\b/i.test(text) ? "warn" : "info"));
         writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
         graphStats = this.importGraph(genId, result, normalizedDocs);
         // Partial still activates and is searchable; it never counts as unchanged, so the next prepare retries the gaps.
         graphStatus = (graphStats.graphMissing as string[]).length || result.incomplete.length ? "partial" : "ok";
+        if (graphStatus === "partial") this.logs.append(sourceId, `Graph is partial: ${(graphStats.graphMissing as string[]).length} documents without nodes`, "system", "warn");
       }
 
       await checkpoint("validate");
@@ -436,8 +447,11 @@ export class Docify {
         .immediate();
       this.releaseLock(sourceId);
       result = { sourceId, generationId: genId, status: "activated", stats };
+      this.logs.append(sourceId, `Generation ${genId} activated: ${raw.length} documents, ${passageCount} passages`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const cancelled = opts.signal?.aborted || (err instanceof DocifyError && err.code === "cancelled");
+      this.logs.append(sourceId, `${cancelled ? "Preparation cancelled" : "Preparation failed"}: ${message}`, "system", cancelled ? "warn" : "error");
       this.db.transaction(() => {
         this.deleteGenerationRows(genId);
         this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [message.slice(0, 2000), nowIso(), genId]);
@@ -450,7 +464,9 @@ export class Docify {
     try {
       this.collectGarbage(sourceId);
     } catch (err) {
-      console.error(`docify: cleanup of old generations for ${sourceId} failed; generation ${genId} stays active: ${err instanceof Error ? err.message : err}`);
+      const message = `cleanup of old generations failed; generation ${genId} stays active: ${err instanceof Error ? err.message : err}`;
+      this.logs.append(sourceId, message, "system", "warn");
+      console.error(`docify: ${sourceId}: ${message}`);
     }
     return result;
   }

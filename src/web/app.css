@@ -36,3 +36,44 @@
     cursor: pointer;
   }
 }
+
+.docify-logs {
+  --lv-surface-page: var(--color-zinc-50);
+  --lv-surface-panel: white;
+  --lv-surface-raised: white;
+  --lv-surface-hover: var(--color-zinc-100);
+  --lv-border: var(--color-zinc-200);
+  --lv-border-strong: var(--color-zinc-300);
+  --lv-text-primary: var(--color-zinc-900);
+  --lv-text-secondary: var(--color-zinc-600);
+  --lv-text-muted: var(--color-zinc-500);
+  --lv-accent: var(--color-indigo-600);
+  --lv-accent-subtle: var(--color-indigo-50);
+  --lv-accent-text: var(--color-indigo-700);
+  --lv-on-accent: white;
+  --lv-success: var(--color-green-700);
+  --lv-warning: var(--color-amber-700);
+  --lv-danger: var(--color-red-700);
+  --lv-danger-subtle: var(--color-red-50);
+  --lv-info: var(--color-blue-700);
+
+  @variant dark {
+    --lv-surface-page: var(--color-zinc-950);
+    --lv-surface-panel: var(--color-zinc-900);
+    --lv-surface-raised: var(--color-zinc-800);
+    --lv-surface-hover: var(--color-zinc-800);
+    --lv-border: var(--color-zinc-800);
+    --lv-border-strong: var(--color-zinc-700);
+    --lv-text-primary: var(--color-zinc-100);
+    --lv-text-secondary: var(--color-zinc-400);
+    --lv-text-muted: var(--color-zinc-400);
+    --lv-accent: var(--color-indigo-400);
+    --lv-accent-subtle: var(--color-indigo-950);
+    --lv-accent-text: var(--color-indigo-300);
+    --lv-success: var(--color-green-400);
+    --lv-warning: var(--color-amber-400);
+    --lv-danger: var(--color-red-400);
+    --lv-danger-subtle: var(--color-red-950);
+    --lv-info: var(--color-blue-400);
+  }
+}
