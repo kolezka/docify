@@ -524,14 +524,15 @@ export class Docify {
   // Keeps the active generation plus the newest superseded ones, so recent passage ids stay readable.
   private collectGarbage(sourceId: string) {
     const superseded = this.db
-      .query<{ id: number; snapshot_dir: string | null }, [string]>("SELECT id, snapshot_dir FROM generations WHERE source_id = ? AND status = 'superseded' ORDER BY id DESC")
+      .query<{ id: number }, [string]>("SELECT id FROM generations WHERE source_id = ? AND status = 'superseded' ORDER BY id DESC")
       .all(sourceId);
     for (const g of superseded.slice(Math.max(0, this.config.keepGenerations - 1))) {
       this.db.transaction(() => {
         this.deleteGenerationRows(g.id);
         this.db.run("DELETE FROM generations WHERE id = ?", [g.id]);
       })();
-      if (g.snapshot_dir) rmSync(g.snapshot_dir, { recursive: true, force: true });
+      // Built from home, not the stored snapshot_dir, so a moved store never deletes at its old path.
+      rmSync(join(this.config.home, "snapshots", sourceId, String(g.id)), { recursive: true, force: true });
     }
     const failed = this.db.query<{ id: number }, [string]>("SELECT id FROM generations WHERE source_id = ? AND status = 'failed' ORDER BY id DESC").all(sourceId);
     for (const g of failed.slice(3)) this.db.run("DELETE FROM generations WHERE id = ?", [g.id]);
