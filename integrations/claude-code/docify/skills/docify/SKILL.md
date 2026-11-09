@@ -32,6 +32,7 @@ When you need to check several symbols or questions in the same library, pass `q
 - `not_indexed`: the source is registered but not prepared. Tell the user to run `docify prepare <id>`.
 - `version_unavailable`: that version is not registered. The reply lists the available versions; do not substitute another version silently.
 - `update_failed` or a stale warning: the last refresh failed and older content is being served. Mention it.
+- `error (invalid_input): max_tokens N is too small ...`: even the status lines do not fit the budget. Call again with a larger `max_tokens`, or with fewer `queries`. Nothing was searched or read wrongly; this is not a `no_match`.
 
 After `version_unavailable`, `source_unknown` or a warning that several versions match, call `docs_scope` with the same `library`, `version` and `sources` before searching again. It searches nothing; it shows which pins file and pins apply, the version chosen per library and why, the sources and generations a search would use, and the registered versions. Pick the version or source from that list instead of guessing.
 
