@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Docify, DocifyError } from "../core/docify.ts";
-import { read, renderSources, search, sources } from "../core/search.ts";
+import { outline, read, renderSources, search, sources } from "../core/search.ts";
 import { VERSION } from "../version.ts";
 
 const pkg = { name: "docify", version: VERSION };
@@ -69,6 +69,28 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     async (args) => {
       try {
         return { content: [{ type: "text", text: read(docify, args.id, args.max_tokens).text }] };
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "docs_outline",
+    {
+      title: "Outline a documentation source",
+      description:
+        "List the documents of a prepared source with their section headings and the passage id of each section, for browsing when docs_search returns no_match or weak_match. Pass an id to docs_read.",
+      inputSchema: {
+        source: z.string().min(1).describe("Source id from docs_sources"),
+        path: z.string().optional().describe("Only documents whose path starts with this prefix"),
+        max_tokens: z.number().int().min(200).max(20000).optional().describe("Output budget, default 2000"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return { content: [{ type: "text", text: outline(docify, { source: args.source, path: args.path, maxTokens: args.max_tokens }).text }] };
       } catch (err) {
         return fail(err);
       }

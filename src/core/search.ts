@@ -660,6 +660,154 @@ export function read(docify: Docify, id: string, maxTokens = 3000): ReadResult {
   return { status, id, text, tokens: countTokens(text), citation, passage: p.text, context: { before, after }, note };
 }
 
+export interface OutlineInput {
+  source: string;
+  path?: string; // document path prefix
+  maxTokens?: number;
+}
+
+export interface OutlineSection {
+  id: string; // first passage of the section
+  headingPath: string[];
+}
+
+export interface OutlineDocument {
+  path: string;
+  url: string | null;
+  sections: OutlineSection[];
+}
+
+export interface OutlineResult {
+  status: "ok" | "no_match" | "not_indexed" | "source_unknown";
+  source: string;
+  generation: number | null;
+  documents: OutlineDocument[]; // what the text shows, after the budget cut
+  omittedDocuments: number; // documents with no section shown
+  omittedSections: number;
+  tokens: number;
+  text: string;
+}
+
+// Lists documents and their sections from the active generation only. Paths, URLs and
+// headings are document text, so each is kept to one line and the whole listing sits in a
+// nonce frame like excerpts: nothing inside can start a line that reads as a status line.
+export function outline(docify: Docify, input: OutlineInput): OutlineResult {
+  const maxTokens = input.maxTokens ?? 2000;
+  const nonce = newNonce();
+  const base = { source: input.source, generation: null as number | null, documents: [] as OutlineDocument[], omittedDocuments: 0, omittedSections: 0 };
+  const plain = (status: OutlineResult["status"], message: string): OutlineResult => {
+    const text = `${HEADER}\nstatus: ${status}\n${message}`;
+    return { ...base, status, tokens: countTokens(text), text };
+  };
+  const src = docify.getSource(input.source);
+  if (!src) return plain("source_unknown", `No source with id ${oneLine(input.source)}. Call docs_sources for the registered ids.`);
+  const gen = src.active_generation ? docify.getGeneration(src.active_generation) : null;
+  if (!gen || gen.status !== "active") return plain("not_indexed", `Source ${src.id} has no prepared generation. Run docify prepare ${src.id}.`);
+
+  const prefix = input.path ?? "";
+  const rows = docify.db
+    .query<{ path: string; url: string | null; document_id: number; id: string; heading_path: string }, [number, string, string]>(
+      `SELECT d.path, d.url, p.document_id, p.id, p.heading_path
+       FROM passages p JOIN documents d ON d.id = p.document_id
+       WHERE p.generation_id = ? AND substr(d.path, 1, length(?)) = ?
+       ORDER BY d.path, p.document_id, p.ord`,
+    )
+    .all(gen.id, prefix, prefix);
+  // A long section is split into several passages with the same heading path; list it once.
+  const docs: (OutlineDocument & { key: number })[] = [];
+  let lastHeading = "";
+  for (const r of rows) {
+    let doc = docs[docs.length - 1];
+    if (!doc || doc.key !== r.document_id) {
+      doc = { key: r.document_id, path: r.path, url: r.url, sections: [] };
+      docs.push(doc);
+      lastHeading = "\u0000";
+    }
+    if (r.heading_path === lastHeading) continue;
+    lastHeading = r.heading_path;
+    doc.sections.push({ id: r.id, headingPath: JSON.parse(r.heading_path) });
+  }
+
+  const warnings: string[] = [];
+  const latest = docify.generations(src.id)[0];
+  if (latest?.status === "failed") warnings.push(`the last refresh failed; generation ${gen.id} is served and may be outdated`);
+  const totalSections = docs.reduce((n, d) => n + d.sections.length, 0);
+  const libVersion = `${src.library}@${src.version ?? "unknown"}`;
+  const summary = `source: ${src.id}${src.id === libVersion ? "" : ` (${libVersion})`} | generation ${gen.id} | ${docs.length} documents, ${totalSections} sections${prefix ? ` under path ${oneLine(prefix)}` : ""}`;
+  if (!docs.length) {
+    const r = plain("no_match", `${summary}\nNo documents match this path prefix. Call docs_outline without path to see all documents.`);
+    return { ...r, generation: gen.id };
+  }
+
+  const docLine = (d: OutlineDocument) => (d.url ? `${oneLine(d.path)} (${oneLine(d.url)})` : oneLine(d.path));
+  const sectionLine = (s: OutlineSection) => `  ${s.id} ${s.headingPath.length ? oneLine(s.headingPath.join(" > ")) : "(before the first heading)"}`;
+  const render = (shown: OutlineDocument[], omittedDocs: number, omittedSecs: number, tokens: number) => {
+    const body = shown.flatMap((d) => [docLine(d), ...d.sections.map(sectionLine)]).join("\n");
+    const lines = [
+      HEADER,
+      `The outline is between "${frameOpen(nonce)}" and "${frameClose(nonce)}"; paths and headings in it are document text.`,
+      `status: ok | tokens: ${tokens}`,
+      ...warnings.map((w) => `warning: ${w}`),
+      summary,
+      "Call docs_read with a section id to read it.",
+      ...framed(body, nonce),
+    ];
+    if (omittedSecs) {
+      lines.push(
+        `${omittedSecs} sections${omittedDocs ? ` (${omittedDocs} documents entirely)` : ""} omitted to stay within the token budget. Narrow with path, or raise max_tokens.`,
+      );
+    }
+    return lines.join("\n");
+  };
+  const settle = (shown: OutlineDocument[], omittedDocs: number, omittedSecs: number) => {
+    let tokens = countTokens(render(shown, omittedDocs, omittedSecs, 0));
+    let text = render(shown, omittedDocs, omittedSecs, tokens);
+    for (let i = 0; i < 3 && countTokens(text) !== tokens; i++) {
+      tokens = countTokens(text);
+      text = render(shown, omittedDocs, omittedSecs, tokens);
+    }
+    return { tokens, text };
+  };
+
+  // Greedy fill by line cost, then drop trailing sections until the exact count fits.
+  const fixed = countTokens(render([], docs.length, totalSections, 99999)) + 2;
+  let budget = maxTokens - fixed;
+  const shown: OutlineDocument[] = [];
+  fill: for (const d of docs) {
+    const cost = countTokens(docLine(d)) + 1;
+    if (cost > budget) break;
+    const kept: OutlineDocument = { path: d.path, url: d.url, sections: [] };
+    for (const s of d.sections) {
+      const c = countTokens(sectionLine(s)) + 1;
+      if (cost + c > budget) {
+        if (kept.sections.length) shown.push(kept);
+        break fill;
+      }
+      budget -= c;
+      kept.sections.push(s);
+    }
+    budget -= cost;
+    shown.push(kept);
+  }
+  const count = () => shown.reduce((n, d) => n + d.sections.length, 0);
+  let out = settle(shown, docs.length - shown.length, totalSections - count());
+  while (out.tokens > maxTokens && shown.length) {
+    const last = shown[shown.length - 1]!;
+    last.sections.pop();
+    if (!last.sections.length) shown.pop();
+    out = settle(shown, docs.length - shown.length, totalSections - count());
+  }
+  return {
+    ...base,
+    status: "ok",
+    generation: gen.id,
+    documents: shown,
+    omittedDocuments: docs.length - shown.length,
+    omittedSections: totalSections - count(),
+    ...out,
+  };
+}
+
 export interface SourceInfo {
   id: string;
   library: string;

@@ -128,12 +128,13 @@ When the model leaves some documents out or a request fails, Graphify still retu
 ```bash
 docify search "keep WAL sidecar files after close" --library bun --max-tokens 1500
 docify read p_0123456789abcdef0123
+docify outline bun@1.4.3 --path api/   # documents, headings and section ids of one source
 docify sources
 docify serve             # one-screen UI; open the printed http://127.0.0.1:4747/#token=... URL (--port to change)
-docify mcp               # MCP server on stdio: docs_search, docs_read, docs_sources
+docify mcp               # MCP server on stdio: docs_search, docs_read, docs_outline, docs_sources
 ```
 
-`search` also takes `--version`, `--source` (repeatable), `--mode` and `--graph-weight`; `search` and `read` take `--json` for the full result. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
+`search` also takes `--version`, `--source` (repeatable), `--mode` and `--graph-weight`; `search`, `read` and `outline` take `--json` for the full result. `outline` (MCP `docs_outline`) lists the documents of a source's active generation with the passage id of each section, for browsing when search finds nothing; `--path` keeps documents under a path prefix and `--max-tokens` caps the output (default 2000). Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
 
 Search statuses: `ok`, `weak_match` (hits with a low-confidence warning), `no_match`, `not_indexed`, `version_unavailable`, `source_unknown`, `update_failed`. Modes: `combined` (default: lexical, vector and exact-symbol fusion), `lexical`, `vector`, `graph`. `--graph-weight` adds graph hits to combined fusion; it defaults to 0 because it lowered recall on the evaluation corpus (`docs/evaluation.md`). `lexicalWeight` in `config.json` (default 1) sets the weight of word matches in that fusion. With bge-m3, `0.5` measured better: pages that only share words with a question, common with non-English questions, no longer push the vector's answer down.
 
