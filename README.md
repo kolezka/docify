@@ -97,6 +97,21 @@ When an HTML or `.md` page links to an extensionless route, Docify tries its `.m
 
 The usual crawl limits apply: at most 50 documents (including the index), two link levels, 5 MB per page and 50 MB total. This is a bounded crawl, not a guarantee that the whole site is indexed.
 
+### JavaScript-rendered documentation (Crawl4AI)
+
+Pages that only fill in with JavaScript can be rendered by a [Crawl4AI](https://docs.crawl4ai.com/core/self-hosting/) server you run yourself. It is off by default; turn it on in `config.json` (or the web UI's Settings, under Web crawling):
+
+```json
+{
+  "crawlProvider": "crawl4ai",
+  "crawl4aiUrl": "http://127.0.0.1:11235",
+  "crawl4aiApiKeyEnv": "CRAWL4AI_API_KEY",
+  "crawl4aiTimeoutSeconds": 120
+}
+```
+
+`crawl4aiApiKeyEnv` is the name of the variable holding the server's bearer token, never the token. Docify still runs the crawl: it asks the server to render one page per request (`POST /crawl`), reads links from the rendered HTML and applies the same origin, path, depth and size limits. The server's browser loads each page's scripts, redirects and subrequests by itself, so a page that ends outside the source is dropped after rendering, not prevented. Markdown pages and `llms.txt` indexes keep their Markdown links when the browser wraps their text in HTML. `.md` exports are not probed in this mode. If the server is down, times out or answers with something malformed, the prepare fails and the previous generation keeps serving; Docify does not fall back to the built-in crawler. Local sources and queries never use it. The macOS app has no control for it yet; it keeps these keys when it saves `config.json`.
+
 ```bash
 docify add openclaw https://docs.openclaw.ai/llms.txt --id openclaw
 docify prepare openclaw --no-graph

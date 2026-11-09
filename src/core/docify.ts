@@ -10,6 +10,7 @@ import { chunk } from "./chunk.ts";
 import { countTokens } from "./tokens.ts";
 import { sha256 } from "./hash.ts";
 import { embedTexts, embeddingIdentity } from "./embed.ts";
+import { crawl4aiFetcher } from "./crawl4ai.ts";
 import { groundingTerms, runGraphify, type GraphRunResult } from "./graph.ts";
 import { extractSymbols } from "./symbols.ts";
 import { LogStore } from "./logs.ts";
@@ -318,7 +319,7 @@ export class Docify {
       const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits> };
       const limits = { ...DEFAULT_LIMITS, ...sourceOpts.crawl };
       const downloadedAt = nowIso();
-      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await crawl(source.locator, limits, opts.fetcher);
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await this.collectUrl(source.locator, limits, opts);
       raw.sort((a, b) => a.path.localeCompare(b.path));
       const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
       const snapshotHash = sha256(docHashes.map((x) => `${x.d.path}\0${x.rawSha}`).join("\n"));
@@ -430,7 +431,7 @@ export class Docify {
       if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
         throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
       }
-      const stats = { pipeline: PIPELINE_VERSION, documents: raw.length, passages: passageCount, embedMs, ...graphStats };
+      const stats = { pipeline: PIPELINE_VERSION, collector: source.kind === "local" ? "local" : this.config.crawlProvider, documents: raw.length, passages: passageCount, embedMs, ...graphStats };
 
       await checkpoint("activate");
       this.db
@@ -469,6 +470,28 @@ export class Docify {
       console.error(`docify: ${sourceId}: ${message}`);
     }
     return result;
+  }
+
+  // The provider is opt-in and never falls back: a failing Crawl4AI server fails the prepare.
+  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions): Promise<RawDoc[]> {
+    try {
+      if (this.config.crawlProvider === "crawl4ai") {
+        const fetcher = crawl4aiFetcher({
+          url: this.config.crawl4aiUrl,
+          apiKey: process.env[this.config.crawl4aiApiKeyEnv] || undefined,
+          apiKeyEnv: this.config.crawl4aiApiKeyEnv,
+          timeoutMs: this.config.crawl4aiTimeoutSeconds * 1000,
+          maxBytesPerPage: limits.maxBytesPerPage,
+          signal: opts.signal,
+        });
+        return await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false });
+      }
+      if (this.config.crawlProvider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(this.config.crawlProvider)}`);
+      return await crawl(locator, limits, opts.fetcher, { signal: opts.signal });
+    } catch (err) {
+      if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
+      throw err;
+    }
   }
 
   private importGraph(genId: number, result: GraphRunResult, docs: { path: string; docId: number; passages: { rowid: number; text: string; headingPath: string[] }[] }[]) {

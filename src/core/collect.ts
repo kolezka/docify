@@ -74,9 +74,17 @@ export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS)
 
 export type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 
+export interface CrawlOptions {
+  // Cancels the crawl, including a fetch in flight.
+  signal?: AbortSignal;
+  // Probe `<route>.md` exports before linked routes (default true). Off for a rendering service,
+  // where each probe costs a full browser render and plain text comes back wrapped in HTML.
+  markdownExports?: boolean;
+}
+
 // Breadth-first crawl limited to the start URL's origin and directory path.
 // Redirects are followed by hand so every hop is checked against the same scope.
-export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS, fetcher: Fetcher = fetch): Promise<RawDoc[]> {
+export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS, fetcher: Fetcher = fetch, options: CrawlOptions = {}): Promise<RawDoc[]> {
   const startUrl = new URL(start);
   if (!/^https?:$/.test(startUrl.protocol)) throw new Error(`only http(s) URLs are supported: ${start}`);
   const scopePath = startUrl.pathname.endsWith("/") ? startUrl.pathname : startUrl.pathname.replace(/[^/]*$/, "");
@@ -92,7 +100,8 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     let res: Response | null = null;
     let current = url;
     for (let hop = 0; hop <= limits.maxRedirects; hop++) {
-      res = await fetcher(current.toString(), { redirect: "manual", signal: AbortSignal.timeout(limits.timeoutMs) });
+      const timeout = AbortSignal.timeout(limits.timeoutMs);
+      res = await fetcher(current.toString(), { redirect: "manual", signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout });
       if (res.status < 300 || res.status >= 400) break;
       const loc = res.headers.get("location");
       if (!loc) break;
@@ -116,7 +125,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     const { url, depth, preferMarkdown } = queue.shift()!;
     if (collected.has(canonical(url))) continue;
     let fetched = null;
-    if (preferMarkdown) {
+    if (preferMarkdown && options.markdownExports !== false) {
       const markdownUrl = new URL(url);
       markdownUrl.pathname += ".md";
       try {
