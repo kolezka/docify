@@ -157,6 +157,20 @@ codex plugin add docify@docify-local
 
 Both plugins start `docify mcp`, so `docify` must be on PATH. They ship a skill that tells the agent when to search and how to read statuses. Neither installs hooks, and neither forces the agent to search.
 
+The plugins start `docify mcp --require <their version>`. If the `docify` on PATH is older, the MCP server does not start and the error names both versions; run `bun link` in a current checkout. A `docify` from before this check does not know `--require` and fails on the unknown option, which also means it needs updating.
+
+## Versions and releases
+
+Docify and both plugins share one version. `package.json` holds it; `docify --version`, the MCP server info and `/healthz` report it. `scripts/release.ts` is the only thing that should change it:
+
+```bash
+bun scripts/release.ts patch --dry-run   # show the next version and its changelog section, write nothing
+bun scripts/release.ts minor             # or patch, major, or an explicit X.Y.Z
+git push --follow-tags
+```
+
+It needs a clean working tree. It writes the new version into `package.json`, both plugin manifests and the `--require` arguments, adds a `CHANGELOG.md` section built from the Conventional Commits since the last `v*` tag, then commits `chore: release vX.Y.Z` and creates an annotated tag. It does not push. `tests/version.test.ts` fails when the files disagree.
+
 ## Hosting (Docker, Coolify)
 
 The image runs the web UI on port 4747 and keeps state in `/data`. It ships the bge-small model and the Graphify runtime, so the default `transformers` provider works without network access. Every request to `/api` needs the access token; there is no anonymous mode.
@@ -168,7 +182,7 @@ cp .env.example .env          # set DOCIFY_WEB_TOKEN (16+ characters) and DOCIFY
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Open `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>`. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; `/healthz` is the only public route and returns `{"ok":true}`.
+Open `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>`. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; the public routes are `/healthz`, which returns `{"ok":true,"version":"X.Y.Z"}`, and the API reference at `/api/docs`, which holds no data.
 
 `DOCIFY_ALLOWED_HOSTS` lists the hostnames the server answers for, comma separated; a bare hostname matches any port. When it is empty and the server binds a non-loopback address, any Host is accepted and a warning is logged, so set it in production. `DOCIFY_BIND` defaults to `127.0.0.1`: put a reverse proxy in front, or set it to `0.0.0.0` when the port must be reachable directly.
 

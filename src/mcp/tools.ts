@@ -2,8 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Docify, DocifyError } from "../core/docify.ts";
 import { read, renderSources, search, sources } from "../core/search.ts";
+import { VERSION } from "../version.ts";
 
-const pkg = { name: "docify", version: "0.1.0" };
+const pkg = { name: "docify", version: VERSION };
 
 // Queries only. Preparation stays in the CLI and UI so a tool call never fetches,
 // downloads a model or calls the graph provider.

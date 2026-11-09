@@ -13,7 +13,9 @@
     "docify": {
       "command": "docify",
       "args": [
-        "mcp"
+        "mcp",
+        "--require",
+        "0.1.0"
       ]
     }
   },
