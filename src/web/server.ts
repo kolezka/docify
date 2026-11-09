@@ -13,6 +13,7 @@ import { RateLimiter, parseRate, rateLimit, type RateLimit } from "../http/rate-
 import { chain } from "../http/guard.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { mcpHttpHandler } from "../mcp/http.ts";
+import { DOCS_INIT, DOCS_PAGE, openApiSpec } from "./openapi.ts";
 
 const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404 };
 
@@ -114,6 +115,13 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     return null;
   };
 
+  // The API docs carry no data, so they need only a known Host, not the token.
+  const swaggerFile = (name: string) => Bun.file(Bun.resolveSync(`swagger-ui-dist/${name}`, import.meta.dir));
+  const docs = (body: () => BodyInit, type: string, extra: Record<string, string> = {}) => (req: Request) => {
+    if (!allowAnyHost && !hostAllowed(req.headers.get("host") ?? "", allowedHosts)) return json({ error: "forbidden host", code: "forbidden" }, 403);
+    return new Response(body(), { headers: { "content-type": type, "x-content-type-options": "nosniff", ...extra } });
+  };
+
   const api =
     (handler: (req: Request & { params: Record<string, string> }) => Promise<Response> | Response) =>
     async (req: Request & { params: Record<string, string> }) => {
@@ -165,6 +173,11 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     routes: {
       "/healthz": { GET: () => json({ ok: true }) },
       "/mcp": mcpRoute,
+      "/api/docs": { GET: docs(() => DOCS_PAGE, "text/html; charset=utf-8", { ...PAGE_HEADERS, "cache-control": "no-store" }) },
+      "/api/docs/openapi.json": { GET: docs(() => JSON.stringify(openApiSpec()), "application/json") },
+      "/api/docs/init.js": { GET: docs(() => DOCS_INIT, "text/javascript; charset=utf-8") },
+      "/api/docs/swagger-ui.css": { GET: docs(() => swaggerFile("swagger-ui.css"), "text/css; charset=utf-8") },
+      "/api/docs/swagger-ui-bundle.js": { GET: docs(() => swaggerFile("swagger-ui-bundle.js"), "text/javascript; charset=utf-8") },
       "/api/logs": {
         GET: api((req) => {
           const params = new URL(req.url).searchParams;
