@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { Docify, DocifyError } from "./core/docify.ts";
-import { read, renderSources, scope, search, sources, type Mode } from "./core/search.ts";
+import { outline, read, renderSources, scope, search, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
 import { VERSION, requireVersion } from "./version.ts";
 
@@ -21,6 +21,7 @@ Queries (local and offline only):
   scope [--library L] [--version V] [--source ID] [--json]
                                 show what search would search with these filters
   read <passage-id> [--max-tokens N] [--json]
+  outline <source-id> [--path PREFIX] [--max-tokens N] [--json]
   pin <library> [version]       pin (or unpin) a version in ./.docify.json
 
 Servers:
@@ -50,6 +51,7 @@ async function main(argv: string[]) {
       source: { type: "string", multiple: true },
       mode: { type: "string" },
       "max-tokens": { type: "string" },
+      path: { type: "string" },
       json: { type: "boolean" },
       "no-graph": { type: "boolean" },
       force: { type: "boolean" },
@@ -153,6 +155,12 @@ async function main(argv: string[]) {
         const r = read(docify, positionals[0] ?? "", values["max-tokens"] ? Number(values["max-tokens"]) : undefined);
         console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
         if (r.status === "unavailable") process.exitCode = 3;
+        break;
+      }
+      case "outline": {
+        const r = outline(docify, { source: positionals[0] ?? "", path: values.path, maxTokens: values["max-tokens"] ? Number(values["max-tokens"]) : undefined });
+        console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
+        if (r.status !== "ok") process.exitCode = 3;
         break;
       }
       case "pin": {
