@@ -144,4 +144,6 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `LITELLM_BASE_URL`, `LITELLM_API_KEY` | Graph provider and `openai` embeddings, by default |
 | `DOCIFY_BIN` | `docify` executable the macOS app runs |
 
+`.env.example` lists them with their defaults. Copy it to `.env` for commands run from the checkout root (`bun src/cli.ts`, `bun test`, `make serve`); Bun reads `.env` only from the current directory, so a linked `docify` elsewhere, the MCP server and the macOS app need the variables in their own environment.
+
 Design and status: `docs/design.md`, `docs/implementation-plan.md`, `docs/feasibility.md`, `docs/evaluation.md`, `docs/verification.md`.
