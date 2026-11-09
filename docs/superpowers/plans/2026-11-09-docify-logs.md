@@ -12,11 +12,13 @@
 
 ## Delivery status
 
-Implementation is prepared for a draft PR. The focused tests pass (27 tests, exit 0), as does typecheck. An isolated server exposed both Graphify streams while preparation was still in the graph phase, followed by an activation log and a ready source. The production bundle includes the real viewer.
+Draft PR #18 contains the implementation. The full suite passes (111 tests, exit 0), as does typecheck. An isolated server exposed both Graphify streams while preparation was still in the graph phase, followed by an activation log and a ready source. The production bundle includes the real viewer.
 
-Acceptance is not complete. The full suite reports 110 passing tests, then Bun 1.4.4 panics during shutdown with exit 134. Browser automation opened Workspace and exposed the Logs navigation, but subsequent commands and positive-control pages timed out; the rendered Logs view is not verified. Independent review could not start because both configured cross-family reviewer models returned API rate limits.
+The native shutdown failure is resolved on macOS with Bun 1.4.4. The crash stack was in ONNX Runtime's telemetry worker. Bun's JavaScript environment writes did not reach native getenv, so the dependency's opt-out was ineffective. A bootstrap now sets the native opt-out before the ONNX binding loads. A fresh-process regression observes the flag at the real binding load and fails if the native write is removed or applied too late. See docs/verification.md for the controls.
 
-The pinned private viewer has no dist directory. Bun compiles its source through a tsconfig path alias, with the config path passed explicitly to the bundle so it also works from another directory. A custom resolver was tested first; replacing it with the native alias did not resolve the full-suite shutdown panic.
+Acceptance is still not complete. Browser automation opened Workspace and exposed the Logs navigation, but subsequent commands and positive-control pages timed out; the rendered Logs view is not verified. Independent review could not start because both configured cross-family reviewer models returned API rate limits.
+
+The pinned private viewer has no dist directory. Bun compiles its source through a tsconfig path alias, with the config path passed explicitly to the bundle so it also works from another directory.
 
 ## Global Constraints
 

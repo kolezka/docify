@@ -25,6 +25,8 @@ rm -rf ~/.config/docify/graphify-venv && docify setup   # the venv's scripts hol
 
 ## Embeddings
 
+On macOS and glibc Linux, Docify disables native ONNX telemetry before loading the embedding backend. Setting only JavaScript's `process.env` does not update the environment seen by the native library in Bun.
+
 The default is `Xenova/bge-small-en-v1.5` in process, with no server. For multilingual or larger corpora, docify can embed with `bge-m3` on an Ollama server instead:
 
 ```bash

@@ -97,3 +97,16 @@ Branch `feat/config-home`, Bun 1.4.4, Swift 6.4. The machine had only `~/.cache/
 - CLI with a scratch `HOME`: an empty home created `.config/docify/docify.sqlite`; a home with only `.cache/docify` used it and created no `.config/docify`.
 - One early run of `tests/generations.test.ts` had one failure whose name was not captured; seven later runs of the file and the full suite passed. Probably the intermittent failure recorded on 2026-11-08, not confirmed.
 - Not verified: the macOS app reading the new path at runtime (compiled only), and the README move steps on a real store.
+
+## Native ONNX telemetry shutdown (2026-11-09)
+
+macOS 27.0.1, Bun 1.4.4, Transformers.js 4.3.1, ONNX Runtime 1.30.0, branch `feat/docify-logs`. Models came from the existing local cache through `DOCIFY_MODELS_DIR`; no models were downloaded.
+
+- Before the fix, the full suite reported 110 passing tests and then aborted with exit 134. The native crash report showed `Microsoft::Applications::Events::HttpResponseDecoder` and `DebugEventSource::DispatchEvent` inside `libonnxruntime.1.dylib`, ending in `std::recursive_mutex::lock()` and an uncaught C++ system error.
+- A direct native `getenv` probe returned no value after JavaScript set `process.env.ORT_DISABLE_TELEMETRY = "1"`. The version-matched Transformers entrypoint does set that flag before loading the binding, but this does not update Bun's native process environment.
+- Positive control: native `setenv` wrote a fixture value that native `getenv` read back. Setting `ORT_DISABLE_TELEMETRY=1` in the shell before launching the unchanged suite produced 110 pass and exit 0.
+- The fix applies native `setenv` before loading ONNX. It does not force process exit, skip tests, add a test-runner environment override or change the inference model. The standalone embedding probe uses the same bootstrap.
+- Regression: a fresh child starts with the native flag `0`; an observer on the real `process.dlopen` call requires `1` before `onnxruntime_binding.node` loads. On the old entrypoint it failed with expected `["1"]`, received `["0"]`. Removing only the native write or moving the bootstrap after the Transformers import each reproduced that same assertion failure (exit 1). Restored sources passed (exit 0).
+- Final full suite without a telemetry environment override: 111 pass, 0 fail, exit 0. `bun run typecheck`: exit 0.
+
+Runtime verification is scoped to macOS. The Linux libc path and non-POSIX branch were source-reviewed, not executed. Rendered Logs browser acceptance and independent review of PR #18 remain separate pending gates.

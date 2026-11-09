@@ -1,3 +1,4 @@
+import "./onnx-telemetry.ts";
 import { env, pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
 import type { DocifyConfig } from "./config.ts";
 
