@@ -1,0 +1,32 @@
+import { api, errorText, type SourceInfo } from "./api.ts";
+
+// One source list shared by the sidebar, the source pages and the search scope picker.
+// It polls every second while any source is preparing.
+class SourceStore {
+  list = $state<SourceInfo[] | null>(null);
+  error = $state("");
+  #timer: ReturnType<typeof setTimeout> | undefined;
+  #inflight: Promise<void> | null = null;
+
+  refresh = (): Promise<void> => {
+    clearTimeout(this.#timer);
+    this.#inflight ??= (async () => {
+      try {
+        this.list = await api<SourceInfo[]>("/api/sources");
+        this.error = "";
+      } catch (err) {
+        this.error = errorText(err);
+      } finally {
+        this.#inflight = null;
+      }
+      if (this.list?.some((s) => s.state === "preparing")) this.#timer = setTimeout(this.refresh, 1000);
+    })();
+    return this.#inflight;
+  };
+
+  byId(id: string | null): SourceInfo | undefined {
+    return id ? this.list?.find((s) => s.id === id) : undefined;
+  }
+}
+
+export const sources = new SourceStore();

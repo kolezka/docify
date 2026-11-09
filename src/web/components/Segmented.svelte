@@ -16,7 +16,7 @@
   }
 </script>
 
-<div role="radiogroup" aria-label={label} class="inline-flex max-w-full flex-wrap rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-950">
+<div role="radiogroup" aria-label={label} class="inline-flex max-w-full flex-wrap rounded-lg bg-fill p-0.5">
   {#each options as o (o.value)}
     <button
       type="button"
@@ -24,11 +24,9 @@
       aria-checked={value === o.value}
       onclick={() => pick(o.value)}
       class={cn(
-        "rounded border font-medium transition-colors",
-        size === "sm" ? "px-3 py-1 text-[13px]" : "px-2 py-0.5 text-[12px]",
-        value === o.value
-          ? "border-zinc-200/60 bg-white text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-          : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+        "rounded-md font-medium text-label transition-colors focus-visible:ring-[3px] focus-visible:ring-accent-soft focus-visible:outline-none",
+        size === "sm" ? "h-6 px-3 text-[13px]" : "h-[22px] px-2.5 text-[12px]",
+        value === o.value ? "bg-seg-on shadow-[0_1px_2px_rgb(0_0_0/0.15)]" : "hover:bg-surface/50",
       )}>{o.label}</button
     >
   {/each}
