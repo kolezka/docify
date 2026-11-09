@@ -660,6 +660,168 @@ export function read(docify: Docify, id: string, maxTokens = 3000): ReadResult {
   return { status, id, text, tokens: countTokens(text), citation, passage: p.text, context: { before, after }, note };
 }
 
+export type OpenStatus = "ok" | "not_found" | "not_indexed" | "source_unknown";
+
+export interface OpenInput {
+  source: string;
+  path: string; // document path or page URL as shown in citations
+  heading?: string;
+  maxTokens?: number;
+}
+
+export interface OpenResult {
+  status: OpenStatus;
+  source: string;
+  path: string;
+  heading: string | null;
+  maxTokens: number;
+  tokens: number;
+  text: string;
+  section: string[] | null; // heading path of the matched section
+  passages: { id: string; citation: Citation; truncated: boolean }[];
+  omitted: number;
+  continueFrom: string | null; // first passage not returned in full
+  otherMatches: { id: string; headingPath: string[] }[];
+  suggestions: string[]; // close paths, or headings of the document
+}
+
+const normHeading = (s: string) => s.replace(/`/g, "").trim().toLowerCase();
+const startsWithHeading = (text: string) => /^#{1,6}\s/.test(text);
+
+// Sections whose heading equals `heading`, as [start, end) ranges over passages in ord order.
+// A section runs while passages keep its heading path as a prefix, and stops at a sibling
+// that repeats the same heading.
+function findSections(rows: PassageRow[], heading: string) {
+  const want = normHeading(heading);
+  const paths = rows.map((r) => JSON.parse(r.heading_path) as string[]);
+  const has = (i: number, prefix: string[]) => prefix.every((h, k) => paths[i]![k] === h);
+  const out: { start: number; end: number; path: string[] }[] = [];
+  rows.forEach((r, i) => {
+    paths[i]!.forEach((h, k) => {
+      if (normHeading(h) !== want) return;
+      const prefix = paths[i]!.slice(0, k + 1);
+      const ownStart = paths[i]!.length === k + 1 && startsWithHeading(r.text);
+      if (i > 0 && has(i - 1, prefix) && !ownStart) return;
+      let end = i + 1;
+      while (end < rows.length && has(end, prefix) && !(paths[end]!.length === k + 1 && startsWithHeading(rows[end]!.text))) end++;
+      out.push({ start: i, end, path: prefix });
+    });
+  });
+  return out;
+}
+
+function closePaths(all: string[], path: string): string[] {
+  const stem = (p: string) => (p.split(/[/#?]/).filter(Boolean).at(-1) ?? p).replace(/\.[a-z0-9]+$/i, "").toLowerCase();
+  const want = stem(path);
+  if (!want) return [];
+  return all.filter((p) => stem(p).includes(want) || want.includes(stem(p)) || p.toLowerCase().includes(path.toLowerCase())).slice(0, 5);
+}
+
+// Returns a whole document, or one section with its subsections, from the active generation.
+// Passages are concatenated in order and cut at a passage boundary to fit max_tokens.
+export function open(docify: Docify, input: OpenInput): OpenResult {
+  if (!input.source || !input.path) throw new DocifyError("invalid_input", "source and path are required");
+  const maxTokens = Math.max(200, Math.min(input.maxTokens ?? 3000, 20000));
+  const heading = input.heading?.trim() ? input.heading.trim() : null;
+  const base = { source: input.source, path: input.path, heading, maxTokens, section: null, passages: [], omitted: 0, continueFrom: null, otherMatches: [], suggestions: [] };
+  const nonce = newNonce();
+  const plain = (status: OpenStatus, message: string, suggestions: string[] = [], label = "close matches"): OpenResult => {
+    const lines = [HEADER, `status: ${status}`, message];
+    if (suggestions.length) lines.push(`${label}: ${suggestions.map(oneLine).join(", ")}`);
+    const text = lines.join("\n");
+    return { ...base, status, text, tokens: countTokens(text), suggestions };
+  };
+
+  // One read transaction so the generation cannot change between the queries below.
+  return docify.db.transaction((): OpenResult => {
+    const src = docify.getSource(input.source);
+    if (!src) {
+      const known = docify.listSourceRows().map((s) => s.id);
+      return plain("source_unknown", `No source with id ${oneLine(input.source)}. Known sources: ${known.join(", ") || "none"}.`);
+    }
+    const gen = src.active_generation ? docify.getGeneration(src.active_generation) : null;
+    if (!gen || gen.status !== "active") return plain("not_indexed", `Source ${src.id} has no prepared generation. Run docify prepare ${src.id}.`);
+
+    const urlPath = input.path.split("#")[0]!;
+    const doc = docify.db
+      .query<{ id: number }, [number, string, string]>("SELECT id FROM documents WHERE generation_id = ? AND (path = ? OR url = ?) ORDER BY id LIMIT 1")
+      .get(gen.id, input.path, urlPath);
+    if (!doc) {
+      const all = docify.db.query<{ path: string; url: string | null }, [number]>("SELECT path, url FROM documents WHERE generation_id = ?").all(gen.id);
+      return plain("not_found", `No document ${oneLine(input.path)} in ${src.id}.`, closePaths(all.map((d) => d.url ?? d.path), input.path));
+    }
+    const rowids = docify.db.query<{ rowid: number }, [number]>("SELECT rowid FROM passages WHERE document_id = ? ORDER BY ord").all(doc.id).map((r) => r.rowid);
+    const loaded = loadPassages(docify, rowids, [gen.id]);
+    let rows = rowids.map((r) => loaded.get(r)!).filter(Boolean);
+
+    let section: string[] | null = null;
+    let otherMatches: OpenResult["otherMatches"] = [];
+    if (heading) {
+      const found = findSections(rows, heading);
+      if (!found.length) {
+        const headings = [...new Set(rows.flatMap((r) => JSON.parse(r.heading_path) as string[]))].slice(0, 30);
+        return plain("not_found", `No heading "${oneLine(heading)}" in ${oneLine(input.path)} of ${src.id}.`, headings, "headings in this document");
+      }
+      const [first, ...rest] = found;
+      otherMatches = rest.map((m) => ({ id: rows[m.start]!.id, headingPath: m.path }));
+      section = first!.path;
+      rows = rows.slice(first!.start, first!.end);
+    }
+
+    const cites = rows.map(citationOf);
+    const doc0 = cites[0];
+    const render = (n: number, cut: string | null, tokens: number) => {
+      const lines = [...headerLines(nonce), `status: ok | tokens: ${tokens}`];
+      if (doc0) lines.push(`document: ${doc0.library}@${doc0.version ?? "unknown"} | ${oneLine(doc0.url ?? doc0.document)} | passages ${n} of ${rows.length}`, `preserved source: ${oneLine(doc0.rawFile)}`);
+      if (section) lines.push(`section: ${oneLine(section.join(" > "))}`);
+      for (const m of otherMatches) lines.push(`also matches: ${oneLine(m.headingPath.join(" > "))} (id ${m.id})`);
+      for (let i = 0; i < n; i++) {
+        const excerpt = i === n - 1 && cut !== null ? cut : rows[i]!.text;
+        lines.push("", citationLine(cites[i]!, rows[i]!.id), ...framed(excerpt, nonce));
+        if (i === n - 1 && cut !== null) lines.push(`(truncated: call docs_read("${rows[i]!.id}") for the full passage)`);
+      }
+      if (n < rows.length) lines.push("", `${rows.length - n} more passages omitted to stay within the token budget. Continue from passage ${rows[n]!.id} (docs_read("${rows[n]!.id}"), or a larger max_tokens).`);
+      return lines.join("\n");
+    };
+    // The count is part of the text, so iterate to a fixed point as finalize() does.
+    const measure = (n: number, cut: string | null) => {
+      let tokens = countTokens(render(n, cut, 0));
+      let text = render(n, cut, tokens);
+      for (let i = 0; i < 3 && countTokens(text) !== tokens; i++) {
+        tokens = countTokens(text);
+        text = render(n, cut, tokens);
+      }
+      return { text, tokens };
+    };
+
+    let best = measure(0, null);
+    let n = 0;
+    let cut: string | null = null;
+    for (let i = 1; i <= rows.length; i++) {
+      const m = measure(i, null);
+      if (m.tokens > maxTokens) break;
+      best = m;
+      n = i;
+    }
+    // Not even the first passage fits: show its head, cut outside code fences.
+    if (n === 0 && rows.length) {
+      for (let room = maxTokens - measure(1, "").tokens; room > 0; room -= 20) {
+        const c = truncateExcerpt(rows[0]!.text, room);
+        const m = measure(1, c);
+        if (m.tokens <= maxTokens) {
+          best = m;
+          n = 1;
+          cut = c;
+          break;
+        }
+      }
+    }
+    const passages = rows.slice(0, n).map((r, i) => ({ id: r.id, citation: cites[i]!, truncated: i === n - 1 && cut !== null }));
+    const continueFrom = cut !== null ? rows[0]!.id : n < rows.length ? rows[n]!.id : null;
+    return { ...base, status: "ok", text: best.text, tokens: best.tokens, section, passages, omitted: rows.length - n, continueFrom, otherMatches };
+  })();
+}
+
 export interface SourceInfo {
   id: string;
   library: string;

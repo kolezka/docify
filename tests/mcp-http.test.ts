@@ -48,11 +48,14 @@ test("an MCP client with a valid token lists and calls the read-only tools", asy
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${OPENCLAW}` } } }));
     try {
       const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-      expect(tools).toEqual(["docs_read", "docs_search", "docs_sources"]);
+      expect(tools).toEqual(["docs_open", "docs_read", "docs_search", "docs_sources"]);
       const listed = await client.callTool({ name: "docs_sources", arguments: {} });
       expect(listed.isError).toBeFalsy();
       const read = await client.callTool({ name: "docs_read", arguments: { id: "p_00000000000000000000" } });
       expect(JSON.stringify(read.content)).toContain("unavailable");
+      const opened = await client.callTool({ name: "docs_open", arguments: { source: "nope@1", path: "a.md" } });
+      expect(opened.isError).toBeFalsy();
+      expect(JSON.stringify(opened.content)).toContain("status: source_unknown");
     } finally {
       await client.close();
     }

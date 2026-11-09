@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { Docify, DocifyError } from "./core/docify.ts";
-import { read, renderSources, search, sources, type Mode } from "./core/search.ts";
+import { open, read, renderSources, search, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
 import { VERSION, requireVersion } from "./version.ts";
 
@@ -19,6 +19,8 @@ Queries (local and offline only):
   sources                       list sources, versions and preparation state
   search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
   read <passage-id> [--max-tokens N] [--json]
+  open <source-id> <path> [--heading H] [--max-tokens N] [--json]
+                                a whole document, or one section of it
   pin <library> [version]       pin (or unpin) a version in ./.docify.json
 
 Servers:
@@ -56,6 +58,7 @@ async function main(argv: string[]) {
       "allowed-host": { type: "string", multiple: true },
       "graph-weight": { type: "string" },
       require: { type: "string" },
+      heading: { type: "string" },
     },
   });
   if (!command || command === "help" || command === "--help") {
@@ -145,6 +148,12 @@ async function main(argv: string[]) {
         const r = read(docify, positionals[0] ?? "", values["max-tokens"] ? Number(values["max-tokens"]) : undefined);
         console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
         if (r.status === "unavailable") process.exitCode = 3;
+        break;
+      }
+      case "open": {
+        const r = open(docify, { source: positionals[0] ?? "", path: positionals[1] ?? "", heading: values.heading, maxTokens: values["max-tokens"] ? Number(values["max-tokens"]) : undefined });
+        console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
+        if (r.status !== "ok") process.exitCode = 3;
         break;
       }
       case "pin": {
