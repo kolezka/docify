@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { LogViewer } from "svelte-log-viewer";
+  import { LogViewer } from "../lib/log-viewer/index.ts";
   import { api } from "../lib/api.ts";
   import { LogFeed, type LogFeedState } from "../lib/log-feed.ts";
 
