@@ -13,11 +13,11 @@
 </script>
 
 <div class={cn("min-w-0", className)}>
-  <label for={id} class="mb-1.5 block text-[12px] font-medium text-zinc-500 dark:text-zinc-400">{label}</label>
+  <label for={id} class="mb-1.5 block text-[13px] text-label">{label}</label>
   {@render children()}
   {#if error}
-    <p class="mt-1 text-[12px] font-medium text-rose-600 dark:text-rose-400">{error}</p>
+    <p class="mt-1 text-[11px] leading-[14px] font-medium text-bad-text">{error}</p>
   {:else if hint}
-    <p class="mt-1 text-[12px] text-zinc-400 dark:text-zinc-500">{hint}</p>
+    <p class="mt-1 text-[11px] leading-[14px] text-label2">{hint}</p>
   {/if}
 </div>

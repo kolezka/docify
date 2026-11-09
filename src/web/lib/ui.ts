@@ -3,73 +3,104 @@ import { tv, type VariantProps } from "tailwind-variants";
 // Class merging for components that take a `class` prop: the caller's classes win.
 export { twMerge as cn } from "tailwind-merge";
 
+// Apple HIG styling; tokens live in app.css and the rules in .design/design-system.md.
+
+// A group of an inset grouped list, or any content surface.
 export const panel = tv({
-  base: "rounded-lg border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-none",
+  base: "rounded-[10px] bg-surface",
+});
+
+// Section header above a group.
+export const groupTitle = tv({
+  base: "mx-3 mt-6 mb-1.5 text-[11px] leading-[14px] font-semibold tracking-[0.02em] text-label2 uppercase",
+});
+
+// One row in a group: label leading, value or control trailing, inset separator above every row but the first.
+export const row = tv({
+  base: "relative flex min-h-10 items-center gap-3 px-3.5 py-2 [&+&]:before:absolute [&+&]:before:top-0 [&+&]:before:right-0 [&+&]:before:left-3.5 [&+&]:before:h-px [&+&]:before:bg-sep/60 [&+&]:before:content-['']",
 });
 
 export const button = tv({
-  base: "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/40 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
+  base: "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors focus-visible:ring-[3px] focus-visible:ring-accent-soft focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
   variants: {
     intent: {
-      primary: "bg-indigo-600 text-white hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400",
-      secondary:
-        "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800",
-      accent:
-        "border border-zinc-200 bg-white text-indigo-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-indigo-400 dark:hover:bg-zinc-800",
-      danger:
-        "border border-zinc-200 bg-white text-rose-600 hover:bg-rose-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-rose-400 dark:hover:bg-rose-500/10",
-      confirm: "bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-500 dark:hover:bg-rose-400",
-      ghost: "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+      // The default button: one per area, placed trailing.
+      primary: "bg-accent text-white hover:brightness-110",
+      secondary: "border border-sep bg-surface text-label shadow-[0_1px_1px_rgb(0_0_0/0.05)] hover:bg-fill2",
+      // Kept for older call sites: a secondary button whose label is the accent.
+      accent: "border border-sep bg-surface text-accent-text shadow-[0_1px_1px_rgb(0_0_0/0.05)] hover:bg-fill2",
+      danger: "border border-sep bg-surface text-bad-text shadow-[0_1px_1px_rgb(0_0_0/0.05)] hover:bg-fill2",
+      confirm: "bg-bad-fill text-white hover:brightness-110",
+      ghost: "text-label hover:bg-fill",
+      link: "px-0 text-accent-text hover:underline",
     },
     size: {
-      xs: "h-[26px] px-2 text-[12px]",
-      sm: "h-8 px-3 text-[13px]",
-      md: "h-9 px-4 text-[13px]",
+      // 24 px is the smallest bezeled button; the hit area stays above the 20 pt minimum.
+      xs: "h-6 px-2.5 text-[12px]",
+      sm: "h-7 px-3 text-[13px]",
+      md: "h-7 px-4 text-[13px]",
     },
   },
   defaultVariants: { intent: "secondary", size: "sm" },
 });
 
+// Controls that float in the toolbar sit in glass capsules.
+export const capsule = tv({
+  base: "inline-flex h-[30px] items-center rounded-full border border-white/40 bg-glass shadow-float backdrop-blur-xl backdrop-saturate-150 dark:border-white/10",
+});
+export const capsuleButton = tv({
+  base: "inline-flex h-[30px] min-w-[30px] items-center justify-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-label transition-colors hover:bg-fill/60 disabled:pointer-events-none disabled:opacity-50",
+});
+
 export const input = tv({
-  base: "h-8 w-full min-w-0 rounded-md border border-zinc-200 bg-white px-2.5 text-[13px] text-zinc-900 transition-colors placeholder:text-zinc-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/40 focus:outline-none disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-indigo-400",
+  base: "h-[26px] w-full min-w-0 rounded-md border border-sep bg-field px-2 text-[13px] text-label transition-colors placeholder:text-label2 focus:border-accent focus:ring-[3px] focus:ring-accent-soft focus:outline-none disabled:opacity-60",
   variants: {
     mono: { true: "font-mono" },
     invalid: {
-      true: "border-rose-300 text-rose-900 focus:border-rose-500 focus:ring-rose-500/40 dark:border-rose-500/60 dark:text-rose-200 dark:focus:border-rose-400",
+      true: "border-bad focus:border-bad focus:ring-bad/25",
     },
   },
 });
 
+// A popup button: a native select styled as one.
+export const popup = tv({
+  base: "h-6 w-auto min-w-0 rounded-md border border-sep bg-fill2 py-0 pr-7 pl-2.5 text-[13px] text-label focus:border-accent focus:ring-[3px] focus:ring-accent-soft focus:outline-none disabled:opacity-60",
+});
+
+// Status: a coloured dot plus a word, never colour alone.
 export const chip = tv({
   slots: {
-    base: "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] font-medium whitespace-nowrap",
-    dot: "size-1.5 rounded-full",
+    base: "inline-flex shrink-0 items-center gap-1.5 text-[13px] font-medium whitespace-nowrap",
+    dot: "size-2 shrink-0 rounded-full",
   },
   variants: {
     tone: {
-      ok: { base: "border-emerald-200/60 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300", dot: "bg-emerald-500" },
-      active: { base: "border-indigo-200/60 bg-indigo-50 text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300", dot: "animate-pulse bg-indigo-500" },
-      warn: { base: "border-amber-200/60 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300", dot: "bg-amber-500" },
-      bad: { base: "border-rose-200/60 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300", dot: "bg-rose-500" },
-      neutral: { base: "border-zinc-200 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300", dot: "bg-zinc-400" },
+      ok: { base: "text-ok-text", dot: "bg-ok" },
+      active: { base: "text-accent-text", dot: "bg-accent motion-safe:animate-pulse" },
+      warn: { base: "text-warn-text", dot: "bg-warn" },
+      bad: { base: "text-bad-text", dot: "bg-bad" },
+      neutral: { base: "text-label2", dot: "bg-label3" },
     },
   },
   defaultVariants: { tone: "neutral" },
 });
 export type ChipTone = NonNullable<VariantProps<typeof chip>["tone"]>;
 
+// Notes under or inside a group. Warnings and errors carry a symbol (StatusIcon) next to the text.
 export const notice = tv({
-  base: "rounded-md border p-3 text-[13px] leading-relaxed",
+  base: "flex gap-2 rounded-[10px] p-3 text-[13px] leading-[18px]",
   variants: {
     tone: {
-      info: "border-zinc-200/60 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400",
-      warn: "border-amber-200/60 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200",
-      bad: "border-rose-200/60 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200",
-      ok: "border-emerald-200/60 bg-emerald-50 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200",
+      info: "bg-surface text-label2",
+      warn: "bg-warn/10 text-warn-text",
+      bad: "bg-bad/10 text-bad-text",
+      ok: "bg-ok/10 text-ok-text",
     },
   },
   defaultVariants: { tone: "info" },
 });
+
+export const footnote = "text-[11px] leading-[14px] text-label2";
 
 export function sourceTone(state: string): ChipTone {
   if (state === "ready") return "ok";
@@ -79,9 +110,28 @@ export function sourceTone(state: string): ChipTone {
   return "neutral";
 }
 
+export function sourceStateLabel(state: string): string {
+  return { ready: "Ready", stale: "Last update stopped", preparing: "Preparing", failed: "Failed", not_indexed: "Not prepared" }[state] ?? state;
+}
+
 export function searchTone(status: string): ChipTone {
   if (status === "ok") return "ok";
   if (status === "weak_match") return "warn";
   if (status === "update_failed") return "bad";
   return "neutral";
+}
+
+// Readable wording for API statuses; the API names stay unchanged.
+export function searchStatusLabel(status: string): string {
+  return (
+    {
+      ok: "Good match",
+      weak_match: "Weak match",
+      no_match: "No match",
+      not_indexed: "Not prepared",
+      version_unavailable: "Version unavailable",
+      source_unknown: "Unknown source",
+      update_failed: "Update failed",
+    }[status] ?? status
+  );
 }

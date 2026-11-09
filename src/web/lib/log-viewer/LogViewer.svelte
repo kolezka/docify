@@ -78,6 +78,21 @@
     filters?: Snippet;
     /** Extra controls, drawn at the right of the toolbar. */
     actions?: Snippet;
+    /** Off hides the built-in toolbar and footer, for a host that draws its own controls and binds the state below. */
+    chrome?: boolean;
+    /** Stream filter: "all", "stdout", "stderr" or "system". */
+    stream?: string;
+    /** Line text filter. */
+    query?: string;
+    wrap?: boolean;
+    timestamps?: boolean;
+    lineNumbers?: boolean;
+    /** Id of the filter input that "/" focuses; set it when the host draws its own field. */
+    filterInputId?: string;
+    /** Row class, replacing the built-in stream and verdict tone. */
+    toneOf?: (line: LogLine) => string;
+    /** A fixed 16px column before the text, for a per-row symbol. */
+    marker?: Snippet<[LogLine]>;
   }
 
   let {
@@ -97,6 +112,15 @@
     labels,
     filters,
     actions,
+    chrome = true,
+    stream: streamValue = $bindable("all"),
+    query = $bindable(""),
+    wrap = $bindable(false),
+    timestamps = $bindable(true),
+    lineNumbers = $bindable(true),
+    filterInputId,
+    toneOf: rowTone = toneOf,
+    marker,
   }: Props = $props();
 
   const L = $derived({ ...DEFAULT_LABELS, ...labels });
@@ -113,16 +137,12 @@
   /** Never wrap narrower than this, however small the pane gets. */
   const MIN_COLUMNS = 20;
 
-  const filterId = $props.id();
+  const autoFilterId = $props.id();
+  const filterId = $derived(filterInputId ?? autoFilterId);
 
   let container = $state<HTMLDivElement | null>(null);
   let ruler = $state<HTMLSpanElement | null>(null);
 
-  let streamValue = $state("all");
-  let query = $state("");
-  let wrap = $state(false);
-  let timestamps = $state(true);
-  let lineNumbers = $state(true);
   let copied = $state(false);
 
   let scrollTop = $state(0);
@@ -144,8 +164,10 @@
   const seqWidth = $derived(lineNumbers ? Math.ceil(seqDigits * charWidth) + 14 : 0);
   const timeWidth = $derived(timestamps ? Math.ceil(12 * charWidth) + 12 : 0);
   const sourceWidth = $derived(showSource ? Math.ceil(18 * charWidth) + 12 : 0);
+  /** Marker column plus its gap. */
+  const markerWidth = $derived(marker ? 24 : 0);
   /** Pixels left for the text after the gutters and the row padding. */
-  const textWidth = $derived(Math.max(0, viewportWidth - seqWidth - timeWidth - sourceWidth - 28));
+  const textWidth = $derived(Math.max(0, viewportWidth - seqWidth - timeWidth - sourceWidth - markerWidth - 28));
   // One column of slack: the gutter widths are estimates, and an over estimate
   // here would push a wrapped chunk past the right edge.
   const columns = $derived(Math.max(MIN_COLUMNS, Math.floor(textWidth / charWidth) - 1));
@@ -178,7 +200,7 @@
   const slice = $derived(rows.slice(view.start, view.end));
   /** Widest line, so the horizontal scrollbar does not jump as rows recycle. */
   const contentWidth = $derived(
-    wrap ? 0 : seqWidth + timeWidth + sourceWidth + 28 + Math.ceil((longestLine(rows) + 2) * charWidth),
+    wrap ? 0 : seqWidth + timeWidth + sourceWidth + markerWidth + 28 + Math.ceil((longestLine(rows) + 2) * charWidth),
   );
 
   $effect(() => {
@@ -290,7 +312,8 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="log-viewer">
+<div class="log-viewer" class:bare={!chrome}>
+  {#if chrome}
   <div class="toolbar">
     <Switch bind:checked={follow} label={L.follow} ariaLabel={L.followAria} />
 
@@ -359,6 +382,7 @@
 
     {#if actions}<div class="extra">{@render actions()}</div>{/if}
   </div>
+  {/if}
 
   {#if loading}
     <div class="notice">
@@ -401,7 +425,7 @@
       >
         <div class="slice" style="transform: translateY({view.offsetTop}px)">
           {#each slice as line (`${line.source ?? ""}:${line.seq}`)}
-            <div class="row {toneOf(line)}" class:wrapped={wrap}>
+            <div class="row {rowTone(line)}" class:wrapped={wrap}>
               {#if lineNumbers}
                 <span class="seq" style="width: {seqWidth}px">{line.seq}</span>
               {/if}
@@ -412,6 +436,9 @@
                 <span class="source" style="width: {sourceWidth}px" title={line.source}>
                   {labelOf ? labelOf(line.source ?? "") : shortSourceId(line.source ?? "")}
                 </span>
+              {/if}
+              {#if marker}
+                <span class="marker">{@render marker(line)}</span>
               {/if}
               <span class="text">
                 {#if wrap}
@@ -433,6 +460,7 @@
     >
   </div>
 
+  {#if chrome}
   <div class="footer">
     <span class="hint">
       <Kbd>End</Kbd> latest <Kbd>Home</Kbd> top <Kbd>/</Kbd> filter
@@ -446,6 +474,7 @@
       <span class="tailing">{L.following}</span>
     {/if}
   </div>
+  {/if}
 </div>
 
 <style>
@@ -476,6 +505,7 @@
     --lv-warning: var(--warning, #d29922);
     --lv-danger: var(--danger, #f4574c);
     --lv-danger-subtle: var(--danger-subtle, #2d1516);
+    --lv-warning-subtle: var(--warning-subtle, #2d2311);
     --lv-info: var(--info, #58a6ff);
     --lv-radius-sm: var(--radius-sm, 4px);
     --lv-radius-md: var(--radius-md, 6px);
@@ -680,6 +710,47 @@
 
   .row.fail .text {
     color: var(--lv-danger);
+  }
+
+  /* Level tones a host can return from toneOf. */
+  .row.warn {
+    background: var(--lv-warning-subtle);
+  }
+
+  .row.warn .text {
+    color: var(--lv-warning);
+  }
+
+  .row.error {
+    background: var(--lv-danger-subtle);
+  }
+
+  .row.error .text {
+    color: var(--lv-danger);
+  }
+
+  .marker {
+    flex: none;
+    display: flex;
+    align-items: center;
+    width: 16px;
+    height: 20px;
+  }
+
+  /* Host draws the chrome: no frame, and the scroll area takes the remaining height. */
+  .log-viewer.bare {
+    height: 100%;
+    min-height: 0;
+    border: 0;
+  }
+
+  .bare .viewport {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .bare .notice:first-child {
+    border-radius: var(--lv-radius-lg) var(--lv-radius-lg) 0 0;
   }
 
   .blank {

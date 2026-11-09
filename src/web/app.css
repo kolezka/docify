@@ -15,8 +15,126 @@
 }
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* Apple HIG tokens (.design/design-system.md). Text colours pass 4.5:1 on --window and --surface in both themes;
+   --label3 is for glyphs and edges only, never text. */
+:root {
+  --hig-window: rgb(242 242 247);
+  --hig-surface: #fff;
+  --hig-sidebar: rgb(236 236 241 / 0.78);
+  --hig-glass: rgb(255 255 255 / 0.72);
+  --hig-fill: rgb(229 229 234);
+  --hig-fill2: rgb(242 242 247);
+  --hig-field: #fff;
+  --hig-sep: rgb(209 209 214);
+  --hig-label: rgb(0 0 0);
+  --hig-label2: rgb(100 100 104);
+  --hig-label3: rgb(142 142 147);
+  --hig-accent: rgb(0 98 214);
+  --hig-accent-text: rgb(0 98 214);
+  --hig-accent-soft: rgb(0 136 255 / 0.14);
+  --hig-ok: rgb(52 199 89);
+  --hig-ok-text: rgb(0 125 45);
+  --hig-warn: rgb(255 141 40);
+  --hig-warn-text: rgb(178 72 0);
+  --hig-bad: rgb(255 56 60);
+  --hig-bad-text: rgb(215 0 21);
+  /* Fill behind white text on destructive buttons: 5.38:1. The brighter --hig-bad is for dots and tints only. */
+  --hig-bad-fill: rgb(215 0 21);
+  --hig-code: rgb(248 248 250);
+  --hig-seg-on: #fff;
+  --hig-node-concept: rgb(0 136 255);
+  --hig-node-document: rgb(97 85 245);
+  --hig-node-code: rgb(203 48 224);
+  --hig-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 16px rgb(0 0 0 / 0.06);
+}
+:root.dark {
+  --hig-window: rgb(28 28 30);
+  --hig-surface: rgb(44 44 46);
+  --hig-sidebar: rgb(44 44 46 / 0.62);
+  --hig-glass: rgb(58 58 60 / 0.62);
+  --hig-fill: rgb(58 58 60);
+  --hig-fill2: rgb(36 36 38);
+  --hig-field: rgb(30 30 32);
+  --hig-sep: rgb(72 72 74);
+  --hig-label: rgb(255 255 255);
+  --hig-label2: rgb(174 174 178);
+  --hig-label3: rgb(142 142 147);
+  --hig-accent: rgb(0 98 214);
+  --hig-accent-text: rgb(92 184 255);
+  --hig-accent-soft: rgb(0 145 255 / 0.24);
+  --hig-ok: rgb(48 209 88);
+  --hig-ok-text: rgb(74 217 104);
+  --hig-warn: rgb(255 146 48);
+  --hig-warn-text: rgb(255 160 86);
+  --hig-bad: rgb(255 66 69);
+  --hig-bad-text: rgb(255 97 101);
+  --hig-code: rgb(22 22 24);
+  --hig-seg-on: rgb(99 99 102);
+  --hig-node-concept: rgb(0 145 255);
+  --hig-node-document: rgb(109 124 255);
+  --hig-node-code: rgb(219 52 242);
+  --hig-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --hig-window: rgb(28 28 30);
+    --hig-surface: rgb(44 44 46);
+    --hig-sidebar: rgb(44 44 46 / 0.62);
+    --hig-glass: rgb(58 58 60 / 0.62);
+    --hig-fill: rgb(58 58 60);
+    --hig-fill2: rgb(36 36 38);
+    --hig-field: rgb(30 30 32);
+    --hig-sep: rgb(72 72 74);
+    --hig-label: rgb(255 255 255);
+    --hig-label2: rgb(174 174 178);
+    --hig-label3: rgb(142 142 147);
+    --hig-accent: rgb(0 98 214);
+    --hig-accent-text: rgb(92 184 255);
+    --hig-accent-soft: rgb(0 145 255 / 0.24);
+    --hig-ok: rgb(48 209 88);
+    --hig-ok-text: rgb(74 217 104);
+    --hig-warn: rgb(255 146 48);
+    --hig-warn-text: rgb(255 160 86);
+    --hig-bad: rgb(255 66 69);
+    --hig-bad-text: rgb(255 97 101);
+    --hig-code: rgb(22 22 24);
+    --hig-seg-on: rgb(99 99 102);
+    --hig-node-concept: rgb(0 145 255);
+    --hig-node-document: rgb(109 124 255);
+    --hig-node-code: rgb(219 52 242);
+    --hig-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
+  }
+}
+
+@theme inline {
+  --color-window: var(--hig-window);
+  --color-surface: var(--hig-surface);
+  --color-sidebar: var(--hig-sidebar);
+  --color-glass: var(--hig-glass);
+  --color-fill: var(--hig-fill);
+  --color-fill2: var(--hig-fill2);
+  --color-field: var(--hig-field);
+  --color-sep: var(--hig-sep);
+  --color-label: var(--hig-label);
+  --color-label2: var(--hig-label2);
+  --color-label3: var(--hig-label3);
+  --color-accent: var(--hig-accent);
+  --color-accent-text: var(--hig-accent-text);
+  --color-accent-soft: var(--hig-accent-soft);
+  --color-ok: var(--hig-ok);
+  --color-ok-text: var(--hig-ok-text);
+  --color-warn: var(--hig-warn);
+  --color-warn-text: var(--hig-warn-text);
+  --color-bad: var(--hig-bad);
+  --color-bad-text: var(--hig-bad-text);
+  --color-bad-fill: var(--hig-bad-fill);
+  --color-code: var(--hig-code);
+  --color-seg-on: var(--hig-seg-on);
+  --shadow-float: var(--hig-shadow);
 }
 
 @layer base {
@@ -30,7 +148,7 @@
     color-scheme: dark;
   }
   body {
-    @apply bg-zinc-50 font-sans text-[14px] leading-normal text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+    @apply bg-window font-sans text-[13px] leading-4 text-label antialiased;
   }
   button:not(:disabled) {
     cursor: pointer;
@@ -38,42 +156,31 @@
 }
 
 .docify-logs {
-  --lv-surface-page: var(--color-zinc-50);
-  --lv-surface-panel: white;
-  --lv-surface-raised: white;
-  --lv-surface-hover: var(--color-zinc-100);
-  --lv-border: var(--color-zinc-200);
-  --lv-border-strong: var(--color-zinc-300);
-  --lv-text-primary: var(--color-zinc-900);
-  --lv-text-secondary: var(--color-zinc-600);
-  --lv-text-muted: var(--color-zinc-500);
-  --lv-accent: var(--color-indigo-600);
-  --lv-accent-subtle: var(--color-indigo-50);
-  --lv-accent-text: var(--color-indigo-700);
-  --lv-on-accent: white;
-  --lv-success: var(--color-green-700);
-  --lv-warning: var(--color-amber-700);
-  --lv-danger: var(--color-red-700);
-  --lv-danger-subtle: var(--color-red-50);
-  --lv-info: var(--color-blue-700);
-
-  @variant dark {
-    --lv-surface-page: var(--color-zinc-950);
-    --lv-surface-panel: var(--color-zinc-900);
-    --lv-surface-raised: var(--color-zinc-800);
-    --lv-surface-hover: var(--color-zinc-800);
-    --lv-border: var(--color-zinc-800);
-    --lv-border-strong: var(--color-zinc-700);
-    --lv-text-primary: var(--color-zinc-100);
-    --lv-text-secondary: var(--color-zinc-400);
-    --lv-text-muted: var(--color-zinc-400);
-    --lv-accent: var(--color-indigo-400);
-    --lv-accent-subtle: var(--color-indigo-950);
-    --lv-accent-text: var(--color-indigo-300);
-    --lv-success: var(--color-green-400);
-    --lv-warning: var(--color-amber-400);
-    --lv-danger: var(--color-red-400);
-    --lv-danger-subtle: var(--color-red-950);
-    --lv-info: var(--color-blue-400);
-  }
+  /* The viewer declares its own --lv-* tokens (dark defaults) on .log-viewer, so --lv-* set here never reach it.
+     It reads these host names first; mapping them to the HIG tokens makes it follow light, dark and System. */
+  --surface-page: var(--hig-surface);
+  --surface-panel: var(--hig-surface);
+  --surface-raised: var(--hig-surface);
+  --surface-hover: var(--hig-fill2);
+  --border: var(--hig-sep);
+  --border-strong: var(--hig-sep);
+  --text-primary: var(--hig-label);
+  /* Line numbers, timestamps and source use label2, which passes 4.5:1 on the surface in both themes. */
+  --text-secondary: var(--hig-label2);
+  --text-muted: var(--hig-label2);
+  --accent: var(--hig-accent);
+  --accent-subtle: var(--hig-accent-soft);
+  --accent-text: var(--hig-accent-text);
+  --on-accent: white;
+  --success: var(--hig-ok-text);
+  --warning: var(--hig-warn-text);
+  /* Literal alpha: the bundler's minifier folds color-mix(..., transparent) into the opaque colour. */
+  --warning-subtle: rgb(255 141 40 / 0.08);
+  --danger: var(--hig-bad-text);
+  --danger-subtle: rgb(255 56 60 / 0.06);
+  --info: var(--hig-accent-text);
+  --radius-lg: 10px;
+  --text-12: 12px;
+  --text-13: 13px;
+  --text-14: 13px;
 }

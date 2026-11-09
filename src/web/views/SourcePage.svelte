@@ -1,0 +1,439 @@
+<script lang="ts">
+  import { untrack } from "svelte";
+  import { ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, ExternalLink, Link, X } from "@lucide/svelte";
+  import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import Group from "../components/Group.svelte";
+  import Row from "../components/Row.svelte";
+  import StatusChip from "../components/StatusChip.svelte";
+  import StatusIcon from "../components/StatusIcon.svelte";
+  import Toolbar from "../components/Toolbar.svelte";
+  import { api, downloadArtifact, errorText, type SourceInfo } from "../lib/api.ts";
+  import { ago, fraction } from "../lib/format.ts";
+  import { nav } from "../lib/nav.svelte.ts";
+  import { sources } from "../lib/sources.svelte.ts";
+  import { button, capsule, capsuleButton, cn, footnote, input, notice, popup, sourceStateLabel, sourceTone } from "../lib/ui.ts";
+
+  type Crawl4aiSettings = NonNullable<SourceInfo["crawl4ai"]>;
+
+  const PHASES = ["collect", "normalize", "embed", "graph", "validate", "activate"] as const;
+  const PHASE_LABELS: Record<string, string> = { collect: "Collect", normalize: "Normalize", embed: "Embed", graph: "Graph", validate: "Validate", activate: "Activate" };
+  const CRAWLER_LABELS: Record<string, string> = { builtin: "Built-in", crawl4ai: "Crawl4AI", browserless: "Browserless" };
+  const MISSING_PREVIEW = 20;
+
+  const s = $derived(sources.byId(nav.sourceId));
+
+  let busy = $state(false);
+  let error = $state("");
+  let menuOpen = $state(false);
+  let confirmRemove = $state(false);
+  let showAllMissing = $state(false);
+  let editingCrawl4ai = $state(false);
+  let stream = $state("");
+  let waitUntil = $state("");
+  let waitFor = $state("");
+  let delay = $state("");
+  let scanFullPage = $state("");
+  let captureScreenshot = $state("");
+  let capturePdf = $state("");
+
+  // Page state belongs to one source; start fresh when another one is shown.
+  $effect.pre(() => {
+    void nav.sourceId;
+    untrack(() => {
+      error = "";
+      menuOpen = false;
+      confirmRemove = false;
+      showAllMissing = false;
+      editingCrawl4ai = false;
+    });
+  });
+
+  const path = $derived(s ? `/api/sources/${encodeURIComponent(s.id)}` : "");
+  const g = $derived(s?.activeGeneration ?? null);
+  const preparing = $derived(s?.state === "preparing");
+  const progressText = $derived(preparing ? [s?.latest?.phase, s?.latest?.progress].filter(Boolean).join(" ") : "");
+  const progress = $derived(fraction(s?.latest?.progress));
+  const phaseIndex = $derived(PHASES.indexOf((s?.latest?.phase ?? "") as (typeof PHASES)[number]));
+  const failure = $derived(s?.latest?.status === "failed" ? (s.latest.error ?? "failed") : null);
+  const crawl4ai = $derived<Crawl4aiSettings>(s?.crawl4ai ?? {});
+  const crawl4aiChanged = $derived(Object.keys(crawl4ai).length);
+  const stat = (key: string): number | null => (typeof g?.stats[key] === "number" ? (g.stats[key] as number) : null);
+  const graphMissing = $derived(Array.isArray(g?.stats.graphMissing) ? (g.stats.graphMissing as string[]) : []);
+  const artifacts = $derived(Array.isArray(g?.stats.artifacts) ? (g.stats.artifacts as string[]) : []);
+  // With a per-source crawler the global one is not known here, so the option then reads just "Global default".
+  const globalCrawlerLabel = $derived(
+    s && !s.crawlProvider && s.effectiveCrawlProvider ? `Global default (${CRAWLER_LABELS[s.effectiveCrawlProvider] ?? s.effectiveCrawlProvider})` : "Global default",
+  );
+  const primaryLabel = $derived(
+    s?.state === "ready" ? "Update" : s?.state === "failed" ? "Retry" : s?.state === "stale" ? "Prepare Again" : "Prepare",
+  );
+  const noGraphLabel = $derived(s?.state === "ready" ? "Update Without Graph" : "Prepare Without Graph");
+
+  async function run(action: () => Promise<unknown>): Promise<boolean> {
+    busy = true;
+    error = "";
+    let ok = false;
+    try {
+      await action();
+      ok = true;
+    } catch (err) {
+      error = errorText(err);
+    } finally {
+      busy = false;
+    }
+    await sources.refresh();
+    return ok;
+  }
+
+  function prepare(graph: boolean) {
+    menuOpen = false;
+    run(() => api(`${path}/prepare`, { method: "POST", body: { graph } }));
+  }
+
+  function cancel() {
+    run(() => api(`${path}/cancel`, { method: "POST", body: {} }));
+  }
+
+  async function remove() {
+    if (await run(() => api(path, { method: "DELETE", body: {} }))) nav.go("search");
+  }
+
+  function setCrawler(value: string) {
+    run(() => api(path, { method: "PATCH", body: { crawlProvider: value || null } }));
+  }
+
+  function editCrawl4ai() {
+    stream = crawl4ai.stream === undefined ? "" : String(crawl4ai.stream);
+    waitUntil = crawl4ai.waitUntil ?? "";
+    waitFor = crawl4ai.waitFor ?? "";
+    delay = crawl4ai.delayBeforeReturnHtml === undefined ? "" : String(crawl4ai.delayBeforeReturnHtml);
+    scanFullPage = crawl4ai.scanFullPage === undefined ? "" : String(crawl4ai.scanFullPage);
+    captureScreenshot = crawl4ai.captureScreenshot === undefined ? "" : String(crawl4ai.captureScreenshot);
+    capturePdf = crawl4ai.capturePdf === undefined ? "" : String(crawl4ai.capturePdf);
+    editingCrawl4ai = true;
+  }
+
+  function saveCrawl4ai(event: SubmitEvent) {
+    event.preventDefault();
+    const options: Crawl4aiSettings = { ...crawl4ai };
+    if (stream === "") delete options.stream;
+    else options.stream = stream === "true";
+    if (waitUntil.trim()) options.waitUntil = waitUntil.trim() as Crawl4aiSettings["waitUntil"];
+    else delete options.waitUntil;
+    if (waitFor.trim()) options.waitFor = waitFor.trim();
+    else delete options.waitFor;
+    if (delay === "") delete options.delayBeforeReturnHtml;
+    else options.delayBeforeReturnHtml = Number(delay);
+    if (scanFullPage === "") delete options.scanFullPage;
+    else options.scanFullPage = scanFullPage === "true";
+    if (captureScreenshot === "") delete options.captureScreenshot;
+    else options.captureScreenshot = captureScreenshot === "true";
+    if (capturePdf === "") delete options.capturePdf;
+    else options.capturePdf = capturePdf === "true";
+    run(async () => {
+      await api(path, { method: "PATCH", body: { crawl4ai: options } });
+      editingCrawl4ai = false;
+    });
+  }
+
+  async function saveArtifact(kind: "screenshot" | "pdf") {
+    error = "";
+    try {
+      await downloadArtifact(`${path}/artifacts/${kind}`, kind === "screenshot" ? "screenshot.png" : "page.pdf");
+    } catch (err) {
+      error = errorText(err);
+    }
+  }
+
+  let menuRoot: HTMLElement | undefined = $state();
+  function closeMenuOutside(event: MouseEvent) {
+    if (menuOpen && menuRoot && !menuRoot.contains(event.target as Node)) menuOpen = false;
+  }
+</script>
+
+<svelte:window onclick={closeMenuOutside} onkeydown={(e) => e.key === "Escape" && (menuOpen = false)} />
+
+{#snippet onOff(id: string, label: string, value: string, set: (v: string) => void)}
+  <Row {label} for={id} class="pl-9">
+    <select {id} class={popup()} {value} onchange={(e) => set(e.currentTarget.value)} disabled={busy || preparing}>
+      <option value="">Default</option><option value="true">On</option><option value="false">Off</option>
+    </select>
+  </Row>
+{/snippet}
+
+{#if !s}
+  <Toolbar><span class="flex-1"></span></Toolbar>
+  <div class="min-h-0 flex-1 overflow-y-auto">
+    <div class="mx-auto max-w-[720px] px-8 pt-2 pb-10">
+      <h1 class="text-[26px] leading-8 font-bold">Sources</h1>
+      {#if sources.error}
+        <div class={notice({ tone: "bad", class: "mt-4" })} role="alert"><StatusIcon tone="bad" class="mt-0.5" /><span class="break-words">{sources.error}</span></div>
+      {/if}
+      <p class="mt-2 text-[13px] leading-[18px] text-label2">
+        {#if sources.list === null}
+          Loading sources…
+        {:else if nav.sourceId && sources.list.length}
+          This source is no longer in the store. Pick another one in the sidebar, or add a new one.
+        {:else if sources.list.length}
+          Pick a source in the sidebar to see its index, crawler settings and actions.
+        {:else}
+          No sources yet. Add a website or a local folder, and Docify keeps a copy of its documentation for agents.
+        {/if}
+      </p>
+      <button type="button" class={button({ intent: "primary", size: "md", class: "mt-4" })} onclick={() => (nav.addingSource = true)}>Add Source</button>
+    </div>
+  </div>
+{:else}
+  <Toolbar>
+    <span class="flex-1"></span>
+    <span class={capsule({ class: "relative" })} bind:this={menuRoot}>
+      {#if preparing}
+        <button type="button" class={capsuleButton()} disabled={busy} onclick={cancel}><X size={14} />Cancel</button>
+      {:else}
+        <button type="button" class={capsuleButton({ class: "rounded-r-none pr-2" })} disabled={busy} onclick={() => prepare(true)}>{primaryLabel}</button>
+        <button
+          type="button"
+          class={capsuleButton({ class: "min-w-0 rounded-l-none pr-2.5 pl-1.5" })}
+          aria-label="More preparation options"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          disabled={busy}
+          onclick={() => (menuOpen = !menuOpen)}><ChevronDown size={12} strokeWidth={2} /></button
+        >
+        {#if menuOpen}
+          <div role="menu" class="absolute top-[calc(100%+6px)] right-0 z-20 min-w-[220px] rounded-[10px] border border-sep bg-surface p-1 shadow-float">
+            <button type="button" role="menuitem" class="flex h-7 w-full items-center rounded-md px-2.5 text-left text-[13px] text-label hover:bg-accent hover:text-white" onclick={() => prepare(false)}
+              >{noGraphLabel}</button
+            >
+          </div>
+        {/if}
+      {/if}
+    </span>
+    {#if s.kind === "url"}
+      <span class={capsule()}>
+        <a class={capsuleButton({ class: "px-0" })} href={s.locator} target="_blank" rel="noopener noreferrer" aria-label="Open site" title="Open site"><ExternalLink size={14} /></a>
+      </span>
+    {/if}
+  </Toolbar>
+
+  <div class="min-h-0 flex-1 overflow-y-auto">
+    <div class="mx-auto max-w-[720px] px-8 pt-2 pb-10">
+      {#if error}
+        <div class={notice({ tone: "bad", class: "mb-4" })} role="alert">
+          <StatusIcon tone="bad" class="mt-0.5" />
+          <span class="min-w-0 flex-1 break-words whitespace-pre-wrap">{error}</span>
+          <button type="button" class="shrink-0 rounded text-bad-text" aria-label="Dismiss" onclick={() => (error = "")}><X size={14} /></button>
+        </div>
+      {/if}
+
+      <h1 class="flex flex-wrap items-baseline gap-x-2 text-[26px] leading-8 font-bold break-all">
+        {s.library}{#if s.version}<span class="font-mono text-[17px] font-normal text-label2">{s.version}</span>{/if}
+      </h1>
+      <div class="mt-1.5 flex min-w-0 items-center gap-2 text-[13px] text-label2">
+        <StatusChip tone={sourceTone(s.state)} label={sourceStateLabel(s.state)} />
+        <span aria-hidden="true">·</span>
+        {#if s.kind === "url"}
+          <Link size={13} class="shrink-0 text-label3" aria-hidden="true" />
+          <a class="truncate font-mono text-[12px] text-accent-text hover:underline" href={s.locator} target="_blank" rel="noopener noreferrer" title={s.locator}>{s.locator}</a>
+        {:else}
+          <span class="truncate font-mono text-[12px]" title={s.locator}>{s.locator}</span>
+        {/if}
+      </div>
+
+      {#if preparing}
+        <section class="mt-6" aria-label="Preparation progress">
+          <ol class="flex flex-wrap gap-x-4 gap-y-2">
+            {#each PHASES as phase, i (phase)}
+              {@const state = phaseIndex < 0 ? (i === 0 ? "current" : "pending") : i < phaseIndex ? "done" : i === phaseIndex ? "current" : "pending"}
+              <li class="flex items-center gap-1.5 text-[13px]" aria-current={state === "current" ? "step" : undefined}>
+                {#if state === "done"}
+                  <CircleCheck size={14} class="text-ok-text" aria-hidden="true" />
+                  <span class="text-label2">{PHASE_LABELS[phase]}</span><span class="sr-only">, done</span>
+                {:else if state === "current"}
+                  <CircleDot size={14} class="text-accent-text" aria-hidden="true" />
+                  <span class="font-semibold text-label">{PHASE_LABELS[phase]}</span><span class="sr-only">, in progress</span>
+                {:else}
+                  <Circle size={14} class="text-label3" aria-hidden="true" />
+                  <span class="text-label2">{PHASE_LABELS[phase]}</span><span class="sr-only">, pending</span>
+                {/if}
+              </li>
+            {/each}
+          </ol>
+          <div
+            class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-fill"
+            role="progressbar"
+            aria-label="Preparation progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress === null ? undefined : Math.round(progress * 100)}
+            aria-valuetext={progressText || "starting"}
+          >
+            {#if progress !== null}
+              <div class="h-full rounded-full bg-accent motion-safe:transition-[width] motion-safe:duration-300" style:width={`${Math.round(progress * 100)}%`}></div>
+            {:else}
+              <div class="h-full w-1/3 rounded-full bg-accent/70 motion-safe:animate-pulse"></div>
+            {/if}
+          </div>
+          <p class="mt-1.5 font-mono text-[12px] text-label2">{progressText || "starting"}</p>
+        </section>
+      {:else if failure}
+        <div class={notice({ tone: s.state === "stale" ? "warn" : "bad", class: "mt-6" })} role="status">
+          <StatusIcon tone={s.state === "stale" ? "warn" : "bad"} class="mt-0.5" />
+          <div class="min-w-0">
+            <p class="font-medium">{s.state === "stale" ? "The last update stopped. The previous generation still serves searches." : "Preparation failed."}</p>
+            <p class="mt-1 font-mono text-[12px] break-words whitespace-pre-wrap">{failure}</p>
+          </div>
+        </div>
+      {/if}
+
+      {#if g}
+        {@const documents = stat("documents")}
+        {@const passages = stat("passages")}
+        {@const nodes = stat("graphNodes")}
+        {@const edges = stat("graphEdges")}
+        <Group title="Index">
+          {#if documents !== null}<Row label="Documents"><span class="font-mono text-[13px] text-label2">{documents.toLocaleString()}</span></Row>{/if}
+          {#if passages !== null}<Row label="Passages"><span class="font-mono text-[13px] text-label2">{passages.toLocaleString()}</span></Row>{/if}
+          <Row
+            label="Semantic graph"
+            sub={g.graphStatus === "ok" ? "Every page has graph nodes" : g.graphStatus === "partial" ? `${graphMissing.length} ${graphMissing.length === 1 ? "page has" : "pages have"} no graph nodes` : undefined}
+          >
+            <span class="flex items-center gap-2.5">
+              {#if g.graphStatus === "ok"}
+                <StatusChip tone="ok" label="Complete" />
+              {:else if g.graphStatus === "partial"}
+                <StatusChip tone="warn" label="Partial" />
+              {:else if g.graphStatus === "failed"}
+                <StatusChip tone="bad" label="Failed" />
+              {:else}
+                <StatusChip tone="neutral" label={g.graphStatus ? g.graphStatus : "Not built"} />
+              {/if}
+              {#if nodes !== null && (g.graphStatus === "ok" || g.graphStatus === "partial")}
+                <span class="font-mono text-[12px] text-label2">{nodes.toLocaleString()} nodes · {(edges ?? 0).toLocaleString()} edges</span>
+              {/if}
+            </span>
+          </Row>
+          {#if g.embeddingModel}
+            <Row label="Embedding model" sub="Vector search uses only this model's vectors"><span class="font-mono text-[13px] text-label2">{g.embeddingModel}</span></Row>
+          {/if}
+          <Row label="Generation">
+            <span class="text-[13px] text-label2" title={g.downloadedAt ?? undefined}><span class="font-mono">#{g.id}</span>, downloaded {ago(g.downloadedAt)}</span>
+          </Row>
+        </Group>
+      {:else if !preparing && !failure}
+        <div class={notice({ class: "mt-6" })}>
+          <StatusIcon tone="info" class="mt-0.5" />
+          <span>Not prepared yet. {primaryLabel} downloads, indexes and embeds the documentation so agents can search it.</span>
+        </div>
+      {/if}
+
+      {#if graphMissing.length}
+        <Group title="Not in the graph" hint="The next update retries these pages from Graphify's cache.">
+          {#each showAllMissing ? graphMissing : graphMissing.slice(0, MISSING_PREVIEW) as file (file)}
+            <Row><span class="min-w-0 flex-1 truncate font-mono text-[12px] text-label" title={file}>{file}</span></Row>
+          {/each}
+          {#if graphMissing.length > MISSING_PREVIEW}
+            <Row>
+              <button type="button" class={button({ intent: "link", size: "xs" })} onclick={() => (showAllMissing = !showAllMissing)}
+                >{showAllMissing ? "Show Fewer" : `Show All ${graphMissing.length}`}</button
+              >
+            </Row>
+          {/if}
+        </Group>
+      {/if}
+
+      {#if s.kind === "url"}
+        <Group title="Crawler">
+          <Row label="Fetch pages with" sub="Applies on the next update" for="source-crawler">
+            <select id="source-crawler" class={popup()} value={s.crawlProvider ?? ""} disabled={busy || preparing} onchange={(e) => setCrawler(e.currentTarget.value)}>
+              <option value="">{globalCrawlerLabel}</option>
+              <option value="builtin">Built-in</option>
+              <option value="crawl4ai">Crawl4AI</option>
+              <option value="browserless">Browserless</option>
+            </select>
+          </Row>
+          {#if s.effectiveCrawlProvider === "crawl4ai"}
+            <button
+              type="button"
+              class="relative flex min-h-10 w-full items-center gap-1.5 px-3.5 py-2 text-left text-[13px] text-label before:absolute before:top-0 before:right-0 before:left-3.5 before:h-px before:bg-sep/60 before:content-[''] hover:bg-fill/40 disabled:opacity-60"
+              aria-expanded={editingCrawl4ai}
+              disabled={preparing}
+              onclick={() => (editingCrawl4ai ? (editingCrawl4ai = false) : editCrawl4ai())}
+            >
+              <ChevronRight size={14} class={cn("shrink-0 text-label3 motion-safe:transition-transform", editingCrawl4ai && "rotate-90")} aria-hidden="true" />
+              <span class="flex-1">Crawl4AI options</span>
+              <span class={footnote}>{crawl4aiChanged ? `${crawl4aiChanged} changed` : "Defaults"}</span>
+            </button>
+            {#if editingCrawl4ai}
+              <form onsubmit={saveCrawl4ai}>
+                <div class="ml-3.5 h-px bg-sep/60"></div>
+                {@render onOff("c4-stream", "Stream", stream, (v) => (stream = v))}
+                <Row label="Wait until" for="c4-wait-until" class="pl-9">
+                  <select id="c4-wait-until" class={popup()} bind:value={waitUntil} disabled={busy || preparing}>
+                    <option value="">Default</option><option value="load">Load</option><option value="domcontentloaded">DOM content loaded</option><option value="networkidle">Network idle</option><option value="commit">Commit</option>
+                  </select>
+                </Row>
+                <Row label="Wait for" sub="CSS selector or JavaScript condition" for="c4-wait-for" class="pl-9">
+                  <input id="c4-wait-for" class={input({ mono: true, class: "w-[200px]" })} bind:value={waitFor} placeholder="Default" disabled={busy || preparing} />
+                </Row>
+                <Row label="Delay before reading" sub="Seconds" for="c4-delay" class="pl-9">
+                  <input
+                    id="c4-delay"
+                    class={input({ mono: true, class: "w-24" })}
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={delay}
+                    oninput={(e) => (delay = e.currentTarget.value)}
+                    placeholder="Default"
+                    disabled={busy || preparing}
+                  />
+                </Row>
+                {@render onOff("c4-scan", "Scan full page", scanFullPage, (v) => (scanFullPage = v))}
+                {@render onOff("c4-screenshot", "Capture screenshot", captureScreenshot, (v) => (captureScreenshot = v))}
+                {@render onOff("c4-pdf", "Capture PDF", capturePdf, (v) => (capturePdf = v))}
+                <Row class="justify-end pl-9">
+                  <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingCrawl4ai = false)}>Cancel</button>
+                  <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy || preparing}>Save</button>
+                </Row>
+              </form>
+            {/if}
+          {/if}
+        </Group>
+      {/if}
+
+      {#if artifacts.includes("screenshot") || artifacts.includes("pdf")}
+        <Group title="Artifacts">
+          {#if artifacts.includes("screenshot")}
+            <Row label="Screenshot" sub="screenshot.png"><button type="button" class={button({ size: "xs" })} onclick={() => saveArtifact("screenshot")}>Download</button></Row>
+          {/if}
+          {#if artifacts.includes("pdf")}
+            <Row label="PDF" sub="page.pdf"><button type="button" class={button({ size: "xs" })} onclick={() => saveArtifact("pdf")}>Download</button></Row>
+          {/if}
+        </Group>
+      {/if}
+
+      <Group
+        class="mt-7"
+        hint={preparing
+          ? "Cancel the running preparation before removing this source."
+          : `Removing deletes every generation and snapshot of ${s.id} from the store. It cannot be undone.`}
+      >
+        <button
+          type="button"
+          class="flex min-h-10 w-full items-center justify-center px-3.5 text-[13px] font-medium text-bad-text hover:bg-fill/40 disabled:opacity-50"
+          disabled={busy || preparing}
+          onclick={() => (confirmRemove = true)}>Remove Source…</button
+        >
+      </Group>
+    </div>
+  </div>
+
+  <ConfirmDialog
+    bind:open={confirmRemove}
+    title={`Remove ${s.id}?`}
+    message={`Every generation and snapshot of ${s.id} is deleted from the store. Agents can no longer search it. This cannot be undone.`}
+    confirmLabel="Remove Source"
+    onconfirm={remove}
+  />
+{/if}

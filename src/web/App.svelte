@@ -1,49 +1,61 @@
 <script lang="ts">
-  import TopBar from "./components/TopBar.svelte";
+  import { onMount } from "svelte";
+  import Sidebar from "./components/Sidebar.svelte";
+  import ThemeSwitch from "./components/ThemeSwitch.svelte";
+  import AddSourceSheet from "./views/AddSourceSheet.svelte";
+  import Graph from "./views/Graph.svelte";
+  import Logs from "./views/Logs.svelte";
   import Search from "./views/Search.svelte";
   import Settings from "./views/Settings.svelte";
-  import Sources from "./views/Sources.svelte";
-  import Logs from "./views/Logs.svelte";
-  import Graph from "./views/Graph.svelte";
+  import SourcePage from "./views/SourcePage.svelte";
+  import { handleShortcut, nav } from "./lib/nav.svelte.ts";
+  import { sources } from "./lib/sources.svelte.ts";
+  import { popup } from "./lib/ui.ts";
 
-  type View = "workspace" | "graph" | "settings" | "logs";
-
-  function initialView(): View {
-    try {
-      const stored = sessionStorage.getItem("docify-view");
-      return stored === "settings" || stored === "logs" || stored === "graph" ? stored : "workspace";
-    } catch {
-      return "workspace";
-    }
-  }
-
-  let view = $state<View>(initialView());
-
-  $effect(() => {
-    try {
-      sessionStorage.setItem("docify-view", view);
-    } catch {
-      // the view is then not kept across reloads
-    }
+  onMount(() => {
+    sources.refresh();
   });
+
+  // Narrow windows hide the sidebar; this picker stands in for it.
+  const compactValue = $derived(nav.view === "source" && nav.sourceId ? `source:${nav.sourceId}` : nav.view);
+  function pickCompact(value: string) {
+    if (value === "new-source") nav.addingSource = true;
+    else if (value.startsWith("source:")) nav.openSource(value.slice(7));
+    else nav.go(value as "search" | "graph" | "logs" | "settings");
+  }
 </script>
 
-<div class="flex h-dvh flex-col">
-  <TopBar bind:view />
-  <!-- The workspace stays mounted so search results survive a visit to Settings. -->
-  <main
-    class="mx-auto w-full max-w-[1440px] min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-5 lg:flex-row lg:overflow-hidden"
-    class:flex={view === "workspace"}
-    class:hidden={view !== "workspace"}
-  >
-    <Sources class="lg:w-[40%]" />
-    <Search class="lg:w-[60%]" />
-  </main>
-  {#if view === "graph"}
-    <Graph />
-  {:else if view === "settings"}
-    <Settings />
-  {:else if view === "logs"}
-    <Logs />
-  {/if}
+<svelte:window onkeydown={handleShortcut} />
+
+<div class="flex h-dvh overflow-hidden">
+  <Sidebar />
+  <div class="flex min-w-0 flex-1 flex-col">
+    <div class="flex items-center gap-2 px-4 pt-3 md:hidden">
+      <span class="text-[15px] font-semibold">Docify</span>
+      <select class={popup({ class: "ml-auto" })} aria-label="View" value={compactValue} onchange={(e) => pickCompact(e.currentTarget.value)}>
+        <option value="search">Search</option>
+        <option value="graph">Graph</option>
+        <option value="logs">Logs</option>
+        <option value="settings">Settings</option>
+        {#each sources.list ?? [] as s (s.id)}<option value={`source:${s.id}`}>{s.id}</option>{/each}
+        <option value="new-source">New source…</option>
+      </select>
+      <ThemeSwitch />
+    </div>
+    <!-- Search stays mounted so its results survive a visit to another view. -->
+    <main class="flex min-h-0 flex-1 flex-col" class:hidden={nav.view !== "search"}>
+      <Search />
+    </main>
+    {#if nav.view === "source"}
+      <main class="flex min-h-0 flex-1 flex-col"><SourcePage /></main>
+    {:else if nav.view === "graph"}
+      <main class="flex min-h-0 flex-1 flex-col"><Graph /></main>
+    {:else if nav.view === "logs"}
+      <main class="flex min-h-0 flex-1 flex-col"><Logs /></main>
+    {:else if nav.view === "settings"}
+      <main class="flex min-h-0 flex-1 flex-col"><Settings /></main>
+    {/if}
+  </div>
 </div>
+
+<AddSourceSheet />
