@@ -456,7 +456,7 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
     if (scope.status) return { scope, gens: [] as number[], ranked: null, missingSymbol: null as string | null };
     const gens = [...scope.generations.keys()];
     const vectorGens = gens.filter((g) => scope.generations.get(g)!.generation.embedding_model === embeddingIdentity(docify.config));
-    const graphGens = gens.filter((g) => scope.generations.get(g)!.generation.graph_status === "ok");
+    const graphGens = gens.filter((g) => scope.generations.get(g)!.generation.graph_status === "ok" || scope.generations.get(g)!.generation.graph_status === "partial");
     const tr = performance.now();
     const lex = mode === "lexical" || mode === "combined" ? lexicalRank(docify, query, gens) : [];
     const vec = qv ? vectorRank(docify, qv, vectorGens) : [];

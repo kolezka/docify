@@ -34,6 +34,8 @@ export interface GraphRunResult {
   tokensOut: number | null;
   costEstimate: string | null;
   log: string;
+  // Graphify's own lines saying the extraction is incomplete; empty when it is complete.
+  incomplete: string[];
 }
 
 export class GraphProviderError extends Error {}
@@ -132,9 +134,11 @@ export async function runGraphify(
     const hint = /semantic shrink|Refusing to overwrite/.test(log) ? " The provider returned a partial graph and Graphify cached it; rerun prepare with --force to re-extract." : "";
     throw new GraphProviderError(`graphify extract exited ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}: ${tail}${hint}`);
   }
-  if (/semantic chunk\(s\) failed|produced no nodes/.test(log)) {
-    throw new GraphProviderError(`graphify extract returned partial results: ${log.split("\n").filter((l) => /WARNING|failed/.test(l)).join(" | ")}`);
-  }
+  // A failed chunk or a file the model left out still exits 0 with a graph of the rest. Keep it:
+  // prepare marks the generation partial, and Graphify's cache makes the next run resend only the gaps.
+  const incomplete = /semantic chunk\(s\) failed|produced no nodes/.test(log)
+    ? log.split("\n").filter((l) => /WARNING|failed|incomplete/.test(l))
+    : [];
   const file = Bun.file(join(work, "graphify-out", "graph.json"));
   if (!(await file.exists())) throw new GraphProviderError("graphify extract finished without graph.json");
   const graphJsonText = await file.text();
@@ -153,6 +157,7 @@ export async function runGraphify(
     tokensOut: tokens ? Number(tokens[2]!.replace(/,/g, "")) : 0,
     costEstimate: tokens?.[3] ?? null,
     log,
+    incomplete,
   };
 }
 

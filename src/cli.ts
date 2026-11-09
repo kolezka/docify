@@ -82,6 +82,12 @@ async function main(argv: string[]) {
         try {
           const r = await docify.prepare(id, { graph: !values["no-graph"], force: values.force, signal: controller.signal });
           console.log(`${r.status} ${r.sourceId} generation ${r.generationId}: ${JSON.stringify(r.stats)}`);
+          const missing = (r.stats.graphMissing as string[] | undefined) ?? [];
+          const warned = ((r.stats.graphWarnings as string[] | undefined) ?? []).length > 0;
+          if (r.status === "activated" && (missing.length || warned)) {
+            const shown = missing.slice(0, 5).join(", ") + (missing.length > 5 ? ` (+${missing.length - 5} more)` : "");
+            console.error(`warning: graph is partial${missing.length ? `, no nodes for ${missing.length} document(s): ${shown}` : ""}. The next prepare retries them.`);
+          }
         } finally {
           clearInterval(timer);
         }
