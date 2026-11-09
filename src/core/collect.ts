@@ -88,12 +88,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     return c.toString();
   };
 
-  const queue: { url: URL; depth: number }[] = [{ url: startUrl, depth: 0 }];
-  const seen = new Set([canonical(startUrl)]);
-  const docs: RawDoc[] = [];
-  let total = 0;
-  while (queue.length && docs.length < limits.maxPages) {
-    const { url, depth } = queue.shift()!;
+  const fetchInScope = async (url: URL) => {
     let res: Response | null = null;
     let current = url;
     for (let hop = 0; hop <= limits.maxRedirects; hop++) {
@@ -109,7 +104,40 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
       current = next;
       if (hop === limits.maxRedirects) throw new Error(`too many redirects from ${url}`);
     }
-    if (!res) continue;
+    return res ? { res, current } : null;
+  };
+
+  const queue: { url: URL; depth: number; preferMarkdown?: boolean }[] = [{ url: startUrl, depth: 0 }];
+  const seen = new Set([canonical(startUrl)]);
+  const collected = new Set<string>();
+  const docs: RawDoc[] = [];
+  let total = 0;
+  while (queue.length && docs.length < limits.maxPages) {
+    const { url, depth, preferMarkdown } = queue.shift()!;
+    if (collected.has(canonical(url))) continue;
+    let fetched = null;
+    if (preferMarkdown) {
+      const markdownUrl = new URL(url);
+      markdownUrl.pathname += ".md";
+      try {
+        fetched = await fetchInScope(markdownUrl);
+      } catch (error) {
+        console.error(`docify: Markdown export probe failed for ${markdownUrl}; trying linked route: ${error instanceof Error ? error.message : error}`);
+      }
+      // A Markdown export can exist even when the linked HTML route is a soft 404.
+      const exportType = fetched?.res.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+      if (fetched && (!fetched.res.ok || (exportType !== "" && !["text/markdown", "text/x-markdown", "text/plain"].includes(exportType)))) {
+        await fetched.res.body?.cancel();
+        fetched = null;
+      }
+    }
+    fetched ??= await fetchInScope(url);
+    if (!fetched) continue;
+    const { res, current } = fetched;
+    if (collected.has(canonical(current))) {
+      await res.body?.cancel();
+      continue;
+    }
     if (!res.ok) {
       if (depth === 0) throw new Error(`fetch ${current} failed: HTTP ${res.status}`);
       continue;
@@ -123,8 +151,10 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     total += bytes.length;
     if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded ${limits.maxTotalBytes} bytes`);
     const path = current.pathname.slice(scopePath.length) || "index.html";
+    collected.add(canonical(current));
     docs.push({ path, url: canonical(current), kind, bytes });
-    if ((kind === "html" || isMarkdownIndex) && depth < limits.maxDepth) {
+    // Ordinary Markdown pages also contain navigation, not just llms.txt indexes.
+    if (depth < limits.maxDepth) {
       const text = new TextDecoder().decode(bytes);
       const links = kind === "html"
         ? [...text.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((m) => m[1]!)
@@ -137,12 +167,14 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
           continue;
         }
         const key = canonical(link);
-        // Indexes commonly link to routes without a file extension.
+        // Documentation routes often have no extension, including links from HTML.
         const documentPath = /(\.html?|\/|\.mdx?)$/.test(link.pathname)
-          || (isMarkdownIndex && !/\.[^/]+$/.test(link.pathname));
+          || !/\.[^/]+$/.test(link.pathname);
         if (!inScope(link) || seen.has(key) || !documentPath) continue;
         seen.add(key);
-        queue.push({ url: link, depth: depth + 1 });
+        const preferMarkdown = (kind === "html" || (kind === "markdown" && /\.md$/i.test(current.pathname)))
+          && !link.pathname.endsWith("/") && !/\.[^/]+$/.test(link.pathname);
+        queue.push({ url: link, depth: depth + 1, preferMarkdown });
       }
     }
   }
