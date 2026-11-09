@@ -130,7 +130,7 @@ export function effectiveGeneration(gen: GenerationRow, source: SourceRow | null
 }
 
 export class Docify {
-  readonly db: Database;
+  private database: Database;
   readonly logs: LogStore;
   private current: DocifyConfig;
   private readonly overrides: Partial<DocifyConfig>;
@@ -139,8 +139,12 @@ export class Docify {
     const base = loadConfig(config.home);
     this.overrides = config;
     this.current = { ...base, ...config };
-    this.db = openDb(this.current.home);
+    this.database = openDb(this.current.home);
     this.logs = new LogStore(() => this.config);
+  }
+
+  get db(): Database {
+    return this.database;
   }
 
   get config(): DocifyConfig {
@@ -286,6 +290,44 @@ export class Docify {
     if (!ok) throw new DocifyError("busy", `source ${sourceId} is already being prepared`);
   }
 
+  // Leases every source for the length of fn, so no prepare, cleanup or removal changes the
+  // store meanwhile. Fails as busy when any source is being prepared.
+  async withAllLeases<T>(fn: () => Promise<T>): Promise<T> {
+    this.recoverInterrupted();
+    const held = this.db
+      .transaction(() => {
+        const rows = this.listSourceRows();
+        const busy = rows.filter((s) => s.lock_pid && leaseAlive(s.lock_pid, s.lock_at)).map((s) => s.id);
+        if (busy.length) throw new DocifyError("busy", `wait until ${busy.join(", ")} finished preparing, or cancel it`);
+        for (const s of rows) this.db.run("UPDATE sources SET lock_pid = ?, lock_at = ? WHERE id = ?", [process.pid, nowIso(), s.id]);
+        return rows.map((s) => s.id);
+      })
+      .immediate();
+    const renew = () => {
+      for (const id of held) this.db.run("UPDATE sources SET lock_at = ? WHERE id = ? AND lock_pid = ?", [nowIso(), id, process.pid]);
+    };
+    const heartbeat = setInterval(renew, HEARTBEAT_MS);
+    try {
+      return await fn();
+    } finally {
+      clearInterval(heartbeat);
+      for (const id of held) this.releaseLock(id);
+    }
+  }
+
+  // Closes the database, lets swap replace the store files, then opens whatever is there and
+  // reloads config.json.
+  // Reopens even when swap throws, so this instance stays usable.
+  replaceStoreFiles(swap: () => void) {
+    this.database.close();
+    try {
+      swap();
+    } finally {
+      this.database = openDb(this.current.home);
+      this.current = { ...loadConfig(this.current.home), ...this.overrides };
+    }
+  }
+
   private releaseLock(sourceId: string) {
     this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ? AND lock_pid = ?", [sourceId, process.pid]);
   }
@@ -357,13 +399,13 @@ export class Docify {
       mkdirSync(snapshotDir, { recursive: true });
       const normalizedDocs: { path: string; markdown: string; docId: number; passages: { rowid: number; text: string; headingPath: string[] }[] }[] = [];
       let passageCount = 0;
-      const insertDoc = this.db.prepare(
+      using insertDoc = this.db.prepare(
         "INSERT INTO documents (generation_id, path, url, title, kind, raw_file, raw_sha256, normalized_file, normalized_sha256, lines_match_raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
-      const insertPassage = this.db.prepare(
+      using insertPassage = this.db.prepare(
         "INSERT INTO passages (id, generation_id, document_id, ord, heading_path, anchor, start_line, end_line, text, content_sha256, tokens, has_code, has_warning) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
-      const insertFts = this.db.prepare("INSERT INTO passages_fts (rowid, heading, body, symbols) VALUES (?, ?, ?, ?)");
+      using insertFts = this.db.prepare("INSERT INTO passages_fts (rowid, heading, body, symbols) VALUES (?, ?, ?, ?)");
       const fileNames = snapshotNames(docHashes.map((x) => x.d.path));
       for (const [i, { d, rawSha }] of docHashes.entries()) {
         const text = new TextDecoder().decode(d.bytes);
@@ -400,7 +442,7 @@ export class Docify {
 
       await checkpoint("embed", `0/${passageCount}`);
       const all = normalizedDocs.flatMap((d) => d.passages.map((p) => ({ ...p, title: d.path })));
-      const insertVec = this.db.prepare("INSERT INTO vectors (passage_rowid, generation_id, embedding) VALUES (?, ?, ?)");
+      using insertVec = this.db.prepare("INSERT INTO vectors (passage_rowid, generation_id, embedding) VALUES (?, ?, ?)");
       const embedStart = performance.now();
       for (let i = 0; i < all.length; i += 64) {
         const batch = all.slice(i, i + 64);
@@ -509,11 +551,11 @@ export class Docify {
 
   private importGraph(genId: number, result: GraphRunResult, docs: { path: string; docId: number; passages: { rowid: number; text: string; headingPath: string[] }[] }[]) {
     const byPath = new Map(docs.map((d) => [d.path, d]));
-    const insertNode = this.db.prepare(
+    using insertNode = this.db.prepare(
       "INSERT OR IGNORE INTO graph_nodes (generation_id, node_id, label, norm_label, node_type, document_id) VALUES (?, ?, ?, ?, ?, ?)",
     );
-    const insertEdge = this.db.prepare("INSERT INTO graph_edges (generation_id, src, dst, relation, confidence) VALUES (?, ?, ?, ?, ?)");
-    const insertGround = this.db.prepare("INSERT OR IGNORE INTO node_passages (generation_id, node_id, passage_rowid) VALUES (?, ?, ?)");
+    using insertEdge = this.db.prepare("INSERT INTO graph_edges (generation_id, src, dst, relation, confidence) VALUES (?, ?, ?, ?, ?)");
+    using insertGround = this.db.prepare("INSERT OR IGNORE INTO node_passages (generation_id, node_id, passage_rowid) VALUES (?, ?, ?)");
     let grounded = 0;
     let edges = 0;
     const covered = new Set<string>();

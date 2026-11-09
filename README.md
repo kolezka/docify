@@ -142,6 +142,19 @@ The MCP tool `docs_search` takes `query` or `queries` (1 to 8, exactly one of th
 
 Search statuses: `ok`, `weak_match` (hits with a low-confidence warning), `no_match`, `not_indexed`, `version_unavailable`, `source_unknown`, `update_failed`. Modes: `combined` (default: lexical, vector and exact-symbol fusion), `lexical`, `vector`, `graph`. `--graph-weight` adds graph hits to combined fusion; it defaults to 0 because it lowered recall on the evaluation corpus (`docs/evaluation.md`). `lexicalWeight` in `config.json` (default 1) sets the weight of word matches in that fusion. With bge-m3, `0.5` measured better: pages that only share words with a question, common with non-English questions, no longer push the vector's answer down.
 
+## Backup and moving to another machine
+
+```bash
+docify export ~/docify-backup.tar.gz      # --force overwrites an existing file
+docify import ~/docify-backup.tar.gz      # --force replaces a store that has sources; --keep-config keeps this machine's settings
+```
+
+A backup holds the database, `config.json` and the snapshot files of every active and superseded generation, so the imported store answers queries without preparing again. Models and the Graphify runtime are not in it; run `docify setup` on the new machine. Export is refused while a source is being prepared.
+
+Import checks every file against the backup's manifest (SHA-256) and the database's own hashes before it touches the store. A store with sources is replaced only with `--force`, and its files are moved to `<store>.before-import-<time>`, never deleted. From the backup's `config.json`, `graphifyBin` and `modelsDir` are ignored, because they point at code Docify runs; this machine's values stay. Restart running `docify serve` and `docify mcp` processes afterwards. The web UI has the same two actions under Settings → Backup; there, local sources in the backup must be inside `DOCIFY_SOURCE_ROOTS`, and uploads are limited to 1 GiB.
+
+A backup made by a Docify with another store schema is refused; import it with the version named in the error. A backup from an older `PIPELINE_VERSION` imports fine, and the next `prepare` rebuilds it.
+
 ## Agent clients
 
 Claude Code:

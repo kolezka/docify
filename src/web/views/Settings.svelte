@@ -5,7 +5,7 @@
   import SettingsGroup from "../components/SettingsGroup.svelte";
   import StatusChip from "../components/StatusChip.svelte";
   import Switch from "../components/Switch.svelte";
-  import { api, ApiError, errorText, type ConfigDescription, type EditableConfig, type PathSetting, type PinsView } from "../lib/api.ts";
+  import { api, ApiError, downloadBackup, errorText, uploadBackup, type ConfigDescription, type EditableConfig, type PathSetting, type PinsView } from "../lib/api.ts";
   import { button, input, notice as noticeStyle, type ChipTone } from "../lib/ui.ts";
 
   type Provider = EditableConfig["embeddingProvider"];
@@ -56,6 +56,44 @@
   let pinVersion = $state("");
   let pinError = $state("");
   let pinBusy = $state(false);
+
+  let backupBusy = $state(false);
+  let backupNote = $state("");
+  let backupError = $state("");
+  let importFile = $state<File | null>(null);
+  let importForce = $state(false);
+  let importKeepConfig = $state(false);
+
+  async function exportBackup() {
+    backupBusy = true;
+    backupError = backupNote = "";
+    try {
+      backupNote = `Saved ${await downloadBackup()}`;
+    } catch (err) {
+      backupError = errorText(err);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  async function importBackup() {
+    if (!importFile) return;
+    const replacing = importForce ? " The current store is moved aside, not deleted." : "";
+    if (!confirm(`Replace this Docify store with ${importFile.name}?${replacing}`)) return;
+    backupBusy = true;
+    backupError = backupNote = "";
+    try {
+      const r = await uploadBackup(importFile, { force: importForce, keepConfig: importKeepConfig });
+      const aside = r.movedAside ? ` The previous store is in ${r.movedAside}.` : "";
+      backupNote = `Imported ${r.sources.length} source(s) from a backup made ${new Date(r.createdAt).toLocaleString()}.${aside} Restart docify mcp clients so they read it.`;
+      importFile = null;
+      await load();
+    } catch (err) {
+      backupError = errorText(err);
+    } finally {
+      backupBusy = false;
+    }
+  }
 
   function toForm(d: ConfigDescription): Form {
     const values = JSON.parse(JSON.stringify(d.values)) as EditableConfig;
@@ -429,6 +467,36 @@
         </form>
       {/if}
       {#if pinError}<p class="text-[12px] break-words text-rose-600 dark:text-rose-400" role="alert">{pinError}</p>{/if}
+    </SettingsGroup>
+
+    <SettingsGroup
+      title="Backup"
+      description="Export the whole store (sources, prepared snapshots, settings) to one file, or replace this store with one. Models and the Graphify runtime are not included; run docify setup on a new machine."
+    >
+      <div class="flex flex-wrap items-center gap-3">
+        <button type="button" class={button()} disabled={backupBusy} onclick={exportBackup}>Export store</button>
+        <span class="text-[12px] text-zinc-500 dark:text-zinc-400">Fails while a source is being prepared.</span>
+      </div>
+      <form
+        class="flex flex-col gap-3"
+        onsubmit={(ev) => {
+          ev.preventDefault();
+          importBackup();
+        }}
+      >
+        <input
+          type="file"
+          accept=".tar.gz,.tgz,application/gzip"
+          aria-label="Backup file to import"
+          class="text-[13px] text-zinc-700 file:mr-3 file:rounded-md file:border file:border-zinc-200 file:bg-white file:px-3 file:py-1.5 file:text-[13px] dark:text-zinc-300 dark:file:border-zinc-700 dark:file:bg-zinc-800 dark:file:text-zinc-200"
+          onchange={(ev) => (importFile = (ev.currentTarget as HTMLInputElement).files?.[0] ?? null)}
+        />
+        <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" bind:checked={importForce} /> Replace a store that already has sources</label>
+        <label class="flex items-center gap-2 text-[13px]"><input type="checkbox" bind:checked={importKeepConfig} /> Keep this machine's settings</label>
+        <div><button type="submit" class={button()} disabled={backupBusy || !importFile}>Import</button></div>
+      </form>
+      {#if backupNote}<p class="text-[12px] break-words text-emerald-700 dark:text-emerald-300" role="status">{backupNote}</p>{/if}
+      {#if backupError}<p class="text-[12px] break-words text-rose-600 dark:text-rose-400" role="alert">{backupError}</p>{/if}
     </SettingsGroup>
   </main>
 

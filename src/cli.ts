@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { Docify, DocifyError } from "./core/docify.ts";
 import { open, outline, read, renderSources, scope, search, searchMany, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
+import { exportStore, importStore } from "./core/backup.ts";
 import { VERSION, requireVersion } from "./version.ts";
 
 const USAGE = `docify <command> [options]
@@ -28,6 +29,14 @@ Queries (local and offline only):
   open <source-id> <path> [--heading H] [--max-tokens N] [--json]
                                 a whole document, or one section of it
   pin <library> [version]       pin (or unpin) a version in ./.docify.json
+
+Backup (the database, settings and prepared snapshots; not models or the Graphify runtime):
+  export <file.tar.gz> [--force]
+                                write the whole store to one file; --force overwrites the file
+  import <file.tar.gz> [--force] [--keep-config]
+                                replace the store with a backup; --force when the store has
+                                sources (they are moved aside, not deleted); --keep-config keeps
+                                this machine's config.json. Restart running serve/mcp afterwards.
 
 Servers:
   serve [--port 4747] [--host 127.0.0.1] [--allowed-host HOST]
@@ -61,6 +70,7 @@ async function main(argv: string[]) {
       json: { type: "boolean" },
       "no-graph": { type: "boolean" },
       force: { type: "boolean" },
+      "keep-config": { type: "boolean" },
       port: { type: "string" },
       host: { type: "string" },
       "allowed-host": { type: "string", multiple: true },
@@ -188,6 +198,29 @@ async function main(argv: string[]) {
         if (!library) throw new DocifyError("invalid_input", "usage: docify pin <library> [version]");
         const file = Docify.writePin(process.cwd(), library.toLowerCase(), version ?? null);
         console.log(version ? `pinned ${library}@${version} in ${file}` : `unpinned ${library} in ${file}`);
+        break;
+      }
+      case "export": {
+        const file = positionals[0];
+        if (!file) throw new DocifyError("invalid_input", "usage: docify export <file.tar.gz> [--force]");
+        const target = resolve(file);
+        if (existsSync(target) && !values.force) throw new DocifyError("exists", `${target} exists; pass --force to overwrite it`);
+        const { bytes, manifest } = await exportStore(docify);
+        const tmp = `${target}.${process.pid}.tmp`;
+        writeFileSync(tmp, bytes, { mode: 0o600 });
+        renameSync(tmp, target);
+        const mb = (bytes.length / 1024 / 1024).toFixed(1);
+        console.log(`exported ${manifest.sources.length} source(s), ${Object.keys(manifest.files).length} files, ${mb} MB to ${target}`);
+        break;
+      }
+      case "import": {
+        const file = positionals[0];
+        if (!file) throw new DocifyError("invalid_input", "usage: docify import <file.tar.gz> [--force] [--keep-config]");
+        const r = await importStore(docify, readFileSync(resolve(file)), { force: values.force, keepConfig: values["keep-config"] });
+        console.log(`imported ${r.sources.length} source(s) from a backup made ${r.createdAt} by Docify ${r.docifyVersion} into ${docify.config.home}`);
+        if (r.movedAside) console.log(`the previous store is in ${r.movedAside}`);
+        if (r.droppedConfigKeys.length) console.log(`kept this machine's ${r.droppedConfigKeys.join(", ")}; the backup's values were ignored`);
+        console.log("restart running `docify serve` and `docify mcp` processes so they read the imported store");
         break;
       }
       default:
