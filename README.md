@@ -133,7 +133,9 @@ docify serve             # one-screen UI; open the printed http://127.0.0.1:4747
 docify mcp               # MCP server on stdio: docs_search, docs_read, docs_sources
 ```
 
-`search` also takes `--version`, `--source` (repeatable), `--mode` and `--graph-weight`; `search` and `read` take `--json` for the full result. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
+`search` also takes `--version`, `--source` (repeatable), `--mode` and `--graph-weight`; `search` and `read` take `--json` for the full result. `docify search --query A --query B` runs up to 8 queries in one call.
+
+The MCP tool `docs_search` takes `query` or `queries` (1 to 8, exactly one of the two), plus `library`, `version`, `sources`, `mode`, `max_tokens` and `graph_weight`. With `queries`, every query runs with the same filters and keeps its own status line, all of them share `max_tokens`, and a passage found by several queries is shown once with the query numbers that hit it. Each query first gets an equal share of the budget, then the leftover goes to the remaining hits round-robin by rank (`docs/evaluation.md`, "Several queries in one call"). A single `query` returns the same text as before. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
 
 Search statuses: `ok`, `weak_match` (hits with a low-confidence warning), `no_match`, `not_indexed`, `version_unavailable`, `source_unknown`, `update_failed`. Modes: `combined` (default: lexical, vector and exact-symbol fusion), `lexical`, `vector`, `graph`. `--graph-weight` adds graph hits to combined fusion; it defaults to 0 because it lowered recall on the evaluation corpus (`docs/evaluation.md`). `lexicalWeight` in `config.json` (default 1) sets the weight of word matches in that fusion. With bge-m3, `0.5` measured better: pages that only share words with a question, common with non-English questions, no longer push the vector's answer down.
 

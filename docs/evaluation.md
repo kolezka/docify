@@ -107,3 +107,20 @@ bge-m3 through a remote LiteLLM, thresholds 0.58 / 0.48, no graph, a token budge
 - **Vector alone beat combined** at hit@3 (0.94 against 0.86) and MRR (0.843 against 0.822), the reverse of ocdocs, where hybrid beat dense-only. Per question, combined lost on 9: pages that only shared words with the question, never ranked by the vector, pushed the vector's answer down. All three Polish losses are among them. Combined won on 5, each where both methods found the answer.
 - **Halving the weight of word matches fixed it.** At 0.5 a page found only by words ranks below every vector candidate, while a page both methods find still moves up. Combined then reached hit@1 0.80, hit@3 0.94, hit@10 0.96 and MRR 0.866, better than either method alone. On the 28 fixture questions it kept 28/28, must-pass 16/16 and recall 1.0, with MRR 0.878 against 0.872. The value was chosen after seeing these 50 questions, so the fixture set is the independent check; bge-small was not measured.
 - Preparing the corpus took 761 s of embedding through LiteLLM, about 22 passages per second. On the first attempt LiteLLM began answering every request with HTTP 502 after about 2,700 passages and recovered later; the cause was not established.
+
+## Several queries in one call (2026-11-09)
+
+`docs_search` with `queries` runs `search()` once per query and packs all hits into one `max_tokens` budget. Two packing rules were compared: **equal** (each query first gets an equal share of the budget left after the header, filled with its own hits in rank order; a passage another query already shows costs nothing; leftover tokens then go round-robin by rank) and **sequential** (the first query takes what it wants, then the next). Equal is the default. This is an output policy, not a retrieval change: single-query search is unchanged.
+
+Measured with `bun scripts/eval-many.ts`: the 24 questions of `eval/questions.json` that have expected passages, in batches of 3 that share library and version filters (10 batches), lexical mode. `scripts/eval.ts` could not run on this machine: the store holds none of the fixture sources (it stops with "Measurement fixture invalid, not scoring", q01 to q25 not in store), its embeddings are served remotely, and the local bge-small model is an incomplete download. The script therefore prepares the three fixture sources into a temp store with a loopback stub embedder, which limits it to lexical mode. As a check of the harness, one search call per question reproduces the lexical recall of the main table (0.815).
+
+| Budget | Policy | Passage recall | Queries with no hit shown | Max tokens |
+| --- | --- | --- | --- | --- |
+| 1500 | one call per question | 0.815 | - | - |
+| 1500 | equal | 0.741 | 0 | 1454 |
+| 1500 | sequential | 0.444 | 3 | 1488 |
+| 2000 (default) | one call per question | 0.815 | - | - |
+| 2000 (default) | equal | 0.815 | 0 | 1963 |
+| 2000 (default) | sequential | 0.444 | 2 | 1986 |
+
+With 5 queries per call at budget 2000, equal reached 0.778 and sequential 0.444 (4 queries with nothing shown). At the default budget, three queries in one equal-split call found as many expected passages as three separate calls, in one response of at most 2000 tokens instead of three. Sequential lets the first query's long passages starve the rest. Combined and vector mode were not measured, because they need the embedding model or server; the split was chosen with these questions in view.
