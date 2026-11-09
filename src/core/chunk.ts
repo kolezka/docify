@@ -18,21 +18,12 @@ const WARNING_RE = /^>\s*\*\*(Warning|Caution|Danger|Important|Deprecated|Note|T
 export function chunk(markdown: string, anchors: Map<number, string> = new Map()): Chunk[] {
   const lines = markdown.split("\n");
   const sections: { path: string[]; anchor: string | null; start: number; end: number }[] = [];
-  const stack: { level: number; title: string }[] = [];
   let current = { path: [] as string[], anchor: null as string | null, start: 1, end: 0 };
-  let inFence = false;
-  lines.forEach((line, idx) => {
-    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
-    const h = !inFence && /^(#{1,6})\s+(.+?)\s*#*$/.exec(line);
-    if (h) {
-      current.end = idx;
-      sections.push(current);
-      const level = h[1]!.length;
-      while (stack.length && stack[stack.length - 1]!.level >= level) stack.pop();
-      stack.push({ level, title: h[2]!.replace(/`/g, "") });
-      current = { path: stack.map((s) => s.title), anchor: anchors.get(idx + 1) ?? slug(h[2]!), start: idx + 1, end: 0 };
-    }
-  });
+  for (const h of headingLines(lines)) {
+    current.end = h.line - 1;
+    sections.push(current);
+    current = { path: h.path, anchor: anchors.get(h.line) ?? slug(h.title), start: h.line, end: 0 };
+  }
   current.end = lines.length;
   sections.push(current);
 
@@ -55,6 +46,23 @@ export function chunk(markdown: string, anchors: Map<number, string> = new Map()
     }
   }
   return chunks;
+}
+
+// Heading lines outside code fences, with the heading path each one opens. Paths match passage heading paths.
+export function headingLines(lines: string[]): { line: number; level: number; title: string; path: string[] }[] {
+  const out: { line: number; level: number; title: string; path: string[] }[] = [];
+  const stack: { level: number; title: string }[] = [];
+  let inFence = false;
+  lines.forEach((line, idx) => {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    const h = !inFence && /^(#{1,6})\s+(.+?)\s*#*$/.exec(line);
+    if (!h) return;
+    const level = h[1]!.length;
+    while (stack.length && stack[stack.length - 1]!.level >= level) stack.pop();
+    stack.push({ level, title: h[2]!.replace(/`/g, "") });
+    out.push({ line: idx + 1, level, title: h[2]!, path: stack.map((s) => s.title) });
+  });
+  return out;
 }
 
 function splitSection(body: string[], start: number): { lines: string[]; start: number }[] {
