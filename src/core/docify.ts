@@ -11,11 +11,19 @@ import { countTokens } from "./tokens.ts";
 import { sha256 } from "./hash.ts";
 import { embedTexts, embeddingIdentity } from "./embed.ts";
 import { crawl4aiFetcher } from "./crawl4ai.ts";
+import { browserlessFetcher } from "./browserless.ts";
 import { groundingTerms, runGraphify, type GraphRunResult } from "./graph.ts";
 import { extractSymbols } from "./symbols.ts";
 import { LogStore } from "./logs.ts";
 
 export type SourceKind = "local" | "url";
+export type CrawlProvider = "builtin" | "crawl4ai" | "browserless";
+
+function validateCrawlProvider(value: unknown): asserts value is CrawlProvider {
+  if (value !== "builtin" && value !== "crawl4ai" && value !== "browserless") {
+    throw new DocifyError("invalid_input", "crawlProvider must be builtin, crawl4ai or browserless");
+  }
+}
 
 export interface SourceRow {
   id: string;
@@ -50,6 +58,33 @@ export interface GenerationRow {
   schema_version: number;
 }
 
+export interface Crawl4aiSourceOptions {
+  stream?: boolean;
+  waitUntil?: "load" | "domcontentloaded" | "networkidle" | "commit";
+  waitFor?: string;
+  delayBeforeReturnHtml?: number;
+  scanFullPage?: boolean;
+  captureScreenshot?: boolean;
+  capturePdf?: boolean;
+}
+
+function validateCrawl4aiOptions(value: unknown): Crawl4aiSourceOptions {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new DocifyError("invalid_input", "crawl4ai must be an object");
+  const options = value as Record<string, unknown>;
+  for (const [key, v] of Object.entries(options)) {
+    if (key === "stream" || key === "scanFullPage" || key === "captureScreenshot" || key === "capturePdf") {
+      if (typeof v !== "boolean") throw new DocifyError("invalid_input", `${key} must be a boolean`);
+    } else if (key === "waitUntil") {
+      if (!["load", "domcontentloaded", "networkidle", "commit"].includes(v as string)) throw new DocifyError("invalid_input", "invalid waitUntil");
+    } else if (key === "waitFor") {
+      if (typeof v !== "string" || v.length > 1000) throw new DocifyError("invalid_input", "waitFor must be text of at most 1000 characters");
+    } else if (key === "delayBeforeReturnHtml") {
+      if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 60) throw new DocifyError("invalid_input", "delayBeforeReturnHtml must be between 0 and 60 seconds");
+    } else throw new DocifyError("invalid_input", `unknown crawl4ai option: ${key}`);
+  }
+  return options as Crawl4aiSourceOptions;
+}
+
 export interface AddSourceInput {
   library: string;
   version?: string | null;
@@ -57,6 +92,7 @@ export interface AddSourceInput {
   locator: string;
   id?: string;
   crawl?: Partial<CrawlLimits>;
+  crawlProvider?: CrawlProvider;
 }
 
 export interface PrepareOptions {
@@ -186,6 +222,10 @@ export class Docify {
     if (version && !VERSION_RE.test(version)) throw new DocifyError("invalid_input", `invalid version: ${version}`);
     const id = input.id ?? `${library}@${version ?? "unknown"}`;
     if (!ID_RE.test(id)) throw new DocifyError("invalid_input", `invalid source id: ${id}`);
+    if (input.crawlProvider !== undefined) {
+      validateCrawlProvider(input.crawlProvider);
+      if (input.kind !== "url") throw new DocifyError("invalid_input", "crawlProvider applies only to URL sources");
+    }
     let locator = input.locator.trim();
     if (input.kind === "local") {
       locator = resolve(locator.replace(/^~(?=$|\/)/, homedir()));
@@ -208,10 +248,27 @@ export class Docify {
     if (existing) throw new DocifyError("exists", `source ${id} already exists`);
     this.db.run(
       "INSERT INTO sources (id, library, version, kind, locator, options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [id, library, version, input.kind, locator, JSON.stringify({ crawl: input.crawl ?? {} }), nowIso()],
+      [id, library, version, input.kind, locator, JSON.stringify({ crawl: input.crawl ?? {}, ...(input.crawlProvider === undefined ? {} : { crawlProvider: input.crawlProvider }) }), nowIso()],
     );
     this.logs.append(id, `Source registered (${input.kind})`);
     return this.getSource(id)!;
+  }
+
+  updateSourceCrawler(id: string, provider: CrawlProvider | null | undefined, crawl4ai?: unknown): SourceRow {
+    if (provider === undefined && crawl4ai === undefined) throw new DocifyError("invalid_input", "crawler settings are required");
+    if (provider !== null && provider !== undefined) validateCrawlProvider(provider);
+    const runOptions = crawl4ai === undefined ? undefined : validateCrawl4aiOptions(crawl4ai);
+    return this.db.transaction(() => {
+      const source = this.requireSource(id);
+      if (source.kind !== "url") throw new DocifyError("invalid_input", "crawlProvider applies only to URL sources");
+      if (leaseAlive(source.lock_pid, source.lock_at)) throw new DocifyError("busy", `source ${id} is being prepared`);
+      const options = JSON.parse(source.options);
+      if (provider === null) delete options.crawlProvider;
+      else if (provider !== undefined) options.crawlProvider = provider;
+      if (runOptions !== undefined) options.crawl4ai = runOptions;
+      this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
+      return this.requireSource(id);
+    }).immediate();
   }
 
   removeSource(id: string) {
@@ -338,8 +395,8 @@ export class Docify {
 
   async prepare(sourceId: string, opts: PrepareOptions = {}): Promise<PrepareResult> {
     this.recoverInterrupted();
-    const source = this.requireSource(sourceId);
     this.acquireLock(sourceId);
+    const source = this.requireSource(sourceId);
     this.logs.append(sourceId, "Preparation started");
     const heartbeat = setInterval(() => {
       this.db.run("UPDATE sources SET lock_at = ? WHERE id = ? AND lock_pid = ?", [nowIso(), sourceId, process.pid]);
@@ -371,19 +428,23 @@ export class Docify {
     };
     try {
       await checkpoint("collect");
-      const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits> };
+      const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits>; crawlProvider?: CrawlProvider; crawl4ai?: Crawl4aiSourceOptions };
+      const provider = source.kind === "local" ? "local" : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
+      if (provider !== "local") validateCrawlProvider(provider);
       const limits = { ...DEFAULT_LIMITS, ...sourceOpts.crawl };
       const downloadedAt = nowIso();
-      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await this.collectUrl(source.locator, limits, opts);
+      const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts);
       raw.sort((a, b) => a.path.localeCompare(b.path));
       const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
-      const snapshotHash = sha256(docHashes.map((x) => `${x.d.path}\0${x.rawSha}`).join("\n"));
+      const snapshotHash = sha256([...docHashes.map((x) => `${x.d.path}\0${x.rawSha}`), ...artifacts.map((a) => `artifact:${a.kind}\0${sha256(a.bytes)}`)].join("\n"));
       const active = source.active_generation ? this.getGeneration(source.active_generation) : null;
       const graphWanted = opts.graph !== false && this.config.graph !== null;
       if (
         !opts.force &&
         active?.snapshot_hash === snapshotHash &&
         (JSON.parse(active.stats) as { pipeline?: number }).pipeline === PIPELINE_VERSION &&
+        (JSON.parse(active.stats) as { collector?: string }).collector === provider &&
         (active.graph_status === "ok" || !graphWanted) &&
         active.embedding_model === embeddingIdentity(this.config)
       ) {
@@ -397,6 +458,11 @@ export class Docify {
 
       await checkpoint("normalize", `${raw.length} documents`);
       mkdirSync(snapshotDir, { recursive: true });
+      for (const artifact of artifacts) {
+        const dir = join(snapshotDir, "artifacts");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, artifact.kind === "pdf" ? "page.pdf" : "screenshot.png"), artifact.bytes);
+      }
       const normalizedDocs: { path: string; markdown: string; docId: number; passages: { rowid: number; text: string; headingPath: string[] }[] }[] = [];
       let passageCount = 0;
       using insertDoc = this.db.prepare(
@@ -420,7 +486,7 @@ export class Docify {
         const entry = { path: d.path, markdown: norm.markdown, docId: 0, passages: [] as { rowid: number; text: string; headingPath: string[] }[] };
         this.db.transaction(() => {
           entry.docId = Number(
-            insertDoc.run(genId, d.path, d.url, norm.title, d.kind, rawFile, rawSha, normFile, sha256(norm.markdown), norm.linesMatchRaw ? 1 : 0).lastInsertRowid,
+            insertDoc.run(genId, d.path, d.url, norm.title, d.kind, rawFile, rawSha, normFile, sha256(norm.markdown), norm.linesMatchRaw && !d.extracted ? 1 : 0).lastInsertRowid,
           );
           chunks.forEach((c, ord) => {
             const contentSha = sha256(c.text);
@@ -486,7 +552,7 @@ export class Docify {
       if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
         throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
       }
-      const stats = { pipeline: PIPELINE_VERSION, collector: source.kind === "local" ? "local" : this.config.crawlProvider, documents: raw.length, passages: passageCount, embedMs, ...graphStats };
+      const stats = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, artifacts: artifacts.map((a) => a.kind), ...graphStats };
 
       await checkpoint("activate");
       this.db
@@ -527,10 +593,20 @@ export class Docify {
     return result;
   }
 
-  // The provider is opt-in and never falls back: a failing Crawl4AI server fails the prepare.
-  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions): Promise<RawDoc[]> {
+  // Remote providers never fall back to the built-in crawler.
+  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions, provider: CrawlProvider, runOptions: Crawl4aiSourceOptions | undefined, artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[]): Promise<RawDoc[]> {
     try {
-      if (this.config.crawlProvider === "crawl4ai") {
+      if (provider === "browserless") {
+        const fetcher = browserlessFetcher({
+          url: this.config.browserlessUrl,
+          apiKey: process.env[this.config.browserlessApiKeyEnv] || undefined,
+          timeoutMs: this.config.browserlessTimeoutSeconds * 1000,
+          maxBytesPerPage: limits.maxBytesPerPage,
+          signal: opts.signal,
+        });
+        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { signal: opts.signal, markdownExports: false });
+      }
+      if (provider === "crawl4ai") {
         const fetcher = crawl4aiFetcher({
           url: this.config.crawl4aiUrl,
           apiKey: process.env[this.config.crawl4aiApiKeyEnv] || undefined,
@@ -538,10 +614,21 @@ export class Docify {
           timeoutMs: this.config.crawl4aiTimeoutSeconds * 1000,
           maxBytesPerPage: limits.maxBytesPerPage,
           signal: opts.signal,
-        });
-        return await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false });
+          capture: (runOptions?.captureScreenshot || runOptions?.capturePdf) ? {
+            startUrl: locator, screenshot: !!runOptions.captureScreenshot, pdf: !!runOptions.capturePdf, maxBytes: limits.maxBytesPerPage,
+            onArtifacts: (result) => {
+              if (result.screenshot) artifacts.push({ kind: "screenshot", bytes: result.screenshot });
+              if (result.pdf) artifacts.push({ kind: "pdf", bytes: result.pdf });
+            },
+          } : undefined,
+        }, runOptions);
+        const docs = await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false, pdfFetcher: opts.fetcher ?? fetch, onAcceptedPage: (url) => fetcher.acceptPage(url) });
+        if ((runOptions?.captureScreenshot && !artifacts.some(a => a.kind === "screenshot")) || (runOptions?.capturePdf && !artifacts.some(a => a.kind === "pdf"))) {
+          throw new Error("Crawl4AI did not capture the start page");
+        }
+        return docs;
       }
-      if (this.config.crawlProvider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(this.config.crawlProvider)}`);
+      if (provider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(provider)}`);
       return await crawl(locator, limits, opts.fetcher, { signal: opts.signal });
     } catch (err) {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");

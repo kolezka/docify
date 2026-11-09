@@ -42,6 +42,9 @@ export interface DocifyConfig {
   crawl4aiApiKeyEnv: string;
   // Per page: a browser render is slower than a plain fetch.
   crawl4aiTimeoutSeconds: number;
+  browserlessUrl: string;
+  browserlessApiKeyEnv: string;
+  browserlessTimeoutSeconds: number;
   graphifyBin: string;
   modelsDir: string;
   keepGenerations: number;
@@ -113,6 +116,9 @@ export function defaultConfig(home: string, env: Env = process.env): DocifyConfi
     crawl4aiUrl: "http://127.0.0.1:11235",
     crawl4aiApiKeyEnv: "CRAWL4AI_API_KEY",
     crawl4aiTimeoutSeconds: 120,
+    browserlessUrl: "http://127.0.0.1:3000",
+    browserlessApiKeyEnv: "BROWSERLESS_API_KEY",
+    browserlessTimeoutSeconds: 120,
     graphifyBin: env.DOCIFY_GRAPHIFY_BIN ?? join(home, "graphify-venv", "bin", "graphify"),
     modelsDir: env.DOCIFY_MODELS_DIR ?? join(home, "models"),
     keepGenerations: 3,
@@ -144,6 +150,9 @@ export const EDITABLE_KEYS = [
   "crawl4aiUrl",
   "crawl4aiApiKeyEnv",
   "crawl4aiTimeoutSeconds",
+  "browserlessUrl",
+  "browserlessApiKeyEnv",
+  "browserlessTimeoutSeconds",
 ] as const;
 export type EditableKey = (typeof EDITABLE_KEYS)[number];
 export type EditableConfig = Pick<DocifyConfig, EditableKey>;
@@ -300,6 +309,18 @@ export function validateConfigPatch(input: unknown): ConfigPatch {
       case "crawl4aiTimeoutSeconds":
         out.crawl4aiTimeoutSeconds = numberField(key, v, 1, 3600);
         break;
+      case "browserlessUrl": {
+        out.browserlessUrl = urlField(key, v);
+        const url = new URL(out.browserlessUrl);
+        if (url.username || url.password || url.search || url.hash) throw new ConfigError("browserlessUrl must not contain credentials, query parameters or a fragment; name an environment variable for the key instead", key);
+        break;
+      }
+      case "browserlessApiKeyEnv":
+        out.browserlessApiKeyEnv = envNameField(key, v);
+        break;
+      case "browserlessTimeoutSeconds":
+        out.browserlessTimeoutSeconds = numberField(key, v, 1, 3600);
+        break;
       default:
         throw new ConfigError(`unknown setting: ${key}`, key);
     }
@@ -385,7 +406,8 @@ export function describeConfig(config: DocifyConfig, env: Env = process.env): Co
   addCredential(config.embeddingApiKeyEnv, "embedding API key");
   addCredential(config.graph?.baseUrlEnv, "graph base URL");
   addCredential(config.graph?.apiKeyEnv, "graph API key");
-  if (config.crawlProvider === "crawl4ai") addCredential(config.crawl4aiApiKeyEnv, "Crawl4AI token");
+  addCredential(config.crawl4aiApiKeyEnv, "Crawl4AI token");
+  addCredential(config.browserlessApiKeyEnv, "Browserless token");
   return {
     values: pick(config),
     defaults: pick(defaultConfig(config.home, env)),

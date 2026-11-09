@@ -153,6 +153,11 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     }
   };
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const crawlProvider = (value: unknown, allowNull: boolean): "builtin" | "crawl4ai" | "browserless" | null => {
+    if (value === null && allowNull) return null;
+    if (value === "builtin" || value === "crawl4ai" || value === "browserless") return value;
+    throw new DocifyError("invalid_input", "invalid crawlProvider");
+  };
   const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
 
   // The IP limit runs before auth so guessing tokens is slow; the client limit runs after it.
@@ -211,7 +216,9 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           const locator = str(b.locator);
           const library = str(b.library);
           if (!locator || !library) throw new DocifyError("invalid_input", "library and locator are required");
+          const provider = b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, false)!;
           if (kind === "local") {
+            if (provider !== undefined) throw new DocifyError("invalid_input", "crawlProvider is only valid for URL sources");
             // The UI may only register paths inside DOCIFY_SOURCE_ROOTS.
             let real: string;
             try {
@@ -224,14 +231,47 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
             }
             return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator: real }), 201);
           }
-          return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator }), 201);
+          return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator, crawlProvider: provider }), 201);
         }),
       },
       "/api/sources/:id": {
+        PATCH: api(async (req) => {
+          const b = await body(req);
+          if (b.crawlProvider === undefined && b.crawl4ai === undefined) throw new DocifyError("invalid_input", "crawler settings are required");
+          const provider = b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, true);
+          docify.updateSourceCrawler(decodeURIComponent(req.params.id!), provider, b.crawl4ai);
+          return json({ ok: true });
+        }),
         DELETE: api((req) => {
           if (running.has(req.params.id!)) throw new DocifyError("busy", "cancel the running preparation first");
           docify.removeSource(decodeURIComponent(req.params.id!));
           return json({ ok: true });
+        }),
+      },
+      "/api/sources/:id/artifacts/:kind": {
+        GET: api((req) => {
+          const missing = () => json({ error: "artifact not found", code: "unavailable" }, 404);
+          const id = decodeURIComponent(req.params.id!);
+          const kind = req.params.kind;
+          if (!/^[a-z0-9][a-z0-9._@-]{0,80}$/.test(id) || (kind !== "screenshot" && kind !== "pdf")) return missing();
+          const source = docify.getSource(id);
+          const generation = source?.active_generation;
+          if (!generation || !Number.isSafeInteger(generation) || generation < 1) return missing();
+          const filename = kind === "screenshot" ? "screenshot.png" : "page.pdf";
+          let file: string;
+          try {
+            const root = realpathSync(join(docify.config.home, "snapshots"));
+            file = join(root, id, String(generation), "artifacts", filename);
+            if (realpathSync(file) !== file) return missing();
+          } catch {
+            return missing();
+          }
+          return new Response(Bun.file(file), { headers: {
+            "content-type": kind === "screenshot" ? "image/png" : "application/pdf",
+            "content-disposition": `attachment; filename="${filename}"`,
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+          } });
         }),
       },
       "/api/sources/:id/graph": { GET: api((req) => json(graphView(docify, decodeURIComponent(req.params.id!)))) },

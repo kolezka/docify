@@ -108,6 +108,123 @@ afterAll(() => {
 const fetcher = (extra: Partial<Parameters<typeof crawl4aiFetcher>[0]> = {}) =>
   crawl4aiFetcher({ url: serviceUrl, apiKey: KEY, apiKeyEnv: "DOCIFY_TEST_C4AI_KEY", timeoutMs: 5000, maxBytesPerPage: 10_000, ...extra });
 
+test("uses the final HTTP status after a browser redirect", async () => {
+  for (const finalStatus of [200, 404]) {
+    const mock = (async () => Response.json({ success: true, results: [{ url: SITE, html: "<h1>Destination</h1>", success: finalStatus === 200, status_code: 301, redirected_status_code: finalStatus, redirected_url: `${SITE}moved` }] })) as unknown as typeof fetch;
+    const f = fetcher({ fetchImpl: mock });
+    const redirect = await f(SITE, {});
+    expect(redirect.status).toBe(302);
+    const result = await f(`${SITE}moved`, {});
+    expect(result.status).toBe(finalStatus);
+  }
+});
+
+test("stream transport sends SPA options and parses split UTF-8 NDJSON", async () => {
+  let request: RequestInit | undefined;
+  let endpoint = "";
+  const payload = new TextEncoder().encode(JSON.stringify({ url: SITE, html: "<h1>Żółć</h1>", success: true, status_code: 200 }) + '\r\n' + JSON.stringify({ status: "completed" }));
+  const mock = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    endpoint = String(input);
+    request = init;
+    return new Response(new ReadableStream({ start(controller) {
+      for (const byte of payload) controller.enqueue(new Uint8Array([byte]));
+      controller.close();
+    } }));
+  }) as typeof fetch;
+  const f = crawl4aiFetcher({ url: serviceUrl, apiKey: KEY, apiKeyEnv: "KEY", timeoutMs: 5000, maxBytesPerPage: 10000, fetchImpl: mock }, {
+    stream: true, waitUntil: "networkidle", waitFor: "css:main", delayBeforeReturnHtml: 1.5,
+  });
+  expect(await (await f(SITE, {})).text()).toBe("<h1>Żółć</h1>");
+  expect(endpoint).toBe(`${serviceUrl}/crawl/stream`);
+  expect(JSON.parse(String(request!.body)).crawler_config.params).toEqual({ cache_mode: "bypass", stream: true, wait_until: "networkidle", wait_for: "css:main", delay_before_return_html: 1.5 });
+  expect((request!.headers as Record<string, string>).authorization).toBe(`Bearer ${KEY}`);
+});
+
+test.each([false, true])("artifacts use the accepted start response with stream=%s", async (stream) => {
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
+  const pdf = Buffer.from("%PDF-1.7\n");
+  const calls: { url: string; params: Record<string, unknown> }[] = [];
+  const accepted: { screenshot?: Uint8Array; pdf?: Uint8Array }[] = [];
+  const moved = `${SITE}moved`;
+  const mock = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const body = JSON.parse(String(init!.body));
+    calls.push({ url: body.urls[0], params: body.crawler_config.params });
+    const result = { url: body.urls[0], redirected_url: moved, html: '<a href="next">next</a>', success: true, screenshot: png.toString("base64"), pdf: pdf.toString("base64") };
+    return stream ? new Response(`${JSON.stringify(result)}\n${JSON.stringify({ status: "completed" })}`) : Response.json({ success: true, results: [result] });
+  }) as typeof fetch;
+  const f = crawl4aiFetcher({ url: serviceUrl, apiKey: KEY, apiKeyEnv: "KEY", timeoutMs: 5000, maxBytesPerPage: 10000, fetchImpl: mock, capture: {
+    startUrl: SITE, screenshot: true, pdf: true, maxBytes: 100, onArtifacts: (a) => accepted.push(a),
+  } }, { stream, waitFor: "css:main" });
+  await crawl(SITE, { ...DEFAULT_LIMITS, maxDepth: 0 }, f, { markdownExports: false, onAcceptedPage: (url) => f.acceptPage(url) });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.params).toMatchObject({ screenshot: true, pdf: true, wait_for: "css:main", stream });
+  expect(accepted).toHaveLength(1);
+  expect(Buffer.from(accepted[0]!.screenshot!)).toEqual(png);
+  expect(Buffer.from(accepted[0]!.pdf!)).toEqual(pdf);
+});
+
+test("capture is requested only for the start page", async () => {
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const params: Record<string, unknown>[] = [];
+  let count = 0;
+  const mock = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const body = JSON.parse(String(init!.body));
+    params.push(body.crawler_config.params);
+    return Response.json({ success: true, results: [{ url: body.urls[0], html: params.length === 1 ? '<a href="next">next</a>' : 'next', success: true, screenshot: png.toString("base64") }] });
+  }) as typeof fetch;
+  const f = crawl4aiFetcher({ url: serviceUrl, apiKey: KEY, apiKeyEnv: "KEY", timeoutMs: 5000, maxBytesPerPage: 10000, fetchImpl: mock, capture: {
+    startUrl: SITE, screenshot: true, maxBytes: 100, onArtifacts: () => count++,
+  } });
+  await crawl(SITE, { ...DEFAULT_LIMITS, maxDepth: 1 }, f, { markdownExports: false, onAcceptedPage: (url) => f.acceptPage(url) });
+  expect(params).toHaveLength(2);
+  expect(params[0]!.screenshot).toBe(true);
+  expect(params[1]!.screenshot).toBeUndefined();
+  expect(count).toBe(1);
+});
+
+test("out-of-scope start redirect never exposes artifacts", async () => {
+  let accepted = false;
+  const mock = (async () => Response.json({ success: true, results: [{ url: SITE, redirected_url: "http://outside.test/", html: "secret", success: true, screenshot: "invalid" }] })) as unknown as typeof fetch;
+  const f = crawl4aiFetcher({ url: serviceUrl, apiKey: KEY, apiKeyEnv: "KEY", timeoutMs: 5000, maxBytesPerPage: 10000, fetchImpl: mock, capture: {
+    startUrl: SITE, screenshot: true, maxBytes: 100, onArtifacts: () => { accepted = true; },
+  } });
+  await expect(crawl(SITE, DEFAULT_LIMITS, f, { markdownExports: false, onAcceptedPage: (url) => f.acceptPage(url) })).rejects.toThrow("no documents fetched");
+  expect(accepted).toBe(false);
+});
+
+test("stream rejects malformed, incomplete, oversized and error records", async () => {
+  const result = { url: SITE, html: "ok", success: true };
+  const cases: [string, RegExp][] = [
+    ["{", /not JSON/],
+    [JSON.stringify(result), /missing completion/],
+    [JSON.stringify({ status: "completed" }), /exactly one result/],
+    [[result, result, { status: "completed" }].map((item) => JSON.stringify(item)).join("\n"), /exactly one result/],
+    [[result, { status: "error", error: KEY }].map((item) => JSON.stringify(item)).join("\n"), /stream failed.*redacted/],
+    ["x".repeat(1_000_100), /larger than/],
+  ];
+  for (const [body, expected] of cases) {
+    const f = crawl4aiFetcher({ url: serviceUrl, apiKey: KEY, apiKeyEnv: "KEY", timeoutMs: 5000, maxBytesPerPage: 1, fetchImpl: (async (_input: Parameters<typeof fetch>[0]) => new Response(body)) as typeof fetch }, { stream: true });
+    await expect(f(SITE, {})).rejects.toThrow(expected);
+  }
+});
+
+test("stream body reading honors cancellation", async () => {
+  const ac = new AbortController();
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => { started = resolve; });
+  const f = crawl4aiFetcher({ url: serviceUrl, apiKey: KEY, apiKeyEnv: "KEY", timeoutMs: 5000, maxBytesPerPage: 10, signal: ac.signal, fetchImpl: (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => new Response(new ReadableStream({
+    start(controller) {
+      started();
+      init!.signal!.addEventListener("abort", () => controller.error(init!.signal!.reason));
+    },
+  }))) as typeof fetch }, { stream: true });
+  const pending = f(SITE, {});
+  await ready;
+  const reason = new Error("cancelled by caller");
+  ac.abort(reason);
+  await expect(pending).rejects.toBe(reason);
+});
+
 test("the built-in crawler stays the default", () => {
   const c = defaultConfig("/tmp/x", {});
   expect(c.crawlProvider).toBe("builtin");

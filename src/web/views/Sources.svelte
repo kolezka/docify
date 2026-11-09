@@ -12,6 +12,7 @@
   let version = $state("");
   let locator = $state("");
   let adding = $state(false);
+  let crawlProvider = $state("");
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   async function refresh() {
@@ -35,8 +36,9 @@
     adding = true;
     const loc = locator.trim();
     try {
-      await api("/api/sources", { method: "POST", body: { library, version, locator: loc, kind: /^https?:\/\//.test(loc) ? "url" : "local" } });
-      library = version = locator = "";
+      const isUrl = /^https?:\/\//.test(loc);
+      await api("/api/sources", { method: "POST", body: { library, version, locator: loc, kind: isUrl ? "url" : "local", ...(isUrl && crawlProvider ? { crawlProvider } : {}) } });
+      library = version = locator = crawlProvider = "";
     } catch (err) {
       error = errorText(err);
     } finally {
@@ -56,6 +58,14 @@
     <input class={input({ class: "w-24 flex-none" })} name="library" placeholder="library" aria-label="Library" required bind:value={library} />
     <input class={input({ class: "w-20 flex-none" })} name="version" placeholder="version" aria-label="Version" bind:value={version} />
     <input class={input({ class: "flex-1 basis-48" })} name="locator" placeholder="local path or https:// URL" aria-label="Local path or URL" required bind:value={locator} />
+    {#if /^https?:\/\//.test(locator.trim())}
+      <select class={input({ class: "w-auto flex-none" })} aria-label="Crawl provider" bind:value={crawlProvider}>
+        <option value="">Use global crawler</option>
+        <option value="builtin">Built-in</option>
+        <option value="crawl4ai">Crawl4AI</option>
+        <option value="browserless">Browserless</option>
+      </select>
+    {/if}
     <button type="submit" class={button({ intent: "primary" })} disabled={adding}>Add</button>
   </form>
   {#if error}<p class="-mt-2 text-[12px] break-words whitespace-pre-wrap text-rose-600 dark:text-rose-400" role="alert">{error}</p>{/if}

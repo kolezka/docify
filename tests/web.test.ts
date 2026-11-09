@@ -160,3 +160,25 @@ test("pins report a malformed .docify.json instead of an empty list", async () =
   expect((await call("/api/pins", "PUT", { library: "bun", version: "1" })).status).toBe(400);
   expect(readFileSync(join(project, ".docify.json"), "utf8")).toBe("{ nope");
 });
+
+
+test("URL source crawler can be set, changed and inherited through the API", async () => {
+  const { call, d } = await setup();
+  const created = await call("/api/sources", "POST", { library: "web", kind: "url", locator: "https://example.com/docs", crawlProvider: "crawl4ai" });
+  expect(created.status).toBe(201);
+  let source = (await call("/api/sources")).data.find((s: { id: string }) => s.id === "web@unknown");
+  expect(source.crawlProvider).toBe("crawl4ai");
+  expect(source.effectiveCrawlProvider).toBe("crawl4ai");
+  expect((await call("/api/sources/web%40unknown", "PATCH", { crawlProvider: "browserless" })).status).toBe(200);
+  source = (await call("/api/sources")).data.find((s: { id: string }) => s.id === "web@unknown");
+  expect(source.crawlProvider).toBe("browserless");
+  expect((await call("/api/sources/web%40unknown", "PATCH", { crawlProvider: null })).status).toBe(200);
+  source = (await call("/api/sources")).data.find((s: { id: string }) => s.id === "web@unknown");
+  expect(source.crawlProvider).toBeNull();
+  expect(source.effectiveCrawlProvider).toBe(d.config.crawlProvider);
+  for (const value of ["unknown", 3, {}, undefined]) {
+    expect((await call("/api/sources/web%40unknown", "PATCH", { crawlProvider: value })).status).toBe(400);
+  }
+  expect((await call("/api/sources", "POST", { library: "bad", kind: "url", locator: "https://example.com", crawlProvider: "unknown" })).status).toBe(400);
+  expect((await call("/api/sources/missing", "PATCH", { crawlProvider: null })).status).toBe(404);
+});

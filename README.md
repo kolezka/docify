@@ -97,9 +97,21 @@ When an HTML or `.md` page links to an extensionless route, Docify tries its `.m
 
 The usual crawl limits apply: at most 50 documents (including the index), two link levels, 5 MB per page and 50 MB total. This is a bounded crawl, not a guarantee that the whole site is indexed.
 
-### JavaScript-rendered documentation (Crawl4AI)
+### Choose a crawler
 
-Pages that only fill in with JavaScript can be rendered by a [Crawl4AI](https://docs.crawl4ai.com/core/self-hosting/) server you run yourself. It is off by default; turn it on in `config.json` (or the web UI's Settings, under Web crawling):
+URL sources can use `builtin`, `crawl4ai` or `browserless`. Select one when registering a source, or change it later:
+
+```bash
+docify add mylib https://example.com/docs/ --crawler browserless
+docify crawler mylib@unknown crawl4ai
+docify crawler mylib@unknown default
+```
+
+`default` removes the source-specific choice. Sources without one, including existing sources, inherit the global `crawlProvider` in `config.json`, which defaults to `builtin` and accepts `builtin` or `crawl4ai`. Browserless is selected per source, not as the global default. The web UI offers the same choice when adding a URL and on each URL source card; Settings controls the global default and provider settings. Changing a selection takes effect on the next prepare, and is refused while that source is preparing. Local sources do not use a crawler.
+
+### JavaScript-rendered documentation
+
+Pages that only fill in with JavaScript can be rendered by a [Crawl4AI](https://docs.crawl4ai.com/core/self-hosting/) server. Configure it in `config.json` (or the web UI's Settings, under Web crawling). The example also makes it the global default:
 
 ```json
 {
@@ -110,7 +122,29 @@ Pages that only fill in with JavaScript can be rendered by a [Crawl4AI](https://
 }
 ```
 
-`crawl4aiApiKeyEnv` is the name of the variable holding the server's bearer token, never the token. Docify still runs the crawl: it asks the server to render one page per request (`POST /crawl`), reads links from the rendered HTML and applies the same origin, path, depth and size limits. The server's browser loads each page's scripts, redirects and subrequests by itself, so a page that ends outside the source is dropped after rendering, not prevented. Markdown pages and `llms.txt` indexes keep their Markdown links when the browser wraps their text in HTML. `.md` exports are not probed in this mode. If the server is down, times out or answers with something malformed, the prepare fails and the previous generation keeps serving; Docify does not fall back to the built-in crawler. Local sources and queries never use it. The macOS app has no control for it yet; it keeps these keys when it saves `config.json`.
+`crawl4aiApiKeyEnv` names the environment variable holding the server's bearer token, never the token itself. To select Crawl4AI for only one source, leave the global default unchanged and use `--crawler crawl4ai` instead.
+
+Each URL source card has Crawl4AI settings for streaming, SPA waits and optional captures. `stream` selects `/crawl/stream` instead of `/crawl`; Docify buffers the bounded response and requires one result and a completion record. `waitUntil` accepts `load`, `domcontentloaded`, `networkidle` or `commit`; `waitFor` is at most 1,000 characters; `delayBeforeReturnHtml` is 0 to 60 seconds; and `scanFullPage` is a boolean. Unset fields use the service defaults, except streaming defaults to off. These settings apply on the next prepare and only to Crawl4AI. The source API's `PATCH /api/sources/:id` accepts a `crawl4ai` object that replaces these per-source options.
+
+For Crawl4AI sources, linked `.pdf` URLs are fetched directly by Docify, not rendered by Crawl4AI. Responses identified as `application/pdf`, or `.pdf` responses served without a type or as `application/octet-stream`, are extracted as text and indexed as Markdown. The stored raw document is extracted text, not the original PDF; citation lines refer to normalized text, not PDF page or line numbers. Extraction allows at most 20 MiB, 500 pages and 2,000,000 characters, in addition to the crawl's byte limits. It does not perform OCR; a scan without extractable text fails preparation. Local sources and the other URL providers do not use this PDF extraction path.
+
+Optional screenshot and PDF captures use the same Crawl4AI request and SPA settings as the start page, not every crawled page. They are output artifacts, not PDF inputs or indexed text. Each is limited to the per-page byte limit (5 MB by default), validated, saved in the generation's `artifacts/` directory and downloadable from the active source card. A capture failure fails preparation. Docify checks the reported final URL after rendering, not each browser navigation; it cannot guarantee the capture and HTML came from the same URL if the page navigates during capture.
+
+Browserless uses its `/function` endpoint to render pages. Configure its base URL and token variable name, then select `browserless` for each source that needs it:
+
+```json
+{
+  "browserlessUrl": "http://127.0.0.1:3000",
+  "browserlessApiKeyEnv": "BROWSERLESS_API_KEY",
+  "browserlessTimeoutSeconds": 120
+}
+```
+
+These are the defaults. The base URL must be HTTP or HTTPS without credentials, query parameters or a fragment. Set `BROWSERLESS_API_KEY` in the environment of the CLI or `docify serve` process if the server requires a token; Docify sends it as a bearer token. If the variable is unset, it sends no authorization header. Do not put the token in `config.json` or the URL. Use HTTPS for a remote service and restrict access to the service.
+
+Docify discovers links and applies origin, path, depth, page and byte limits to the documents it collects. Neither browser provider is a network sandbox. Crawl4AI can follow redirects and load subrequests before Docify checks the returned page. Browserless intercepts later main-frame navigation requests and lets Docify check their destination before following them, but does not confine subresources, frames, popups, service workers or other browser activity. These checks do not block access to private networks or guarantee safe browser egress. Run rendering services in a trusted, isolated environment with network-level egress controls appropriate for the URLs being crawled.
+
+Both rendering providers skip `.md` export probes. Crawl4AI preserves Markdown links when its browser wraps Markdown pages and `llms.txt` indexes in HTML. If a remote provider fails, times out or returns malformed data, preparation fails rather than switching to another crawler; the previous generation keeps serving. Queries never use these providers. The macOS app has no crawler control; it preserves these config keys when saving.
 
 ```bash
 docify add openclaw https://docs.openclaw.ai/llms.txt --id openclaw

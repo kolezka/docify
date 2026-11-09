@@ -59,7 +59,7 @@ export function openApiSpec() {
         },
       },
       "/api/sources": {
-        get: { summary: "List sources", responses: { "200": ok("Sources with their generations and status"), ...errors(401) } },
+        get: { summary: "List sources", description: "Each source includes crawlProvider (null when inherited) and effectiveCrawlProvider.", responses: { "200": ok("Sources with their generations and status"), ...errors(401) } },
         post: {
           summary: "Add a source",
           description: "Local paths must be inside `DOCIFY_SOURCE_ROOTS` (default: the home directory).",
@@ -71,16 +71,36 @@ export function openApiSpec() {
               library: { type: "string" },
               locator: { type: "string", description: "Directory path or start URL" },
               version: { type: ["string", "null"] },
+              crawlProvider: { type: "string", enum: ["builtin", "crawl4ai", "browserless"], description: "URL sources only; omit to inherit the global crawler" },
             },
           }),
           responses: { "201": ok("The new source"), ...errors(400, 401, 403, 409, 415) },
         },
       },
       "/api/sources/{id}": {
+        patch: {
+          summary: "Change a URL source crawler",
+          parameters: [idParam("Source id")],
+          requestBody: jsonBody({ type: "object", properties: {
+            crawlProvider: { type: ["string", "null"], enum: ["builtin", "crawl4ai", "browserless", null], description: "null inherits the global crawler" },
+            crawl4ai: { type: "object", description: "Replaces the Crawl4AI options for this URL source", additionalProperties: false, properties: {
+              stream: { type: "boolean" }, waitUntil: { type: "string", enum: ["load", "domcontentloaded", "networkidle", "commit"] },
+              waitFor: { type: "string", maxLength: 1000 }, delayBeforeReturnHtml: { type: "number", minimum: 0, maximum: 60 }, scanFullPage: { type: "boolean" }, captureScreenshot: { type: "boolean" }, capturePdf: { type: "boolean" },
+            } },
+          } }),
+          responses: { "200": ok("Crawler updated"), ...errors(400, 401, 404, 409, 415) },
+        },
         delete: {
           summary: "Remove a source",
           parameters: [idParam("Source id")],
           responses: { "200": ok("Removed", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(401, 404, 409) },
+        },
+      },
+      "/api/sources/{id}/artifacts/{kind}": {
+        get: {
+          summary: "Download an artifact from the active generation",
+          parameters: [idParam("Source id"), { name: "kind", in: "path", required: true, schema: { type: "string", enum: ["screenshot", "pdf"] } }],
+          responses: { "200": { description: "PNG or PDF attachment" }, ...errors(401, 404) },
         },
       },
       "/api/sources/{id}/graph": {

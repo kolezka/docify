@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { Docify, DocifyError } from "./core/docify.ts";
+import { Docify, DocifyError, type CrawlProvider } from "./core/docify.ts";
 import { open, outline, read, renderSources, scope, search, searchMany, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
 import { exportStore, importStore } from "./core/backup.ts";
@@ -12,7 +12,8 @@ const USAGE = `docify <command> [options]
 
 Preparation (may use the network or the configured graph provider):
   setup                         install the pinned Graphify runtime and download the embedding model
-  add <library> <path|url> [--version V] [--id ID]
+  add <library> <path|url> [--version V] [--id ID] [--crawler builtin|crawl4ai|browserless]
+  crawler <source-id> <builtin|crawl4ai|browserless|default>
   prepare <source-id> [--no-graph] [--force]
   remove <source-id>
 
@@ -77,6 +78,7 @@ async function main(argv: string[]) {
       "graph-weight": { type: "string" },
       require: { type: "string" },
       heading: { type: "string" },
+      crawler: { type: "string" },
     },
   });
   if (!command || command === "help" || command === "--help") {
@@ -110,8 +112,15 @@ async function main(argv: string[]) {
         const [library, locator] = positionals;
         if (!library || !locator) throw new DocifyError("invalid_input", "usage: docify add <library> <path|url> [--version V]");
         const kind = /^https?:\/\//.test(locator) ? "url" : "local";
-        const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id });
+        const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id, crawlProvider: values.crawler as CrawlProvider | undefined });
         console.log(`added ${s.id} (${s.kind} ${s.locator}). Run: docify prepare ${s.id}`);
+        break;
+      }
+      case "crawler": {
+        const [id, provider] = positionals;
+        if (!id || !provider) throw new DocifyError("invalid_input", "usage: docify crawler <source-id> <builtin|crawl4ai|browserless|default>");
+        docify.updateSourceCrawler(id, provider === "default" ? null : provider as CrawlProvider);
+        console.log(`updated crawler for ${id}: ${provider}`);
         break;
       }
       case "prepare": {
