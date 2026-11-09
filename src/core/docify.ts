@@ -11,11 +11,19 @@ import { countTokens } from "./tokens.ts";
 import { sha256 } from "./hash.ts";
 import { embedTexts, embeddingIdentity } from "./embed.ts";
 import { crawl4aiFetcher } from "./crawl4ai.ts";
+import { browserlessFetcher } from "./browserless.ts";
 import { groundingTerms, runGraphify, type GraphRunResult } from "./graph.ts";
 import { extractSymbols } from "./symbols.ts";
 import { LogStore } from "./logs.ts";
 
 export type SourceKind = "local" | "url";
+export type CrawlProvider = "builtin" | "crawl4ai" | "browserless";
+
+function validateCrawlProvider(value: unknown): asserts value is CrawlProvider {
+  if (value !== "builtin" && value !== "crawl4ai" && value !== "browserless") {
+    throw new DocifyError("invalid_input", "crawlProvider must be builtin, crawl4ai or browserless");
+  }
+}
 
 export interface SourceRow {
   id: string;
@@ -57,6 +65,7 @@ export interface AddSourceInput {
   locator: string;
   id?: string;
   crawl?: Partial<CrawlLimits>;
+  crawlProvider?: CrawlProvider;
 }
 
 export interface PrepareOptions {
@@ -186,6 +195,10 @@ export class Docify {
     if (version && !VERSION_RE.test(version)) throw new DocifyError("invalid_input", `invalid version: ${version}`);
     const id = input.id ?? `${library}@${version ?? "unknown"}`;
     if (!ID_RE.test(id)) throw new DocifyError("invalid_input", `invalid source id: ${id}`);
+    if (input.crawlProvider !== undefined) {
+      validateCrawlProvider(input.crawlProvider);
+      if (input.kind !== "url") throw new DocifyError("invalid_input", "crawlProvider applies only to URL sources");
+    }
     let locator = input.locator.trim();
     if (input.kind === "local") {
       locator = resolve(locator.replace(/^~(?=$|\/)/, homedir()));
@@ -208,10 +221,24 @@ export class Docify {
     if (existing) throw new DocifyError("exists", `source ${id} already exists`);
     this.db.run(
       "INSERT INTO sources (id, library, version, kind, locator, options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [id, library, version, input.kind, locator, JSON.stringify({ crawl: input.crawl ?? {} }), nowIso()],
+      [id, library, version, input.kind, locator, JSON.stringify({ crawl: input.crawl ?? {}, ...(input.crawlProvider === undefined ? {} : { crawlProvider: input.crawlProvider }) }), nowIso()],
     );
     this.logs.append(id, `Source registered (${input.kind})`);
     return this.getSource(id)!;
+  }
+
+  updateSourceCrawler(id: string, provider: CrawlProvider | null): SourceRow {
+    if (provider !== null) validateCrawlProvider(provider);
+    return this.db.transaction(() => {
+      const source = this.requireSource(id);
+      if (source.kind !== "url") throw new DocifyError("invalid_input", "crawlProvider applies only to URL sources");
+      if (leaseAlive(source.lock_pid, source.lock_at)) throw new DocifyError("busy", `source ${id} is being prepared`);
+      const options = JSON.parse(source.options);
+      if (provider === null) delete options.crawlProvider;
+      else options.crawlProvider = provider;
+      this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
+      return this.requireSource(id);
+    }).immediate();
   }
 
   removeSource(id: string) {
@@ -338,8 +365,8 @@ export class Docify {
 
   async prepare(sourceId: string, opts: PrepareOptions = {}): Promise<PrepareResult> {
     this.recoverInterrupted();
-    const source = this.requireSource(sourceId);
     this.acquireLock(sourceId);
+    const source = this.requireSource(sourceId);
     this.logs.append(sourceId, "Preparation started");
     const heartbeat = setInterval(() => {
       this.db.run("UPDATE sources SET lock_at = ? WHERE id = ? AND lock_pid = ?", [nowIso(), sourceId, process.pid]);
@@ -371,10 +398,12 @@ export class Docify {
     };
     try {
       await checkpoint("collect");
-      const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits> };
+      const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits>; crawlProvider?: CrawlProvider };
+      const provider = source.kind === "local" ? "local" : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
+      if (provider !== "local") validateCrawlProvider(provider);
       const limits = { ...DEFAULT_LIMITS, ...sourceOpts.crawl };
       const downloadedAt = nowIso();
-      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await this.collectUrl(source.locator, limits, opts);
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider);
       raw.sort((a, b) => a.path.localeCompare(b.path));
       const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
       const snapshotHash = sha256(docHashes.map((x) => `${x.d.path}\0${x.rawSha}`).join("\n"));
@@ -384,6 +413,7 @@ export class Docify {
         !opts.force &&
         active?.snapshot_hash === snapshotHash &&
         (JSON.parse(active.stats) as { pipeline?: number }).pipeline === PIPELINE_VERSION &&
+        (JSON.parse(active.stats) as { collector?: string }).collector === provider &&
         (active.graph_status === "ok" || !graphWanted) &&
         active.embedding_model === embeddingIdentity(this.config)
       ) {
@@ -486,7 +516,7 @@ export class Docify {
       if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
         throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
       }
-      const stats = { pipeline: PIPELINE_VERSION, collector: source.kind === "local" ? "local" : this.config.crawlProvider, documents: raw.length, passages: passageCount, embedMs, ...graphStats };
+      const stats = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, ...graphStats };
 
       await checkpoint("activate");
       this.db
@@ -527,10 +557,20 @@ export class Docify {
     return result;
   }
 
-  // The provider is opt-in and never falls back: a failing Crawl4AI server fails the prepare.
-  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions): Promise<RawDoc[]> {
+  // Remote providers never fall back to the built-in crawler.
+  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions, provider: CrawlProvider): Promise<RawDoc[]> {
     try {
-      if (this.config.crawlProvider === "crawl4ai") {
+      if (provider === "browserless") {
+        const fetcher = browserlessFetcher({
+          url: this.config.browserlessUrl,
+          apiKey: process.env[this.config.browserlessApiKeyEnv] || undefined,
+          timeoutMs: this.config.browserlessTimeoutSeconds * 1000,
+          maxBytesPerPage: limits.maxBytesPerPage,
+          signal: opts.signal,
+        });
+        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { signal: opts.signal, markdownExports: false });
+      }
+      if (provider === "crawl4ai") {
         const fetcher = crawl4aiFetcher({
           url: this.config.crawl4aiUrl,
           apiKey: process.env[this.config.crawl4aiApiKeyEnv] || undefined,
@@ -541,7 +581,7 @@ export class Docify {
         });
         return await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false });
       }
-      if (this.config.crawlProvider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(this.config.crawlProvider)}`);
+      if (provider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(provider)}`);
       return await crawl(locator, limits, opts.fetcher, { signal: opts.signal });
     } catch (err) {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");

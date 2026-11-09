@@ -2,7 +2,7 @@
   import StatusChip from "../components/StatusChip.svelte";
   import { api, errorText, type SourceInfo } from "../lib/api.ts";
   import { ago, fraction } from "../lib/format.ts";
-  import { button, panel, sourceTone } from "../lib/ui.ts";
+  import { button, input, panel, sourceTone } from "../lib/ui.ts";
 
   let { source: s, onchanged, onerror }: { source: SourceInfo; onchanged: () => void; onerror: (message: string) => void } = $props();
 
@@ -71,6 +71,19 @@
   </div>
 
   <p class="truncate font-mono text-[12px] text-zinc-400 dark:text-zinc-500" title={s.locator}>{s.locator}</p>
+
+  {#if s.kind === "url"}
+    <label class="flex flex-wrap items-center gap-2 text-[12px] text-zinc-500 dark:text-zinc-400">
+      Crawler
+      <select class={input({ class: "w-auto" })} aria-label={`Crawl provider for ${s.id}`} value={s.crawlProvider ?? ""} disabled={busy || preparing}
+        onchange={(event) => run(() => api(path, { method: "PATCH", body: { crawlProvider: event.currentTarget.value || null } }))}>
+        <option value="">Global default</option>
+        <option value="builtin">Built-in</option>
+        <option value="crawl4ai">Crawl4AI</option>
+        <option value="browserless">Browserless</option>
+      </select>
+    </label>
+  {/if}
 
   {#if preparing}
     <div class="text-[12px] text-zinc-500 dark:text-zinc-400">{progressText || "starting"}</div>

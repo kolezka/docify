@@ -29,6 +29,9 @@
     "crawl4aiUrl",
     "crawl4aiApiKeyEnv",
     "crawl4aiTimeoutSeconds",
+    "browserlessUrl",
+    "browserlessApiKeyEnv",
+    "browserlessTimeoutSeconds",
   ] as const;
   const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds"] as const;
 
@@ -129,7 +132,7 @@
   const clientErrors = $derived.by(() => {
     const e: Record<string, string> = {};
     if (!form) return e;
-    for (const key of ["embeddingDims", "embeddingTimeoutSeconds", "strongVectorSim", "weakVectorSim", "lexicalWeight", "keepGenerations", "crawl4aiTimeoutSeconds"] as const) {
+    for (const key of ["embeddingDims", "embeddingTimeoutSeconds", "strongVectorSim", "weakVectorSim", "lexicalWeight", "keepGenerations", "crawl4aiTimeoutSeconds", "browserlessTimeoutSeconds"] as const) {
       if (typeof form[key] !== "number" || Number.isNaN(form[key])) e[key] = "enter a number";
     }
     if (!e.strongVectorSim && !e.weakVectorSim && form.weakVectorSim > form.strongVectorSim) e.weakVectorSim = "must not be above strong match similarity";
@@ -335,9 +338,8 @@
       </SettingsGroup>
 
       <SettingsGroup title="Web crawling" description="How URL sources are fetched when preparing. Local folders are always read from disk.">
-        <Segmented options={crawlProviders} bind:value={form.crawlProvider} label="Crawl provider" />
-        {#if form.crawlProvider === "crawl4ai"}
-          {@const status = envStatus(form.crawl4aiApiKeyEnv)}
+        <span class="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Default for sources without a crawler selection</span>
+        <Segmented options={crawlProviders} bind:value={form.crawlProvider} label="Default crawl provider" />
           <div class="grid grid-cols-1 gap-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 dark:border-zinc-800">
             <Field label="Crawl4AI URL" id={fieldId("crawl4aiUrl")} error={fieldError("crawl4aiUrl")} hint="the server's base URL, without credentials">
               <input id={fieldId("crawl4aiUrl")} class={input({ mono: true, invalid: !!fieldError("crawl4aiUrl") })} bind:value={form.crawl4aiUrl} />
@@ -347,13 +349,24 @@
             </Field>
             <Field label="Token variable" id={fieldId("crawl4aiApiKeyEnv")} error={fieldError("crawl4aiApiKeyEnv")} hint="name only; the value stays in the environment">
               <input id={fieldId("crawl4aiApiKeyEnv")} class={input({ mono: true, invalid: !!fieldError("crawl4aiApiKeyEnv") })} bind:value={form.crawl4aiApiKeyEnv} />
-              <StatusChip tone={status.tone} label={status.label} class="mt-2" />
+              <StatusChip tone={envStatus(form.crawl4aiApiKeyEnv).tone} label={envStatus(form.crawl4aiApiKeyEnv).label} class="mt-2" />
             </Field>
           </div>
           <div class={noticeStyle({ tone: "info" })}>
             Docify still decides which pages to crawl, but the server's browser loads each page with its scripts and subrequests. Pages that end up outside the source are dropped after rendering, not prevented. If the server fails, preparing fails and the previous version keeps serving.
           </div>
-        {/if}
+          <div class="grid grid-cols-1 gap-4 border-t border-zinc-100 pt-5 sm:grid-cols-2 dark:border-zinc-800">
+            <Field label="Browserless URL" id={fieldId("browserlessUrl")} error={fieldError("browserlessUrl")} hint="base URL without credentials or query parameters">
+              <input id={fieldId("browserlessUrl")} class={input({ mono: true, invalid: !!fieldError("browserlessUrl") })} bind:value={form.browserlessUrl} />
+            </Field>
+            <Field label="Page timeout (seconds)" id={fieldId("browserlessTimeoutSeconds")} error={fieldError("browserlessTimeoutSeconds")}>
+              <input id={fieldId("browserlessTimeoutSeconds")} type="number" min="1" class={input({ invalid: !!fieldError("browserlessTimeoutSeconds") })} bind:value={form.browserlessTimeoutSeconds} />
+            </Field>
+            <Field label="Token variable" id={fieldId("browserlessApiKeyEnv")} error={fieldError("browserlessApiKeyEnv")} hint="name only; the value stays in the environment">
+              <input id={fieldId("browserlessApiKeyEnv")} class={input({ mono: true, invalid: !!fieldError("browserlessApiKeyEnv") })} bind:value={form.browserlessApiKeyEnv} />
+              <StatusChip tone={envStatus(form.browserlessApiKeyEnv).tone} label={envStatus(form.browserlessApiKeyEnv).label} class="mt-2" />
+            </Field>
+          </div>
       </SettingsGroup>
 
       <SettingsGroup title="Semantic graph" description="Optional Graphify knowledge graph built while preparing. It calls an LLM through the variables below.">

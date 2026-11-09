@@ -23,17 +23,32 @@ These are design defaults, not choices the user previously made between offline,
   selects it; credentials present in the environment never switch it on.
 - Ingestion uses a local semantic provider by default. Provider selection and preparation cost are explicit. Discovered API keys do not authorize remote processing or spending.
 - Sources are local Markdown/HTML files or directories and public static URLs, with bounded crawling restricted to the registered origin and path.
-  Amendment 2026-11-09: `crawlProvider: "crawl4ai"` in `config.json` renders URL sources through a
-  Crawl4AI server (`POST /crawl`, one URL per request) for JavaScript-only documentation. Docify
-  keeps the crawl itself: link discovery, origin and path scope, depth, page and byte limits.
-  The server's browser runs page scripts and follows redirects and subrequests on its own, so a
-  rendered page outside the scope is dropped afterwards; those fetches are not prevented. Any
-  service error, malformed response or timeout fails the prepare, the previous generation keeps
-  serving, and there is no fallback to the built-in crawler. Queries never call the server.
+  Amendment 2026-11-09: URL sources may select `builtin`, `crawl4ai` or `browserless` using
+  `docify add --crawler`, `docify crawler <source-id> <provider>`, or the web UI's source controls.
+  `docify crawler <source-id> default` clears the override. Sources without an override, including
+  legacy sources, inherit `crawlProvider` from `config.json` (default `builtin`; global choices are
+  `builtin` and `crawl4ai`). The web UI Settings controls that default and provider configuration.
+  A selection change applies on the next prepare and is refused during preparation. Local sources
+  do not use these providers. The selected collector is recorded with the generation and a change
+  prevents the unchanged shortcut.
+
+  Crawl4AI renders one URL per `POST /crawl`; Browserless renders one URL per `POST /function`.
+  Browserless settings are `browserlessUrl` (default `http://127.0.0.1:3000`, HTTP(S) without
+  credentials, query or fragment), `browserlessApiKeyEnv` (default `BROWSERLESS_API_KEY`) and
+  `browserlessTimeoutSeconds` (default 120). The named environment variable supplies an optional
+  bearer token; its value is not stored in config. Both providers skip Markdown export probes.
+  Docify handles link discovery and limits collected documents to the registered origin and directory
+  path, depth, page count and bytes. This is not a browser network sandbox: Crawl4AI may follow
+  redirects and load subrequests before the returned URL is checked. Browserless intercepts later
+  main-frame navigation requests for Docify to check before following, but subresources, frames,
+  popups, service workers and other browser activity are not confined. Private network access and
+  egress are not blocked by these crawl checks; isolate the service and enforce network egress
+  separately. Provider errors, malformed responses and timeouts fail preparation without switching
+  crawlers; the previous generation keeps serving. Queries never call the rendering service.
 
 If no adequate local model is available, continue independent work and ask one focused question about provider and budget before remote or paid semantic processing. Model downloads belong to explicit preparation, never a query side effect.
 
-Defer remote Git cloning, PDFs, authenticated sources, browser-rendered crawling (beyond the optional Crawl4AI provider), terminal or native desktop interfaces, multiuser access, and deployment. A graph canvas is unnecessary for the first UI.
+Defer remote Git cloning, PDFs, authenticated sources, browser-rendered crawling beyond the optional Crawl4AI and Browserless providers, terminal or native desktop interfaces, multiuser access, and deployment. A graph canvas is unnecessary for the first UI.
 
 ## Repository starting point
 
