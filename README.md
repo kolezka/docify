@@ -157,6 +157,102 @@ codex plugin add docify@docify-local
 
 Both plugins start `docify mcp`, so `docify` must be on PATH. They ship a skill that tells the agent when to search and how to read statuses. Neither installs hooks, and neither forces the agent to search.
 
+## Hosting (Docker, Coolify)
+
+The image runs the web UI on port 4747 and keeps state in `/data`. It ships the bge-small model and the Graphify runtime, so the default `transformers` provider works without network access. Every request to `/api` needs the access token; there is no anonymous mode.
+
+### Compose
+
+```bash
+cp .env.example .env          # set DOCIFY_WEB_TOKEN (16+ characters) and DOCIFY_ALLOWED_HOSTS
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Open `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>`. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; `/healthz` is the only public route and returns `{"ok":true}`.
+
+`DOCIFY_ALLOWED_HOSTS` lists the hostnames the server answers for, comma separated; a bare hostname matches any port. When it is empty and the server binds a non-loopback address, any Host is accepted and a warning is logged, so set it in production. `DOCIFY_BIND` defaults to `127.0.0.1`: put a reverse proxy in front, or set it to `0.0.0.0` when the port must be reachable directly.
+
+State lives in the `docify-prod_docify-data` volume (sqlite, snapshots, `config.json`). To change the embedding provider, edit that file and restart:
+
+```bash
+docker compose -f docker-compose.prod.yml cp docify:/data/config.json ./config.json
+# edit ./config.json
+docker compose -f docker-compose.prod.yml cp ./config.json docify:/data/config.json
+docker compose -f docker-compose.prod.yml restart docify
+```
+
+For a provider with a custom model, also set `DOCIFY_MODELS_DIR=/data/models` and `DOCIFY_SETUP=true` so the download goes to the writable volume, then prepare every source again. See "Embeddings" for the provider settings.
+
+### Local documentation
+
+Mount a directory read-only and add it to `DOCIFY_SOURCE_ROOTS`:
+
+```yaml
+    volumes:
+      - docify-data:/data
+      - ./docs:/sources:ro
+```
+
+Then register and prepare it inside the container:
+
+```bash
+docker compose -f docker-compose.prod.yml exec docify bun src/cli.ts add handbook /sources
+docker compose -f docker-compose.prod.yml exec docify bun src/cli.ts prepare <source-id> --no-graph
+```
+
+Drop `--no-graph` when LiteLLM is configured (`LITELLM_BASE_URL`, `LITELLM_API_KEY`); an unreachable graph provider fails the prepare. The UI can add and prepare the same sources, restricted to the configured roots.
+
+### Coolify
+
+1. Create a Docker Compose resource from the repository, using `docker-compose.prod.yml` as the compose file.
+2. Set `DOCIFY_WEB_TOKEN` (16+ characters) and `DOCIFY_ALLOWED_HOSTS` to the domain Coolify gives the app, in the resource's environment variables.
+3. Set the domain to point at container port `4747`. Coolify's Traefik terminates TLS; the origin check accepts `https://<domain>` behind the proxy.
+4. Keep `/data` persistent. The named volume in the compose file is enough; a Coolify-managed volume works too.
+5. Deploy, open `https://<domain>/#token=<DOCIFY_WEB_TOKEN>`, and check that `/healthz` returns 200.
+
+If the domain changes, update `DOCIFY_ALLOWED_HOSTS` and redeploy.
+
+### MCP over HTTP
+
+`docify serve` also answers MCP at `/mcp` (Streamable HTTP, stateless, JSON responses) when `DOCIFY_MCP_TOKENS` is set. Without that variable `/mcp` returns 404. The tools are the same read-only ones as on stdio.
+
+Give every agent its own token, so one can be revoked without touching the rest:
+
+```bash
+DOCIFY_MCP_TOKENS="claude:$(openssl rand -hex 32),openclaw-1:$(openssl rand -hex 32)"
+```
+
+Agents send `Authorization: Bearer <token>`. For Claude Code:
+
+```bash
+claude mcp add --transport http docify https://<domain>/mcp --header "Authorization: Bearer <token>"
+```
+
+Requests are checked in this order: Host and Origin, the per-IP limit, the token, the per-client limit. The per-IP limit runs before the token check, so guessing tokens is slow. Over a limit the server answers 429 with `Retry-After`. Request bodies over 1 MB get 413, and only POST is accepted.
+
+- `DOCIFY_MCP_RATE`: per client, default `60/min`. `DOCIFY_MCP_IP_RATE`: per IP, default `120/min`. Units are `s`, `min` and `h`.
+- `DOCIFY_TRUST_PROXY=1` takes the client IP from the last `X-Forwarded-For` entry. `docker-compose.prod.yml` sets it because Traefik is in front. Without a proxy in front, leave it unset, otherwise a client can choose its own IP.
+- Limits are kept in memory per process. A restart resets them, and several replicas would each count separately.
+- Version pins come from the server's `.docify.json` (`DOCIFY_PROJECT`, default the working directory), not from the agent's project. Pass `version` in the tool call to pick another.
+
+### Reverse proxy on a dedicated server
+
+With the default loopback publish, point nginx or Caddy at `127.0.0.1:4747`:
+
+```caddy
+docify.example.com {
+    reverse_proxy 127.0.0.1:4747
+}
+```
+
+The proxy must preserve the public `Host` header (Caddy and nginx do by default), and `DOCIFY_ALLOWED_HOSTS` must contain that hostname. TLS ends at the proxy; the app itself serves plain HTTP.
+
+### Container details
+
+- Runs as uid 10001 with all capabilities dropped and `no-new-privileges`. A bind mount under `/data` must be writable by that uid (`sudo chown -R 10001:10001 ./data`).
+- `docker compose -f docker-compose.prod.yml exec docify bun src/cli.ts setup` re-runs setup inside a running container; the image already did it at build time.
+- `DOCIFY_SOURCE_ROOTS` accepts several paths separated by `:`, the same as `PATH`.
+
 ## Development
 
 ```bash
@@ -175,6 +271,13 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `DOCIFY_EMBED_URL` | Ollama server URL when `config.json` sets none |
 | `DOCIFY_GRAPHIFY_BIN` | Graphify executable (default `<store>/graphify-venv/bin/graphify`) |
 | `DOCIFY_PROJECT` | Project directory whose `.docify.json` pins apply (CLI search and MCP) |
+| `DOCIFY_HOST`, `DOCIFY_PORT` | Web bind address and port (`serve` also takes `--host`/`--port`) |
+| `DOCIFY_WEB_TOKEN` | Stable web token (16+ characters); without it every `serve` start generates a new one |
+| `DOCIFY_ALLOWED_HOSTS` | Host values the web server answers for, comma separated; `*` accepts any |
+| `DOCIFY_SOURCE_ROOTS` | Directories the web UI may add local sources from, separated by `:` (default: home) |
+| `DOCIFY_MCP_TOKENS` | `name:token` pairs, comma separated; enables MCP over HTTP at `/mcp` |
+| `DOCIFY_MCP_RATE`, `DOCIFY_MCP_IP_RATE` | MCP limits per client and per IP (default `60/min`, `120/min`) |
+| `DOCIFY_TRUST_PROXY` | `1` takes the client IP from `X-Forwarded-For`; only behind a proxy |
 | `LITELLM_BASE_URL`, `LITELLM_API_KEY` | Graph provider and `openai` embeddings, by default |
 | `DOCIFY_BIN` | `docify` executable the macOS app runs |
 

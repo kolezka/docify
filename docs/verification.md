@@ -110,3 +110,56 @@ macOS 27.0.1, Bun 1.4.4, Transformers.js 4.3.1, ONNX Runtime 1.30.0, branch `fea
 - Final full suite without a telemetry environment override: 111 pass, 0 fail, exit 0. `bun run typecheck`: exit 0.
 
 Runtime verification is scoped to macOS. The Linux libc path and non-POSIX branch were source-reviewed, not executed. Rendered Logs browser acceptance and independent review of PR #18 remain separate pending gates.
+
+## 2026-11-08: hosted deployment (Docker, Coolify)
+
+Recorded on the branch before it was rebased onto `main` at `2ec9f08`; the rebased tree is checked in the next section.
+
+Apple M4 Pro, macOS 27, Bun 1.4.4, Docker 29.9.2, Docker Compose v5.6.0. Docker Desktop had a 24 GB VM; unused build cache was pruned before the recorded build, after an earlier `bun install` failed with `ENOSPC`. bge-small came from `~/.cache/docify/models`.
+
+### Automated checks
+
+- `bun run typecheck`: exit 0.
+- `bun test`: 55 pass, 0 fail, 708 `expect()` calls, 9 files. The 6 new tests are in `tests/host.test.ts` (host allowlist, Origin behind TLS, source roots, `/healthz`, token).
+- `DOCIFY_WEB_TOKEN=... DOCIFY_ALLOWED_HOSTS=docify.example.com docker compose -f docker-compose.prod.yml config`: exit 0; the service publishes `127.0.0.1:4747`, mounts `docify-data` at `/data`, and the healthcheck requests `/healthz`.
+- `docker build -t docify:hosting-test .`: exit 0; image 2.48 GB on linux/arm64. The build's own `setup` installed Graphify 0.9.70 and `Xenova/bge-small-en-v1.5` under `/opt/docify`; `graphify --version` runs as uid 10001.
+
+### Container, end to end
+
+Image run as `-e DOCIFY_WEB_TOKEN=... -e DOCIFY_ALLOWED_HOSTS=docs.example.test -p 127.0.0.1:4799:4747 -v /tmp/docify-src:/sources:ro`:
+
+- Startup: "Docify UI listening on 0.0.0.0:4747; the access token comes from DOCIFY_WEB_TOKEN."; `id` showed uid 10001(docify); the container reached `healthy`.
+- `/healthz`: 200 without a token, also with `Host: evil.test`.
+- `/api/sources`: 401 without a token, 200 with the token on loopback, 403 with `Host: evil.test`, 200 with `Host: docs.example.test`.
+- POST `/api/search` with `Origin: https://docs.example.test`: reached the route (400 for an empty query). Cross-site Origin: 403. Form content type: 415.
+- `bun src/cli.ts add demo /sources` and `prepare demo@unknown --no-graph` ran as uid 10001; generation 1 activated with `{"pipeline":5,"documents":1,"passages":1,"embedMs":305}`. `sources --json` showed `ready`, `Xenova/bge-small-en-v1.5`, 384 dimensions, `graphStatus: skipped`. The baked model produced embeddings inside the container.
+- API search "where does the zebra live": `status: ok`, one hit from `demo@unknown`, `demo.md > Demo > Alpha`, lines 3-5.
+- Adding `/etc` through the web API: 400, `local sources must be inside DOCIFY_SOURCE_ROOTS (/sources)`.
+
+### Compose, end to end
+
+`cp .env.example .env` with a random token, then `docker compose -f docker-compose.prod.yml up -d --build`: the stack reached `healthy`; volume `docify-prod_docify-data` was created. `/healthz` returned `{"ok":true}`; `/api/sources` returned 401 without the token and 200 with it. After `docker compose restart docify`, the same token still returned 200. The stack and its volume were removed after the run.
+
+### Not verified
+
+linux/amd64 (the Dockerfile has no architecture-specific steps, but the x64 onnxruntime binaries were not executed here), Coolify itself, a real Traefik or Caddy TLS proxy, `DOCIFY_SETUP=true` at container start, and more than one `DOCIFY_SOURCE_ROOTS` entry in production.
+
+## 2026-11-09: hosted deployment rebased onto main
+
+Rebased onto `main` at `2ec9f08` (logs, config home, Svelte UI). Conflicts in `src/web/server.ts` kept the logs route, the Svelte asset handler and the project pins, and added `/healthz` and the host, Origin and source-root checks. `.env.example` keeps the development variables and adds the hosted ones commented out.
+
+- `bun run typecheck`: exit 0.
+- `DOCIFY_MODELS_DIR=~/.cache/docify/models bun test`: 117 pass, 0 fail, 19 files, exit 0.
+- `docker compose -f docker-compose.prod.yml config --quiet` with a token and allowed host set: exit 0.
+- Not run on the rebased tree: `docker build`. `main` now depends on `svelte-log-viewer` through `git+ssh` to a private repository, and the image has no SSH key, so the build is expected to fail at `bun install` until that dependency is reachable from the build.
+
+## 2026-11-09: MCP over HTTP
+
+Branch `feat/mcp-http` on `feat/host-deployment` at `46553d7`, macOS 27, Bun 1.4.4, MCP SDK 1.32.1.
+
+- `bun run typecheck`: exit 0.
+- `DOCIFY_MODELS_DIR=~/.cache/docify/models bun test`: 132 pass, 0 fail, 21 files, exit 0. New: `tests/http.test.ts` (9) and `tests/mcp-http.test.ts` (6, real server and SDK client).
+- Re-break checks, one at a time, each file restored byte-identical: no bearer auth, auth before the IP limit, no client limit, no body limit, no host guard, GET accepted, `/mcp` on without tokens, first instead of last `X-Forwarded-For` entry, token prefix accepted. Each made its own test fail at an `expect` assertion (exit 1).
+- Live `bun src/cli.ts serve --port 4791` with `DOCIFY_MCP_TOKENS` and `DOCIFY_MCP_RATE=3/min` from the environment: startup line named the client and limits; `tools/list` without a token returned 401, then three 200 responses listing `docs_search`, `docs_read`, `docs_sources`, then 429 with `Retry-After: 20`.
+- `docker compose -f docker-compose.prod.yml config` with `DOCIFY_MCP_TOKENS` set: exit 0, rates default to `60/min` and `120/min`, `DOCIFY_TRUST_PROXY` to `1`.
+- Not verified: OpenClaw as a client, Claude Code's `claude mcp add --transport http` against a deployed server, Traefik's `X-Forwarded-For` in Coolify, and `docker build` (same `svelte-log-viewer` blocker as above).

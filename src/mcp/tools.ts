@@ -1,8 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Docify, DocifyError } from "./core/docify.ts";
-import { read, renderSources, search, sources } from "./core/search.ts";
+import { Docify, DocifyError } from "../core/docify.ts";
+import { read, renderSources, search, sources } from "../core/search.ts";
 
 const pkg = { name: "docify", version: "0.1.0" };
 
@@ -92,10 +91,4 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     },
   );
   return server;
-}
-
-export async function startMcp() {
-  const docify = new Docify();
-  const server = createMcpServer(docify);
-  await server.connect(new StdioServerTransport());
 }

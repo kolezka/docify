@@ -1,0 +1,66 @@
+# Production deployment: Docify web UI behind a reverse proxy.
+#   cp .env.example .env    # set DOCIFY_WEB_TOKEN and DOCIFY_ALLOWED_HOSTS
+#   docker compose -f docker-compose.prod.yml up -d --build
+# The UI is then on http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>.
+#
+# Coolify: create a Docker Compose resource from this file, set the same variables
+# in the UI, point the domain at container port 4747 and keep /data persistent.
+name: docify-prod
+
+services:
+  docify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    ports:
+      # Loopback by default: put nginx/Caddy/Traefik in front. Set DOCIFY_BIND=0.0.0.0
+      # only when the host port must be reachable directly.
+      - "${DOCIFY_BIND:-127.0.0.1}:${DOCIFY_HOST_PORT:-4747}:4747"
+    expose:
+      - "4747"
+    environment:
+      DOCIFY_HOST: 0.0.0.0
+      DOCIFY_PORT: "4747"
+      DOCIFY_HOME: /data
+      DOCIFY_SOURCE_ROOTS: ${DOCIFY_SOURCE_ROOTS:-/sources}
+      # Required; the server refuses tokens shorter than 16 characters.
+      DOCIFY_WEB_TOKEN: ${DOCIFY_WEB_TOKEN:?set DOCIFY_WEB_TOKEN in .env}
+      # Public hostnames, comma separated. Empty accepts any Host and logs a warning.
+      DOCIFY_ALLOWED_HOSTS: ${DOCIFY_ALLOWED_HOSTS:-}
+      # MCP over HTTP at /mcp: name:token pairs, comma separated. Empty keeps /mcp off.
+      DOCIFY_MCP_TOKENS: ${DOCIFY_MCP_TOKENS:-}
+      DOCIFY_MCP_RATE: ${DOCIFY_MCP_RATE:-60/min}
+      DOCIFY_MCP_IP_RATE: ${DOCIFY_MCP_IP_RATE:-120/min}
+      # The client IP comes from X-Forwarded-For set by the proxy in front (Traefik in Coolify).
+      # Set 0 when the port is published directly with DOCIFY_BIND=0.0.0.0.
+      DOCIFY_TRUST_PROXY: ${DOCIFY_TRUST_PROXY:-1}
+      # Run `docify setup` at container start (only needed for a custom embedding provider).
+      DOCIFY_SETUP: ${DOCIFY_SETUP:-false}
+      # Optional Graphify/LiteLLM endpoint; empty values are dropped by the entrypoint.
+      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+    volumes:
+      - docify-data:/data
+      # Register local docs: mount them and add the path to DOCIFY_SOURCE_ROOTS.
+      # - ./docs:/sources:ro
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.DOCIFY_PORT||'4747')+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  docify-data:
