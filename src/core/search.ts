@@ -694,6 +694,8 @@ function finalize<T extends Renderable & { status: SearchStatus }>(draft: T, max
 }
 
 export const MAX_QUERIES = 8;
+// Default budget per query when queries come without max_tokens; measured in docs/evaluation.md.
+export const MANY_TOKENS_PER_QUERY = 1400;
 // Per-query search budget before packing: large enough that search() itself rarely cuts.
 const MANY_INNER_BUDGET = 20000;
 
@@ -767,7 +769,9 @@ export async function searchMany(docify: Docify, input: SearchManyInput): Promis
   const empty = queries.findIndex((q) => !q);
   if (empty >= 0) throw new DocifyError("invalid_input", `query ${empty + 1} is empty`);
   const mode: Mode = common.mode ?? "combined";
-  const maxTokens = Math.max(200, Math.min(common.maxTokens ?? 2000, 20000));
+  // Without max_tokens each query gets about one search's worth: 2000 split three ways lost recall in combined mode (docs/evaluation.md).
+  const defaultBudget = Math.max(2000, MANY_TOKENS_PER_QUERY * queries.length);
+  const maxTokens = Math.max(200, Math.min(common.maxTokens ?? defaultBudget, 20000));
   const nonce = newNonce();
 
   // Embeddings first (the only await), then every query ranks in one read transaction,
