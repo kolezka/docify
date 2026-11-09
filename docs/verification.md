@@ -76,3 +76,13 @@ Against a temporary store and a fake OpenAI-compatible server on `127.0.0.1`, wi
 - `make app-run` started the app with `DOCIFY_BIN` set to the checkout's `src/cli.ts` (read from the process environment).
 
 Not verified: a real LiteLLM server, similarity thresholds for any remote model, Settings with Ollama selected, and day-to-day use beyond the scripted run. `make link`, `setup`, `serve`, `mcp`, `eval` and `mcp-smoke` were checked with `make -n` only.
+
+## Web UI redesign (2026-11-09)
+
+Svelte 5 and Tailwind v4 rebuild with the Settings view, branch `feat/web-ui-redesign`, Bun 1.4.4.
+
+- `bun test` after rebasing on `b173422`: 74 pass, 0 fail, 12 files. `bun run typecheck`: exit 0. The Svelte compiler reported no warnings for any `.svelte` file; tsc does not check them.
+- Re-break checks: each change below made its own test fail, and every file was restored byte-identical. The settings API accepting `graphifyBin`; writing a partial graph object; reading a malformed `config.json` as empty; exposing a credential value; not applying the config after a save; no busy check; pins written to the server's directory instead of the nearest `.docify.json`; Tailwind scanning the current directory (`@import "tailwindcss"` without `source(none)`); building without the Svelte plugin.
+- Browser (agent-browser, Chrome, 1280x577, scratch store, server started without `LITELLM_*`): a search showed the status chip, token meter, warnings and citations, and a citation opened its passage. System theme followed the OS; Light and Dark overrode it and were remembered. Add with a path outside home showed the server error. Add inside home, then "No graph", went not indexed, preparing (progress bar, Cancel), ready with 22 passages. Remove asked for confirmation and the CLI no longer listed the source. Settings: switching to LiteLLM applied the bge-m3 preset, the variable chips matched the server environment, weak above strong showed an inline error and disabled Save, and a save wrote exactly the changed keys with no secret values.
+- Found and fixed during this run: pasting the link of a restarted server into the same tab changed only the fragment, so the page kept the old token and got 401; the hidden switch checkbox had no positioned parent and stretched the page so the window scrolled.
+- Not verified: Cancel from the page (the fixture prepared too fast to catch), pins edited from the page (covered by tests in temp directories), widths below 1280 px, Safari and Firefox.

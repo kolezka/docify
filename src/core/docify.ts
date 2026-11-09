@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, statSync } 
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { openDb, nowIso, SCHEMA_VERSION } from "./db.ts";
-import { loadConfig, type DocifyConfig } from "./config.ts";
+import { loadConfig, saveConfig, type DocifyConfig } from "./config.ts";
 import { collectLocal, crawl, DEFAULT_LIMITS, type CrawlLimits, type Fetcher, type RawDoc } from "./collect.ts";
 import { normalize } from "./normalize.ts";
 import { chunk } from "./chunk.ts";
@@ -84,6 +84,8 @@ export class DocifyError extends Error {
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9._@-]{0,80}$/;
+const LIBRARY_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/;
+const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/;
 
 // Bump when normalization, chunking or indexing changes, so identical raw snapshots are rebuilt.
 export const PIPELINE_VERSION = 5;
@@ -110,25 +112,52 @@ export function leaseAlive(pid: number | null, at: string | null): boolean {
 
 export class Docify {
   readonly db: Database;
-  readonly config: DocifyConfig;
+  private current: DocifyConfig;
+  private readonly overrides: Partial<DocifyConfig>;
 
   constructor(config: Partial<DocifyConfig> & { home?: string } = {}) {
     const base = loadConfig(config.home);
-    this.config = { ...base, ...config };
-    this.db = openDb(this.config.home);
+    this.overrides = config;
+    this.current = { ...base, ...config };
+    this.db = openDb(this.current.home);
+  }
+
+  get config(): DocifyConfig {
+    return this.current;
   }
 
   close() {
     this.db.close();
   }
 
+  // ---- config --------------------------------------------------------------
+
+  // Sources this process is preparing right now. A preparation reads the config at several
+  // points, so it must never see the config change halfway.
+  preparingHere(): string[] {
+    return this.db
+      .query<{ id: string; lock_at: string | null }, [number]>("SELECT id, lock_at FROM sources WHERE lock_pid = ?")
+      .all(process.pid)
+      .filter((s) => leaseAlive(process.pid, s.lock_at))
+      .map((s) => s.id);
+  }
+
+  // Validates and writes the changed keys to config.json, then applies them to this instance.
+  saveConfig(patch: unknown): DocifyConfig {
+    const busy = this.preparingHere();
+    if (busy.length) throw new DocifyError("busy", `cannot change settings while preparing ${busy.join(", ")}; wait or cancel first`);
+    saveConfig(this.current.home, patch);
+    this.current = { ...loadConfig(this.current.home), ...this.overrides };
+    return this.current;
+  }
+
   // ---- sources -------------------------------------------------------------
 
   addSource(input: AddSourceInput): SourceRow {
     const library = input.library.trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9._-]{0,60}$/.test(library)) throw new DocifyError("invalid_input", `invalid library name: ${input.library}`);
+    if (!LIBRARY_RE.test(library)) throw new DocifyError("invalid_input", `invalid library name: ${input.library}`);
     const version = input.version?.trim() || null;
-    if (version && !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/.test(version)) throw new DocifyError("invalid_input", `invalid version: ${version}`);
+    if (version && !VERSION_RE.test(version)) throw new DocifyError("invalid_input", `invalid version: ${version}`);
     const id = input.id ?? `${library}@${version ?? "unknown"}`;
     if (!ID_RE.test(id)) throw new DocifyError("invalid_input", `invalid source id: ${id}`);
     let locator = input.locator.trim();
@@ -514,30 +543,60 @@ export class Docify {
 
   // ---- project pins --------------------------------------------------------
 
-  static readPins(projectDir: string | undefined): Record<string, string> {
-    if (!projectDir) return {};
+  // The nearest .docify.json at or above projectDir; that is the file whose pins apply.
+  static pinFile(projectDir: string): string | null {
     let dir = resolve(projectDir);
     for (;;) {
       const file = join(dir, ".docify.json");
-      if (existsSync(file)) {
-        const parsed = JSON.parse(readFileSync(file, "utf8")) as { pins?: Record<string, string> };
-        return parsed.pins ?? {};
-      }
+      if (existsSync(file)) return file;
       const parent = dirname(dir);
-      if (parent === dir) return {};
+      if (parent === dir) return null;
       dir = parent;
     }
   }
 
+  static readPins(projectDir: string | undefined): Record<string, string> {
+    if (!projectDir) return {};
+    const file = Docify.pinFile(projectDir);
+    return file ? (readPinFile(file).pins ?? {}) : {};
+  }
+
+  // `docify pin`: always ./.docify.json in projectDir.
   static writePin(projectDir: string, library: string, version: string | null) {
     const file = join(resolve(projectDir), ".docify.json");
-    const current = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as { pins?: Record<string, string> }) : {};
-    const pins = { ...(current.pins ?? {}) };
-    if (version) pins[library] = version;
-    else delete pins[library];
-    writeFileSync(file, JSON.stringify({ ...current, pins }, null, 2) + "\n");
+    writePinFile(file, library, version);
     return file;
   }
+
+  // Web UI: edits the file that readPins uses, or creates one in projectDir.
+  static setPin(projectDir: string, library: string, version: string | null) {
+    const file = Docify.pinFile(projectDir) ?? join(resolve(projectDir), ".docify.json");
+    writePinFile(file, library, version);
+    return { file, pins: Docify.readPins(projectDir) };
+  }
+}
+
+function readPinFile(file: string): { pins?: Record<string, string> } & Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new DocifyError("invalid_input", `${file} is not valid JSON: ${err instanceof Error ? err.message : err}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new DocifyError("invalid_input", `${file} is not a JSON object`);
+  return parsed as { pins?: Record<string, string> };
+}
+
+function writePinFile(file: string, library: string, version: string | null) {
+  const lib = library.trim().toLowerCase();
+  if (!LIBRARY_RE.test(lib)) throw new DocifyError("invalid_input", `invalid library name: ${library}`);
+  const ver = version?.trim() || null;
+  if (ver && !VERSION_RE.test(ver)) throw new DocifyError("invalid_input", `invalid version: ${ver}`);
+  const current = existsSync(file) ? readPinFile(file) : {};
+  const pins = { ...(current.pins ?? {}) };
+  if (ver) pins[lib] = ver;
+  else delete pins[lib];
+  writeFileSync(file, JSON.stringify({ ...current, pins }, null, 2) + "\n");
 }
 
 function safeRel(path: string): string {
