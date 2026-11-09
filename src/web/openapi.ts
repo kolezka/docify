@@ -10,7 +10,8 @@ const ERROR_TEXT: Record<number, string> = {
   403: "Forbidden host, origin or path",
   404: "Unknown source or passage",
   409: "Busy, already exists or nothing running",
-  415: "JSON body required",
+  415: "JSON body required (raw bytes for /api/import)",
+  503: "A store import is running",
   500: "Internal error",
 };
 const ok = (description: string, schema: object = { type: "object" }) => ({ description, content: { "application/json": { schema } } });
@@ -24,7 +25,7 @@ export function openApiSpec() {
       title: "Docify web API",
       version: "1",
       description:
-        "The HTTP API behind the Docify web UI. Every call needs the access token that `docify serve` prints in the URL fragment (`#token=...`), or `DOCIFY_WEB_TOKEN` on a hosted deployment, sent as `X-Docify-Token`. Requests other than GET must send JSON.",
+        "The HTTP API behind the Docify web UI. Every call needs the access token that `docify serve` prints in the URL fragment (`#token=...`), or `DOCIFY_WEB_TOKEN` on a hosted deployment, sent as `X-Docify-Token`. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
     },
     servers: [{ url: "/" }],
     security: [{ docifyToken: [] }],
@@ -154,6 +155,26 @@ export function openApiSpec() {
           description: "Only known keys are accepted and only changed keys are written. Refused while a source is being prepared.",
           requestBody: jsonBody({ type: "object", additionalProperties: true }),
           responses: { "200": ok("Settings after the change"), ...errors(400, 401, 409, 415) },
+        },
+      },
+      "/api/export": {
+        get: {
+          summary: "Export the whole store",
+          description: "The database, settings and snapshot files of every active and superseded generation, as one .tar.gz with a manifest of SHA-256 sums. Models and the Graphify runtime are left out. Refused while a source is being prepared.",
+          responses: { "200": { description: "The backup", content: { "application/gzip": { schema: { type: "string", format: "binary" } } } }, ...errors(401, 409, 500) },
+        },
+      },
+      "/api/import": {
+        post: {
+          summary: "Replace the store with a backup",
+          description:
+            "Every file is checked against the manifest before anything changes. A store that already has sources is replaced only with `force=1`, and its files are moved aside, not deleted. The backup's paths to code (`graphifyBin`, `modelsDir`) are ignored, and local sources must be inside DOCIFY_SOURCE_ROOTS.",
+          parameters: [
+            { name: "force", in: "query", required: false, description: "1 to replace a store that has sources", schema: { type: "string", enum: ["0", "1"] } },
+            { name: "keepConfig", in: "query", required: false, description: "1 to keep this server's config.json", schema: { type: "string", enum: ["0", "1"] } },
+          ],
+          requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+          responses: { "200": ok("Imported sources, the backup's date and version, and where the previous store went"), ...errors(400, 401, 409, 415, 503) },
         },
       },
       "/api/pins": {

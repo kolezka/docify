@@ -1,6 +1,8 @@
 export type { SourceInfo, SearchResult, SearchHit, SearchStatus, ReadResult, Mode } from "../../core/search.ts";
 export type { GraphView, GraphViewNode } from "../../core/graph-view.ts";
 export type { ConfigDescription, EditableConfig, EnvEntry, PathSetting } from "../../core/config.ts";
+export type { ImportResult } from "../../core/backup.ts";
+import type { ImportResult } from "../../core/backup.ts";
 
 export interface PinsView {
   project: string;
@@ -48,6 +50,33 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(data?.code ?? String(res.status), data?.error ?? res.statusText, data?.field ?? null);
   return data as T;
+}
+
+// The whole store as a .tar.gz, saved through a temporary link.
+export async function downloadBackup(): Promise<string> {
+  const res = await fetch("/api/export", { headers: { "x-docify-token": token } });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(data?.code ?? String(res.status), data?.error ?? res.statusText);
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "docify-backup.tar.gz";
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return name;
+}
+
+export async function uploadBackup(file: File, opts: { force: boolean; keepConfig: boolean }): Promise<ImportResult> {
+  const q = new URLSearchParams({ force: opts.force ? "1" : "0", keepConfig: opts.keepConfig ? "1" : "0" });
+  const res = await fetch(`/api/import?${q}`, {
+    method: "POST",
+    headers: { "x-docify-token": token, "content-type": "application/octet-stream" },
+    body: file,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(data?.code ?? String(res.status), data?.error ?? res.statusText);
+  return data as ImportResult;
 }
 
 export function errorText(err: unknown): string {

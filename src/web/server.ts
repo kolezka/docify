@@ -1,11 +1,12 @@
 import { homedir } from "node:os";
 import { delimiter, join, resolve, sep } from "node:path";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { Docify, DocifyError } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
 import { graphView } from "../core/graph-view.ts";
+import { exportStore, importStore } from "../core/backup.ts";
 import { uiAssets } from "./bundle.ts";
 import { LogReadError } from "../core/logs.ts";
 import { LOOPBACK_HOSTS, hostAllowed, hostGuard, originAllowed, parseAllowedHosts, splitList } from "../http/host.ts";
@@ -61,6 +62,8 @@ export interface StartServerOptions {
 }
 
 const MCP_MAX_BODY_BYTES = 1024 * 1024;
+// A store backup is uploaded whole; a real store is around 100 MB before compression.
+export const IMPORT_MAX_BYTES = 1024 * 1024 * 1024;
 
 function mcpSettings(opts: StartServerOptions) {
   const env = process.env;
@@ -107,12 +110,13 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   };
 
   // DNS rebinding and cross-site requests: only a known Host, JSON bodies only.
-  const guard = (req: Request): Response | null => {
+  // Store backups upload as raw bytes. That type also needs a CORS preflight, like JSON does.
+  const guard = (req: Request, bodyType = "application/json"): Response | null => {
     const hostHeader = req.headers.get("host") ?? "";
     if (!allowAnyHost && !hostAllowed(hostHeader, allowedHosts)) return json({ error: "forbidden host", code: "forbidden" }, 403);
     if (!tokenOk(req.headers.get("x-docify-token"))) return json({ error: "missing or wrong access token; open the URL printed by docify serve", code: "unauthorized" }, 401);
     if (req.method !== "GET") {
-      if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) return json({ error: "JSON body required", code: "unsupported" }, 415);
+      if (!(req.headers.get("content-type") ?? "").startsWith(bodyType)) return json({ error: `${bodyType} body required`, code: "unsupported" }, 415);
       const origin = req.headers.get("origin");
       if (origin && !originAllowed(origin, hostHeader)) return json({ error: "forbidden origin", code: "forbidden" }, 403);
     }
@@ -126,11 +130,14 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     return new Response(body(), { headers: { "content-type": type, "x-content-type-options": "nosniff", ...extra } });
   };
 
+  // Set while an import swaps the store files; the database is closed for that moment.
+  let importing = false;
   const api =
-    (handler: (req: Request & { params: Record<string, string> }) => Promise<Response> | Response) =>
+    (handler: (req: Request & { params: Record<string, string> }) => Promise<Response> | Response, bodyType?: string) =>
     async (req: Request & { params: Record<string, string> }) => {
-      const blocked = guard(req);
+      const blocked = guard(req, bodyType);
       if (blocked) return blocked;
+      if (importing) return json({ error: "a store import is running; try again in a moment", code: "busy" }, 503);
       try {
         return await handler(req);
       } catch (err) {
@@ -174,6 +181,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     hostname: host,
     port,
     development: false,
+    maxRequestBodySize: IMPORT_MAX_BYTES,
     routes: {
       "/healthz": { GET: () => json({ ok: true, version: VERSION }) },
       "/mcp": mcpRoute,
@@ -292,6 +300,34 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           docify.saveConfig(b);
           return json(describeConfig(docify.config));
         }),
+      },
+      "/api/export": {
+        GET: api(async () => {
+          const { bytes, manifest } = await exportStore(docify);
+          const name = `docify-backup-${manifest.createdAt.slice(0, 19).replace(/[:T]/g, "-")}.tar.gz`;
+          return new Response(bytes, { headers: { "content-type": "application/gzip", "content-disposition": `attachment; filename="${name}"`, "cache-control": "no-store" } });
+        }),
+      },
+      "/api/import": {
+        POST: api(async (req) => {
+          const size = Number(req.headers.get("content-length") ?? "0");
+          if (size > IMPORT_MAX_BYTES) throw new DocifyError("invalid_input", "the backup is larger than the upload limit; use docify import on the server");
+          const data = new Uint8Array(await req.arrayBuffer());
+          if (!data.length) throw new DocifyError("invalid_input", "empty upload");
+          const q = new URL(req.url).searchParams;
+          // Like adding one, an imported local source must be inside DOCIFY_SOURCE_ROOTS.
+          const checkLocalSource = (path: string) => {
+            const real = existsSync(path) ? realpathSync(path) : resolve(path);
+            if (!withinSourceRoots(real, sourceRoots)) throw new DocifyError("invalid_input", `the backup has a local source outside DOCIFY_SOURCE_ROOTS: ${path}`);
+          };
+          importing = true;
+          try {
+            const r = await importStore(docify, data, { force: q.get("force") === "1", keepConfig: q.get("keepConfig") === "1", checkLocalSource });
+            return json(r);
+          } finally {
+            importing = false;
+          }
+        }, "application/octet-stream"),
       },
       "/api/pins": {
         GET: api(() => json(pinsView())),
