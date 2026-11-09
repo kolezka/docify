@@ -30,6 +30,13 @@ services:
       DOCIFY_WEB_TOKEN: ${DOCIFY_WEB_TOKEN:?set DOCIFY_WEB_TOKEN in .env}
       # Public hostnames, comma separated. Empty accepts any Host and logs a warning.
       DOCIFY_ALLOWED_HOSTS: ${DOCIFY_ALLOWED_HOSTS:-}
+      # MCP over HTTP at /mcp: name:token pairs, comma separated. Empty keeps /mcp off.
+      DOCIFY_MCP_TOKENS: ${DOCIFY_MCP_TOKENS:-}
+      DOCIFY_MCP_RATE: ${DOCIFY_MCP_RATE:-60/min}
+      DOCIFY_MCP_IP_RATE: ${DOCIFY_MCP_IP_RATE:-120/min}
+      # The client IP comes from X-Forwarded-For set by the proxy in front (Traefik in Coolify).
+      # Set 0 when the port is published directly with DOCIFY_BIND=0.0.0.0.
+      DOCIFY_TRUST_PROXY: ${DOCIFY_TRUST_PROXY:-1}
       # Run `docify setup` at container start (only needed for a custom embedding provider).
       DOCIFY_SETUP: ${DOCIFY_SETUP:-false}
       # Optional Graphify/LiteLLM endpoint; empty values are dropped by the entrypoint.

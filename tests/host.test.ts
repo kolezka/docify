@@ -4,14 +4,8 @@ import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
-import {
-  hostAllowed,
-  originAllowed,
-  parseAllowedHosts,
-  parseSourceRoots,
-  startServer,
-  withinSourceRoots,
-} from "../src/web/server.ts";
+import { parseSourceRoots, startServer, withinSourceRoots } from "../src/web/server.ts";
+import { hostAllowed, originAllowed, parseAllowedHosts } from "../src/http/host.ts";
 import { newDocify, tempDir } from "./helpers.ts";
 
 const cleanup: string[] = [];

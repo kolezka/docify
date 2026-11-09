@@ -7,6 +7,12 @@ import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
 import { uiAssets } from "./bundle.ts";
 import { LogReadError } from "../core/logs.ts";
+import { LOOPBACK_HOSTS, hostAllowed, hostGuard, originAllowed, parseAllowedHosts, splitList } from "../http/host.ts";
+import { bearerAuth, parseBearerClients, type BearerClient } from "../http/auth.ts";
+import { RateLimiter, parseRate, rateLimit, type RateLimit } from "../http/rate-limit.ts";
+import { chain } from "../http/guard.ts";
+import { clientIp } from "../http/client-ip.ts";
+import { mcpHttpHandler } from "../mcp/http.ts";
 
 const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404 };
 
@@ -17,59 +23,6 @@ const PAGE_HEADERS = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
 };
-
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-
-function splitList(value: string | undefined): string[] {
-  return (value ?? "")
-    .split(/[\s,]+/)
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-// DOCIFY_ALLOWED_HOSTS: comma or space separated Host values, with or without a port.
-export function parseAllowedHosts(value = process.env.DOCIFY_ALLOWED_HOSTS): string[] {
-  return splitList(value);
-}
-
-function hostnameOf(host: string): string | null {
-  try {
-    return new URL(`http://${host}`).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-// A request is accepted when its Host matches an entry exactly, or when the entry has no
-// port and the hostnames match. "*" accepts any Host; the token still guards /api.
-// Loopback is always accepted so local checks keep working when a container publishes
-// the port under a different host port.
-export function hostAllowed(hostHeader: string | null, allowed: Iterable<string>): boolean {
-  if (!hostHeader) return false;
-  const host = hostHeader.trim().toLowerCase();
-  const hostname = hostnameOf(host);
-  if (hostname && LOOPBACK_HOSTS.has(hostname)) return true;
-  for (const entry of allowed) {
-    if (entry === "*" || host === entry) return true;
-    if (!entry.includes(":") && hostname === entry) return true;
-  }
-  return false;
-}
-
-// Behind a TLS-terminating proxy the Origin scheme is https while the app speaks http,
-// so compare hostnames instead of full origins.
-export function originAllowed(origin: string | null, hostHeader: string): boolean {
-  if (!origin) return true;
-  let parsed: URL;
-  try {
-    parsed = new URL(origin);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-  const hostname = hostnameOf(hostHeader);
-  return !!hostname && parsed.hostname.toLowerCase() === hostname;
-}
 
 // Local sources are readable through the API, so they must stay inside DOCIFY_SOURCE_ROOTS
 // (path list, default: the home directory).
@@ -96,6 +49,24 @@ export interface StartServerOptions {
   host?: string;
   allowedHosts?: string[];
   project?: string;
+  // MCP over HTTP at /mcp; without clients the route does not exist. Defaults come from env.
+  mcpClients?: BearerClient[];
+  mcpClientRate?: RateLimit;
+  mcpIpRate?: RateLimit;
+  trustProxy?: boolean;
+  now?: () => number;
+}
+
+const MCP_MAX_BODY_BYTES = 1024 * 1024;
+
+function mcpSettings(opts: StartServerOptions) {
+  const env = process.env;
+  return {
+    clients: opts.mcpClients ?? parseBearerClients(env.DOCIFY_MCP_TOKENS),
+    clientRate: opts.mcpClientRate ?? parseRate(env.DOCIFY_MCP_RATE || "60/min", "DOCIFY_MCP_RATE"),
+    ipRate: opts.mcpIpRate ?? parseRate(env.DOCIFY_MCP_IP_RATE || "120/min", "DOCIFY_MCP_IP_RATE"),
+    trustProxy: opts.trustProxy ?? env.DOCIFY_TRUST_PROXY === "1",
+  };
 }
 
 export async function startServer(port: number, opts: StartServerOptions = {}) {
@@ -165,12 +136,35 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
   const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
 
+  // The IP limit runs before auth so guessing tokens is slow; the client limit runs after it.
+  const mcp = mcpSettings(opts);
+  const mcpPipeline = mcp.clients.length
+    ? chain(
+        [
+          hostGuard(allowedHosts, allowAnyHost),
+          rateLimit(new RateLimiter(mcp.ipRate, opts.now), (ctx) => `ip:${ctx.ip}`),
+          bearerAuth(mcp.clients),
+          rateLimit(new RateLimiter(mcp.clientRate, opts.now), (ctx) => ctx.client && `client:${ctx.client}`),
+        ],
+        mcpHttpHandler(docify, { project, maxBodyBytes: MCP_MAX_BODY_BYTES }),
+      )
+    : null;
+  const mcpRoute = async (req: Request, srv: { requestIP(req: Request): { address: string } | null }) => {
+    if (!mcpPipeline) return new Response("not found", { status: 404 });
+    try {
+      return await mcpPipeline(req, { ip: clientIp(req, srv.requestIP(req)?.address, mcp.trustProxy) });
+    } catch (err) {
+      return fail(err);
+    }
+  };
+
   const server = Bun.serve({
     hostname: host,
     port,
     development: false,
     routes: {
       "/healthz": { GET: () => json({ ok: true }) },
+      "/mcp": mcpRoute,
       "/api/logs": {
         GET: api((req) => {
           const params = new URL(req.url).searchParams;
@@ -316,6 +310,10 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     const warning = allowAnyHost ? " DOCIFY_ALLOWED_HOSTS is unset, so any Host is accepted; set it to your public domain." : "";
     if (tokenFromEnv) console.log(`Docify UI listening on ${where}; the access token comes from DOCIFY_WEB_TOKEN.${warning}`);
     else console.log(`Docify UI on http://${host === "0.0.0.0" ? "localhost" : host}:${boundPort}/#token=${token}${warning}`);
+    if (mcpPipeline) {
+      const names = mcp.clients.map((c) => c.name).join(", ");
+      console.log(`MCP over HTTP on /mcp for ${names}; ${mcp.clientRate.limit} requests per ${mcp.clientRate.windowMs / 1000} s per client, ${mcp.ipRate.limit} per ${mcp.ipRate.windowMs / 1000} s per IP.`);
+    }
   }
   return Object.assign(server, { token });
 }

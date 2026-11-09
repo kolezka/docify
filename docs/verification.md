@@ -152,3 +152,14 @@ Rebased onto `main` at `2ec9f08` (logs, config home, Svelte UI). Conflicts in `s
 - `DOCIFY_MODELS_DIR=~/.cache/docify/models bun test`: 117 pass, 0 fail, 19 files, exit 0.
 - `docker compose -f docker-compose.prod.yml config --quiet` with a token and allowed host set: exit 0.
 - Not run on the rebased tree: `docker build`. `main` now depends on `svelte-log-viewer` through `git+ssh` to a private repository, and the image has no SSH key, so the build is expected to fail at `bun install` until that dependency is reachable from the build.
+
+## 2026-11-09: MCP over HTTP
+
+Branch `feat/mcp-http` on `feat/host-deployment` at `46553d7`, macOS 27, Bun 1.4.4, MCP SDK 1.32.1.
+
+- `bun run typecheck`: exit 0.
+- `DOCIFY_MODELS_DIR=~/.cache/docify/models bun test`: 132 pass, 0 fail, 21 files, exit 0. New: `tests/http.test.ts` (9) and `tests/mcp-http.test.ts` (6, real server and SDK client).
+- Re-break checks, one at a time, each file restored byte-identical: no bearer auth, auth before the IP limit, no client limit, no body limit, no host guard, GET accepted, `/mcp` on without tokens, first instead of last `X-Forwarded-For` entry, token prefix accepted. Each made its own test fail at an `expect` assertion (exit 1).
+- Live `bun src/cli.ts serve --port 4791` with `DOCIFY_MCP_TOKENS` and `DOCIFY_MCP_RATE=3/min` from the environment: startup line named the client and limits; `tools/list` without a token returned 401, then three 200 responses listing `docs_search`, `docs_read`, `docs_sources`, then 429 with `Retry-After: 20`.
+- `docker compose -f docker-compose.prod.yml config` with `DOCIFY_MCP_TOKENS` set: exit 0, rates default to `60/min` and `120/min`, `DOCIFY_TRUST_PROXY` to `1`.
+- Not verified: OpenClaw as a client, Claude Code's `claude mcp add --transport http` against a deployed server, Traefik's `X-Forwarded-For` in Coolify, and `docker build` (same `svelte-log-viewer` blocker as above).

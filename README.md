@@ -197,6 +197,29 @@ Drop `--no-graph` when LiteLLM is configured (`LITELLM_BASE_URL`, `LITELLM_API_K
 
 If the domain changes, update `DOCIFY_ALLOWED_HOSTS` and redeploy.
 
+### MCP over HTTP
+
+`docify serve` also answers MCP at `/mcp` (Streamable HTTP, stateless, JSON responses) when `DOCIFY_MCP_TOKENS` is set. Without that variable `/mcp` returns 404. The tools are the same read-only ones as on stdio.
+
+Give every agent its own token, so one can be revoked without touching the rest:
+
+```bash
+DOCIFY_MCP_TOKENS="claude:$(openssl rand -hex 32),openclaw-1:$(openssl rand -hex 32)"
+```
+
+Agents send `Authorization: Bearer <token>`. For Claude Code:
+
+```bash
+claude mcp add --transport http docify https://<domain>/mcp --header "Authorization: Bearer <token>"
+```
+
+Requests are checked in this order: Host and Origin, the per-IP limit, the token, the per-client limit. The per-IP limit runs before the token check, so guessing tokens is slow. Over a limit the server answers 429 with `Retry-After`. Request bodies over 1 MB get 413, and only POST is accepted.
+
+- `DOCIFY_MCP_RATE`: per client, default `60/min`. `DOCIFY_MCP_IP_RATE`: per IP, default `120/min`. Units are `s`, `min` and `h`.
+- `DOCIFY_TRUST_PROXY=1` takes the client IP from the last `X-Forwarded-For` entry. `docker-compose.prod.yml` sets it because Traefik is in front. Without a proxy in front, leave it unset, otherwise a client can choose its own IP.
+- Limits are kept in memory per process. A restart resets them, and several replicas would each count separately.
+- Version pins come from the server's `.docify.json` (`DOCIFY_PROJECT`, default the working directory), not from the agent's project. Pass `version` in the tool call to pick another.
+
 ### Reverse proxy on a dedicated server
 
 With the default loopback publish, point nginx or Caddy at `127.0.0.1:4747`:
@@ -237,6 +260,9 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `DOCIFY_WEB_TOKEN` | Stable web token (16+ characters); without it every `serve` start generates a new one |
 | `DOCIFY_ALLOWED_HOSTS` | Host values the web server answers for, comma separated; `*` accepts any |
 | `DOCIFY_SOURCE_ROOTS` | Directories the web UI may add local sources from, separated by `:` (default: home) |
+| `DOCIFY_MCP_TOKENS` | `name:token` pairs, comma separated; enables MCP over HTTP at `/mcp` |
+| `DOCIFY_MCP_RATE`, `DOCIFY_MCP_IP_RATE` | MCP limits per client and per IP (default `60/min`, `120/min`) |
+| `DOCIFY_TRUST_PROXY` | `1` takes the client IP from `X-Forwarded-For`; only behind a proxy |
 | `LITELLM_BASE_URL`, `LITELLM_API_KEY` | Graph provider and `openai` embeddings, by default |
 | `DOCIFY_BIN` | `docify` executable the macOS app runs |
 
