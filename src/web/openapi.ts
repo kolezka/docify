@@ -82,6 +82,15 @@ export function openApiSpec() {
           responses: { "200": ok("Removed", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(401, 404, 409) },
         },
       },
+      "/api/sources/{id}/graph": {
+        get: {
+          summary: "Graph of the active generation",
+          description:
+            "Nodes with their page and best grounding passage, one edge per connected node pair (indexes into `nodes`), and hyperedge groups. `nodes` is empty when the source is not prepared or was prepared without a graph; `graphStatus` says which.",
+          parameters: [idParam("Source id")],
+          responses: { "200": ok("Graph view"), ...errors(401, 404) },
+        },
+      },
       "/api/sources/{id}/prepare": {
         post: {
           summary: "Start preparing a source",
