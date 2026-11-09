@@ -129,6 +129,7 @@
         <option value="browserless">Browserless</option>
       </select>
     </label>
+    {#if s.effectiveCrawlProvider === "crawl4ai"}
     {#if editingCrawl4ai}
       <form class="flex flex-wrap items-end gap-2 text-[12px] text-zinc-500 dark:text-zinc-400" onsubmit={saveCrawl4ai}>
         <label class="flex flex-col gap-1">Stream
@@ -167,6 +168,7 @@
       </form>
     {:else}
       <div><button type="button" class={button({ size: "xs" })} disabled={busy || preparing} onclick={editCrawl4ai}>Crawl4AI settings</button></div>
+    {/if}
     {/if}
   {/if}
 
