@@ -1,4 +1,5 @@
 export type { SourceInfo, SearchResult, SearchHit, SearchStatus, ReadResult, Mode } from "../../core/search.ts";
+export type { GraphView, GraphViewNode } from "../../core/graph-view.ts";
 export type { ConfigDescription, EditableConfig, EnvEntry, PathSetting } from "../../core/config.ts";
 
 export interface PinsView {

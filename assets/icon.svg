@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Docify: a crab looking through a magnifying glass">
+  <title>Docify</title>
+  <defs>
+    <linearGradient id="tile" x1="0.15" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#3c3c45"/>
+      <stop offset="0.55" stop-color="#1c1c21"/>
+      <stop offset="1" stop-color="#09090b"/>
+    </linearGradient>
+    <linearGradient id="shell" x1="0.1" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#ffd9dd"/>
+      <stop offset="0.2" stop-color="#fa8085"/>
+      <stop offset="0.6" stop-color="#e23035"/>
+      <stop offset="1" stop-color="#a3151b"/>
+    </linearGradient>
+    <linearGradient id="limb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e63b41"/>
+      <stop offset="1" stop-color="#ae181e"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="0.28" cy="0.16" r="1">
+      <stop offset="0" stop-color="#74747f"/>
+      <stop offset="0.55" stop-color="#3a3a43"/>
+      <stop offset="1" stop-color="#141418"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.5" stop-color="#eaeaf0"/>
+      <stop offset="1" stop-color="#adadb7"/>
+    </linearGradient>
+    <clipPath id="lensClip"><circle cx="374" cy="170" r="72"/></clipPath>
+
+    <!-- Pincer: palm plus two curved fingers, opening along +X. -->
+    <g id="pincer">
+      <path d="M-6,-30 C24,-46 56,-48 78,-34 C68,-24 50,-16 30,-12 C16,-9 2,-8 -8,-10 Z" fill="url(#limb)"/>
+      <path d="M-8,12 C16,8 42,10 64,20 C72,25 74,33 68,37 C46,36 22,30 4,24 C-4,21 -12,18 -14,16 Z" fill="url(#limb)"/>
+      <ellipse cx="-26" cy="0" rx="40" ry="36" fill="url(#limb)"/>
+    </g>
+  </defs>
+
+  <rect x="10" y="10" width="492" height="492" rx="112" fill="url(#tile)"/>
+
+  <!-- legs: far side darkened, near side lighter -->
+  <g fill="none" stroke="#b81c22" stroke-width="20" stroke-linecap="round">
+    <path d="M120 336 C86 334 60 346 44 366"/>
+    <path d="M116 372 C82 380 62 398 56 422"/>
+    <path d="M136 406 C114 424 102 446 100 468"/>
+  </g>
+  <g fill="none" stroke="#d02a30" stroke-width="20" stroke-linecap="round">
+    <path d="M324 336 C358 334 384 346 400 366"/>
+    <path d="M328 372 C362 380 382 398 388 422"/>
+    <path d="M308 406 C330 424 342 446 344 468"/>
+  </g>
+
+  <!-- eye stalks, behind the shell -->
+  <g fill="none" stroke="#c8232a" stroke-width="26" stroke-linecap="round">
+    <path d="M190 316 L188 274"/>
+    <path d="M252 316 L254 274"/>
+  </g>
+
+  <!-- raised pincer -->
+  <path d="M168 330 C146 314 132 292 128 270" fill="none" stroke="#c8232a" stroke-width="38" stroke-linecap="round"/>
+  <use href="#pincer" transform="translate(134,266) rotate(-148) scale(0.96)"/>
+
+  <!-- shell -->
+  <ellipse cx="218" cy="368" rx="130" ry="98" fill="url(#shell)"/>
+
+  <!-- eyes -->
+  <circle cx="188" cy="262" r="24" fill="#0b0b0d"/>
+  <circle cx="254" cy="262" r="24" fill="#0b0b0d"/>
+  <circle cx="180" cy="254" r="8" fill="#fafafa"/>
+  <circle cx="246" cy="254" r="8" fill="#fafafa"/>
+
+  <!-- magnifier -->
+  <path d="M440 236 L500 312" stroke="url(#metal)" stroke-width="32" stroke-linecap="round"/>
+  <circle cx="374" cy="170" r="94" fill="url(#glass)"/>
+  <circle cx="374" cy="170" r="94" fill="none" stroke="url(#metal)" stroke-width="24"/>
+  <g clip-path="url(#lensClip)" fill="#f2f2f5">
+    <rect x="316" y="130" width="76" height="13" rx="6.5"/>
+    <rect x="316" y="160" width="54" height="13" rx="6.5"/>
+    <rect x="316" y="190" width="66" height="13" rx="6.5"/>
+  </g>
+  <path d="M324 130 A74 74 0 0 1 356 102" fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" opacity="0.4"/>
+
+  <!-- gripping pincer, drawn over the lens frame -->
+  <path d="M300 350 C336 340 362 316 376 286" fill="none" stroke="#c8232a" stroke-width="38" stroke-linecap="round"/>
+  <use href="#pincer" transform="translate(378,280) rotate(-64) scale(0.86)"/>
+</svg>
