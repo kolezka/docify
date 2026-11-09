@@ -111,6 +111,10 @@ test("scope writes nothing to the store", () => {
 });
 
 test("scope and search agree on status, generations and warnings for the same filters", async () => {
+  // A first preparation whose writer died (pid gone, no lease). Added here so other tests keep their source lists.
+  const halted = writeDocs(join(tempDir("docify-src-"), "halted"), { "a.md": "# Halted\n\nInterrupted.\n" });
+  d.addSource({ library: "halted", version: "1", kind: "local", locator: halted });
+  d.db.run("INSERT INTO generations (source_id, status, phase, pid, started_at, schema_version) VALUES ('halted@1', 'staging', 'embed', 4000000, ?, 1)", [new Date().toISOString()]);
   const inputs: ScopeInput[] = [
     { project: noPins },
     { library: "bun", project: noPins },
@@ -119,6 +123,7 @@ test("scope and search agree on status, generations and warnings for the same fi
     { library: "bun", project: pinned },
     { library: "bun", project: badPin },
     { library: "ghost", project: noPins },
+    { library: "halted", project: noPins },
     { library: "nope", project: noPins },
     { sources: ["nope@1"], project: noPins },
     { sources: ["bun@1.3.0"], version: "1.3.0", project: noPins },
@@ -134,4 +139,6 @@ test("scope and search agree on status, generations and warnings for the same fi
     expect(se.availableVersions).toEqual(sc.availableVersions);
     for (const w of sc.warnings) expect(se.warnings).toContain(w);
   }
+  // Search used to recover the dead writer first and report update_failed while scope said not_indexed.
+  expect(scope(d, { library: "halted", project: noPins }).status).toBe("update_failed");
 });

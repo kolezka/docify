@@ -32,7 +32,7 @@ One core, thin adapters. `src/core/docify.ts` (class `Docify`: sources, preparat
 
 **Store** (`~/.config/docify`, or `DOCIFY_HOME`; `docifyHome()` falls back to a store left in `~/.cache/docify` while `~/.config/docify` does not exist, and `Settings.swift` mirrors it): `docify.sqlite` (WAL, schema in `src/core/db.ts`), `snapshots/<source>/<generation>/` with `raw/`, `normalized/` and `graph.json`, and `config.json`. `loadConfig()` spreads `config.json` over the defaults shallowly, so a partial `graph` object replaces the whole default graph provider.
 
-**Generations.** Every prepare builds a new generation in `staging` and only an immediate transaction at the end makes it `active` (the previous one becomes `superseded`). Any failure or cancel leaves the previous generation serving and the source reads as `stale`. Writers hold a per-source lease (`lock_pid`, `lock_at`, heartbeat 10 s, dead after 60 s); `recoverInterrupted()` marks staging generations of dead writers `failed`. Old superseded generations are deleted beyond `keepGenerations`.
+**Generations.** Every prepare builds a new generation in `staging` and only an immediate transaction at the end makes it `active` (the previous one becomes `superseded`). Any failure or cancel leaves the previous generation serving and the source reads as `stale`. Writers hold a per-source lease (`lock_pid`, `lock_at`, heartbeat 10 s, dead after 60 s); `recoverInterrupted()` marks staging generations of dead writers `failed`, deletes their rows and snapshot directory and clears dead locks. Only writers run it: `prepare()` and `docify serve` at startup. Queries never do; they read such a generation as failed through `effectiveGeneration()` / `isInterrupted()` in `docify.ts`, the same rule recovery uses. Old superseded generations are deleted beyond `keepGenerations`.
 
 **Prepare pipeline** (`Docify.prepare`): collect (`collect.ts`: local files with symlinks followed only inside the root, or a crawl limited to the start URL's origin and path with redirects checked by hand) → skip as `unchanged` when snapshot hash, `PIPELINE_VERSION`, graph status and embedding identity all match → normalize (`normalize.ts`: MDX and Markdoc are rewritten line for line so normalized line ranges equal raw ones; HTML becomes Markdown) → chunk (`chunk.ts`: heading sections up to 700 tokens, a code fence is never cut) → passages and FTS5 rows → embeddings → optional Graphify graph (`graph.ts`, a pinned Python CLI in a uv venv from `tools/graphify`, LLM reached through the LiteLLM variables) → validate counts → activate. Phases are separated by checkpoints that honour the cancel signal.
 
@@ -62,7 +62,7 @@ The Graph tab (`views/Graph.svelte`) reads `/api/sources/:id/graph`, built by `g
 
 ## Rules that are easy to break
 
-- Queries never fetch sources, download models or call the graph provider. The only exception is an embedding server the user configured in `config.json`.
+- Queries never write: no DB change, no file removal, no recovery. They also never fetch sources, download models or call the graph provider. The only exception is an embedding server the user configured in `config.json`.
 - API keys found in the environment do not authorize remote processing or spending. `config.json` holds names of environment variables, never secret values.
 - Readers must never see a mix of generations; keep activation in one transaction.
 - Build snapshot paths from `config.home`, never from the stored `snapshot_dir`, so a moved store keeps working and never deletes at its old path.

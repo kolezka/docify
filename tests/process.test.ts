@@ -39,12 +39,14 @@ test("SIGKILL during preparation keeps the previous generation; the lock blocks 
 
   child.kill("SIGKILL");
   await child.exited;
-  expect(d.recoverInterrupted()).toBe(1);
+  // Readers report the interrupted update without recovering it: the dead lock stays.
   const info = sources(d).find((s) => s.id === "lib@1")!;
   expect(info.state).toBe("stale");
   expect(info.latest?.error).toContain("interrupted");
-  expect(d.getSource("lib@1")!.lock_pid).toBeNull();
   expect((await search(d, { query: "burrowDepth badgers", library: "lib" })).hits[0]!.citation.generation).toBe(good.generationId);
+  expect(d.getSource("lib@1")!.lock_pid).toBe(child.pid);
+  expect(d.recoverInterrupted()).toBe(1);
+  expect(d.getSource("lib@1")!.lock_pid).toBeNull();
 
   const next = await d.prepare("lib@1", { graphRunner: fakeGraph });
   expect(next.status).toBe("activated");

@@ -1,5 +1,5 @@
 import type { Docify, GenerationRow, SourceRow } from "./docify.ts";
-import { Docify as DocifyClass, DocifyError, pidAlive } from "./docify.ts";
+import { Docify as DocifyClass, DocifyError, effectiveGeneration, isInterrupted } from "./docify.ts";
 import { embedQuery, embeddingIdentity } from "./embed.ts";
 import { countTokens, TOKENIZER } from "./tokens.ts";
 import { extractSymbols, methodToken, squash } from "./symbols.ts";
@@ -225,11 +225,11 @@ export function resolveScope(docify: Docify, input: ScopeInput | SearchInput): S
   const generations = new Map<number, { source: SourceRow; generation: GenerationRow }>();
   const notIndexed: string[] = [];
   for (const s of selected) {
-    const latest = docify.generations(s.id)[0];
+    const latest = latestGeneration(docify, s);
     if (!s.active_generation) {
       notIndexed.push(s.id);
       if (latest?.status === "failed") warnings.push(`${s.id}: preparation failed (${latest.error}); no usable generation`);
-      else if (latest?.status === "staging" && pidAlive(latest.pid)) warnings.push(`${s.id}: preparation in progress (${latest.phase})`);
+      else if (latest?.status === "staging") warnings.push(`${s.id}: preparation in progress (${latest.phase})`);
       continue;
     }
     const gen = docify.getGeneration(s.active_generation)!;
@@ -244,10 +244,16 @@ export function resolveScope(docify: Docify, input: ScopeInput | SearchInput): S
   }
   let status: SearchStatus | null = null;
   if (!generations.size) {
-    const failed = selected.some((s) => docify.generations(s.id)[0]?.status === "failed");
+    const failed = selected.some((s) => latestGeneration(docify, s)?.status === "failed");
     status = selected.length ? (failed ? "update_failed" : "not_indexed") : "not_indexed";
   }
   return { generations, warnings, notIndexed, status, pins: pinInfo, libraries: libraryInfo };
+}
+
+// The newest generation of a source as readers report it, with interrupted ones read as failed.
+function latestGeneration(docify: Docify, source: SourceRow): GenerationRow | null {
+  const latest = docify.generations(source.id)[0];
+  return latest ? effectiveGeneration(latest, source) : null;
 }
 
 function placeholders(n: number) {
@@ -491,7 +497,6 @@ export async function search(docify: Docify, input: SearchInput): Promise<Search
   const t0 = performance.now();
   const q = checkQuery(input, t0);
   const nonce = newNonce();
-  docify.recoverInterrupted();
   // Embed before the read snapshot: an await between choosing generations and reading
   // them would let a writer activate and garbage-collect them in between.
   await embedFor(docify, q);
@@ -767,7 +772,6 @@ export async function searchMany(docify: Docify, input: SearchManyInput): Promis
 
   // Embeddings first (the only await), then every query ranks in one read transaction,
   // so all of them see the same generations and pins.
-  docify.recoverInterrupted();
   const prepared = queries.map((query) => checkQuery({ ...common, query, maxTokens: MANY_INNER_BUDGET }, performance.now()));
   for (const q of prepared) await embedFor(docify, q);
   const snapshots = docify.db.transaction(() => prepared.map((q) => rankSnapshot(docify, q)))();
@@ -881,12 +885,15 @@ export interface ReadResult {
 export function read(docify: Docify, id: string, maxTokens = 3000): ReadResult {
   if (!/^p_[0-9a-f]{20}$/.test(id)) throw new DocifyError("invalid_input", `not a passage id: ${id}`);
   const row = docify.db.query<{ rowid: number }, [string]>("SELECT rowid FROM passages WHERE id = ?").get(id);
-  if (!row) {
+  const unavailable = (): ReadResult => {
     const text = `${HEADER}\nstatus: unavailable\nPassage ${id} is not in the store. Its snapshot was removed or it never existed. Search again for current content.`;
     return { status: "unavailable", id, text, tokens: countTokens(text), citation: null, passage: null, context: { before: [], after: [] } };
-  }
+  };
+  if (!row) return unavailable();
   const p = loadPassages(docify, [row.rowid]).get(row.rowid)!;
   const gen = docify.getGeneration(p.generation_id)!;
+  // Recovery deletes the rows of an interrupted generation; report them as already gone.
+  if (isInterrupted(gen, docify.getSource(gen.source_id))) return unavailable();
   const status = gen.status === "active" ? "ok" : "superseded";
   const note = status === "superseded" ? `This passage belongs to generation ${gen.id}, which was replaced. The content is shown as it was in that snapshot and may be outdated.` : undefined;
   const citation = citationOf(p);
@@ -1003,7 +1010,7 @@ function outlineSnapshot(docify: Docify, input: OutlineInput): OutlineResult {
   }
 
   const warnings: string[] = [];
-  const latest = docify.generations(src.id)[0];
+  const latest = latestGeneration(docify, src);
   if (latest?.status === "failed") warnings.push(`the last refresh failed; generation ${gen.id} is served and may be outdated`);
   const totalSections = docs.reduce((n, d) => n + d.sections.length, 0);
   const libVersion = `${src.library}@${src.version ?? "unknown"}`;
@@ -1318,10 +1325,8 @@ export interface SourceInfo {
 }
 
 export function sources(docify: Docify): SourceInfo[] {
-  docify.recoverInterrupted();
   return docify.listSourceRows().map((s) => {
-    const gens = docify.generations(s.id);
-    const latest = gens[0] ?? null;
+    const latest = latestGeneration(docify, s);
     const active = s.active_generation ? docify.getGeneration(s.active_generation) : null;
     let state: SourceInfo["state"] = active ? "ready" : "not_indexed";
     if (latest?.status === "staging") state = "preparing";
@@ -1377,8 +1382,8 @@ export interface ScopeResult {
   text: string;
 }
 
-// What a search with these filters would search, without searching. Side-effect free:
-// unlike search() and sources() it does not call recoverInterrupted(), which writes.
+// What a search with these filters would search, without searching. Side-effect free, like
+// every query.
 export function scope(docify: Docify, input: ScopeInput): ScopeResult {
   return docify.db.transaction(() => {
     const s = resolveScope(docify, input);
