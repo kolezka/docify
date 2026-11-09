@@ -19,7 +19,7 @@ make                                  # lists the Makefile shortcuts (check, app
 make app-run                          # builds and opens the macOS app with this checkout's CLI
 ```
 
-Most tests use the real `Xenova/bge-small-en-v1.5` model from `~/.cache/docify/models` (put there by `docify setup`), or from `DOCIFY_MODELS_DIR`. Without it about 13 tests fail with `ModelNotPreparedError`; that is a missing model, not a regression. Tests use no network and no LLM: each one builds a store in a temp dir (`newDocify(tempDir())` in `tests/helpers.ts`) and passes `fakeGraph` as the graph runner. `tests/process.test.ts` spawns `tests/helpers/prepare-child.ts` to test locks, SIGKILL recovery and readers across processes.
+Most tests use the real `Xenova/bge-small-en-v1.5` model from the store's `models/` (put there by `docify setup`), or from `DOCIFY_MODELS_DIR`. Without it about 13 tests fail with `ModelNotPreparedError`; that is a missing model, not a regression. Tests use no network and no LLM: each one builds a store in a temp dir (`newDocify(tempDir())` in `tests/helpers.ts`) and passes `fakeGraph` as the graph runner. `tests/process.test.ts` spawns `tests/helpers/prepare-child.ts` to test locks, SIGKILL recovery and readers across processes.
 
 `index.ts` is the leftover starter greeting. The entry point is `src/cli.ts` (`bin` in package.json).
 
@@ -27,7 +27,7 @@ Most tests use the real `Xenova/bge-small-en-v1.5` model from `~/.cache/docify/m
 
 One core, thin adapters. `src/core/docify.ts` (class `Docify`: sources, preparation, generations, locks) and `src/core/search.ts` (`search`, `read`, `sources`) hold all logic. `src/cli.ts`, `src/mcp.ts` and `src/web/server.ts` only parse input and call them; the macOS app in turn only runs the CLI. The MCP server exposes queries only (`docs_search`, `docs_read`, `docs_sources`); preparation stays in the CLI and the web UI.
 
-**Store** (`~/.cache/docify`, or `DOCIFY_HOME`): `docify.sqlite` (WAL, schema in `src/core/db.ts`), `snapshots/<source>/<generation>/` with `raw/`, `normalized/` and `graph.json`, and `config.json`. `loadConfig()` spreads `config.json` over the defaults shallowly, so a partial `graph` object replaces the whole default graph provider.
+**Store** (`~/.config/docify`, or `DOCIFY_HOME`; `docifyHome()` falls back to a store left in `~/.cache/docify` while `~/.config/docify` does not exist, and `Settings.swift` mirrors it): `docify.sqlite` (WAL, schema in `src/core/db.ts`), `snapshots/<source>/<generation>/` with `raw/`, `normalized/` and `graph.json`, and `config.json`. `loadConfig()` spreads `config.json` over the defaults shallowly, so a partial `graph` object replaces the whole default graph provider.
 
 **Generations.** Every prepare builds a new generation in `staging` and only an immediate transaction at the end makes it `active` (the previous one becomes `superseded`). Any failure or cancel leaves the previous generation serving and the source reads as `stale`. Writers hold a per-source lease (`lock_pid`, `lock_at`, heartbeat 10 s, dead after 60 s); `recoverInterrupted()` marks staging generations of dead writers `failed`. Old superseded generations are deleted beyond `keepGenerations`.
 
@@ -56,6 +56,7 @@ Settings go through `/api/config`: `validateConfigPatch()` and `saveConfig()` in
 - Queries never fetch sources, download models or call the graph provider. The only exception is an embedding server the user configured in `config.json`.
 - API keys found in the environment do not authorize remote processing or spending. `config.json` holds names of environment variables, never secret values.
 - Readers must never see a mix of generations; keep activation in one transaction.
+- Build snapshot paths from `config.home`, never from the stored `snapshot_dir`, so a moved store keeps working and never deletes at its old path.
 - Thresholds and fusion weights come from `docs/evaluation.md`. Change them with a measurement, not by feel.
 
 ## Bun

@@ -86,3 +86,14 @@ Svelte 5 and Tailwind v4 rebuild with the Settings view, branch `feat/web-ui-red
 - Browser (agent-browser, Chrome, 1280x577, scratch store, server started without `LITELLM_*`): a search showed the status chip, token meter, warnings and citations, and a citation opened its passage. System theme followed the OS; Light and Dark overrode it and were remembered. Add with a path outside home showed the server error. Add inside home, then "No graph", went not indexed, preparing (progress bar, Cancel), ready with 22 passages. Remove asked for confirmation and the CLI no longer listed the source. Settings: switching to LiteLLM applied the bge-m3 preset, the variable chips matched the server environment, weak above strong showed an inline error and disabled Save, and a save wrote exactly the changed keys with no secret values.
 - Found and fixed during this run: pasting the link of a restarted server into the same tab changed only the fragment, so the page kept the old token and got 401; the hidden switch checkbox had no positioned parent and stretched the page so the window scrolled.
 - Not verified: Cancel from the page (the fixture prepared too fast to catch), pins edited from the page (covered by tests in temp directories), widths below 1280 px, Safari and Firefox.
+
+## Store moved to ~/.config/docify (2026-11-09)
+
+Branch `feat/config-home`, Bun 1.4.4, Swift 6.4. The machine had only `~/.cache/docify`, so the tests loaded bge-small through the new fallback.
+
+- `bun test`: 76 pass, 0 fail, 12 files (74 on `main` plus 2 new). `bun run typecheck` and `swift build`: exit 0.
+- Re-break checks for `docifyHome()`, each restored byte-identical (`cmp`): always returning `~/.config/docify` failed the legacy assertion; preferring `~/.cache/docify` whenever it exists failed the both-exist assertion.
+- The moved-store test failed on the old cleanup, which deleted the stored absolute `snapshot_dir` and so left the moved snapshot behind, and passes with paths built from `config.home`.
+- CLI with a scratch `HOME`: an empty home created `.config/docify/docify.sqlite`; a home with only `.cache/docify` used it and created no `.config/docify`.
+- One early run of `tests/generations.test.ts` had one failure whose name was not captured; seven later runs of the file and the full suite passed. Probably the intermittent failure recorded on 2026-11-08, not confirmed.
+- Not verified: the macOS app reading the new path at runtime (compiled only), and the README move steps on a real store.

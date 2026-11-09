@@ -60,8 +60,13 @@ export class ConfigError extends Error {
 
 type Env = Record<string, string | undefined>;
 
-export function docifyHome(): string {
-  return process.env.DOCIFY_HOME ?? join(homedir(), ".cache", "docify");
+// Settings.swift resolves the same path; change them together.
+export function docifyHome(env: Env = process.env, userHome = homedir()): string {
+  if (env.DOCIFY_HOME !== undefined) return env.DOCIFY_HOME;
+  const current = join(userHome, ".config", "docify");
+  const legacy = join(userHome, ".cache", "docify");
+  // Stores made before the move to ~/.config keep working until they are moved.
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
 }
 
 export function configFilePath(home: string): string {

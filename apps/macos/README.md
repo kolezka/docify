@@ -1,6 +1,6 @@
 # Docify Admin (macOS)
 
-A small SwiftUI window for managing Docify sources: list, add, prepare, cancel and remove. It runs the `docify` CLI, so it uses the same store (`~/.cache/docify`, or `DOCIFY_HOME`) and the same preparation locks as the CLI and the web UI.
+A small SwiftUI window for managing Docify sources: list, add, prepare, cancel and remove. It runs the `docify` CLI, so it uses the same store (`~/.config/docify`, or `DOCIFY_HOME`) and the same preparation locks as the CLI and the web UI.
 
 ```bash
 bun link                  # once, so ~/.bun/bin/docify exists

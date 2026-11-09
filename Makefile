@@ -19,7 +19,7 @@ link: ## Put `docify` on PATH (~/.bun/bin) pointing at this checkout
 setup: ## Install Graphify and download the embedding model (needs the network)
 	bun src/cli.ts setup
 
-test: ## Run the test suite (set DOCIFY_MODELS_DIR if the model is not in ~/.cache/docify/models)
+test: ## Run the test suite (set DOCIFY_MODELS_DIR if the model is not in the store's models/)
 	bun test
 
 typecheck: ## Type-check the TypeScript sources
