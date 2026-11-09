@@ -99,6 +99,9 @@
     error = "";
     fieldError = null;
     submitting = true;
+    // What happens after adding is fixed at submit time; edits made while the request runs must not change it.
+    const graph = buildGraph;
+    const shouldPrepare = prepareAfter;
     const body = {
       library: libraryValue.trim(),
       version: versionValue.trim(),
@@ -117,8 +120,6 @@
       submitting = false;
       return;
     }
-    const graph = buildGraph;
-    const shouldPrepare = prepareAfter;
     reset();
     let prepareError = "";
     if (shouldPrepare) {
@@ -248,14 +249,14 @@
           <div class="text-[13px] text-label">Prepare after adding</div>
           <div class="mt-px text-[11px] leading-[14px] text-label2">Download, index and embed right away</div>
         </div>
-        <Switch bind:checked={prepareAfter} label="Prepare after adding" hideLabel />
+        <Switch bind:checked={prepareAfter} label="Prepare after adding" hideLabel disabled={submitting} />
       </div>
       <div class={row()}>
         <div class="min-w-0 flex-1">
           <div class="text-[13px] {prepareAfter ? 'text-label' : 'text-label2'}">Build semantic graph</div>
           <div class="mt-px text-[11px] leading-[14px] text-label2">Uses the LLM from Settings. Takes several minutes.</div>
         </div>
-        <Switch bind:checked={buildGraph} label="Build semantic graph" hideLabel />
+        <Switch bind:checked={buildGraph} label="Build semantic graph" hideLabel disabled={submitting || !prepareAfter} />
       </div>
     </div>
   </form>

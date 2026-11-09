@@ -42,6 +42,8 @@
   --hig-warn-text: rgb(178 72 0);
   --hig-bad: rgb(255 56 60);
   --hig-bad-text: rgb(215 0 21);
+  /* Fill behind white text on destructive buttons: 5.38:1. The brighter --hig-bad is for dots and tints only. */
+  --hig-bad-fill: rgb(215 0 21);
   --hig-code: rgb(248 248 250);
   --hig-seg-on: #fff;
   --hig-node-concept: rgb(0 136 255);
@@ -129,6 +131,7 @@
   --color-warn-text: var(--hig-warn-text);
   --color-bad: var(--hig-bad);
   --color-bad-text: var(--hig-bad-text);
+  --color-bad-fill: var(--hig-bad-fill);
   --color-code: var(--hig-code);
   --color-seg-on: var(--hig-seg-on);
   --shadow-float: var(--hig-shadow);

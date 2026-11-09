@@ -1,3 +1,5 @@
+import { matchShortcut } from "./shortcuts.ts";
+
 // Which view the window shows. "source" shows one source's page; "new-source" opens the add sheet over it.
 export type View = "search" | "graph" | "logs" | "settings" | "source";
 
@@ -58,8 +60,7 @@ export const shortcuts: { code: string; label: string; run: () => void }[] = [
 ];
 
 export function handleShortcut(event: KeyboardEvent): boolean {
-  if (!event.altKey || event.metaKey || event.ctrlKey) return false;
-  const hit = shortcuts.find((s) => s.code === event.code);
+  const hit = matchShortcut(event, shortcuts, document.querySelector("dialog[open]") !== null);
   if (!hit) return false;
   event.preventDefault();
   hit.run();

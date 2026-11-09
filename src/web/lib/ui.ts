@@ -30,7 +30,7 @@ export const button = tv({
       // Kept for older call sites: a secondary button whose label is the accent.
       accent: "border border-sep bg-surface text-accent-text shadow-[0_1px_1px_rgb(0_0_0/0.05)] hover:bg-fill2",
       danger: "border border-sep bg-surface text-bad-text shadow-[0_1px_1px_rgb(0_0_0/0.05)] hover:bg-fill2",
-      confirm: "bg-bad text-white hover:brightness-110",
+      confirm: "bg-bad-fill text-white hover:brightness-110",
       ghost: "text-label hover:bg-fill",
       link: "px-0 text-accent-text hover:underline",
     },

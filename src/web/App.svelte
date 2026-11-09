@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import ThemeSwitch from "./components/ThemeSwitch.svelte";
   import AddSourceSheet from "./views/AddSourceSheet.svelte";
   import Graph from "./views/Graph.svelte";
   import Logs from "./views/Logs.svelte";
@@ -39,6 +40,7 @@
         {#each sources.list ?? [] as s (s.id)}<option value={`source:${s.id}`}>{s.id}</option>{/each}
         <option value="new-source">New source…</option>
       </select>
+      <ThemeSwitch />
     </div>
     <!-- Search stays mounted so its results survive a visit to another view. -->
     <main class="flex min-h-0 flex-1 flex-col" class:hidden={nav.view !== "search"}>
