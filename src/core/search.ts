@@ -3,6 +3,10 @@ import { Docify as DocifyClass, DocifyError, pidAlive } from "./docify.ts";
 import { embedQuery, embeddingIdentity } from "./embed.ts";
 import { countTokens, TOKENIZER } from "./tokens.ts";
 import { extractSymbols, methodToken, squash } from "./symbols.ts";
+import { headingLines } from "./chunk.ts";
+import { sha256 } from "./hash.ts";
+import { readFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 
 export type Mode = "lexical" | "vector" | "graph" | "combined";
 
@@ -401,6 +405,26 @@ function citationOf(r: PassageRow): Citation {
 // Headings and paths come from the documents, so they are kept to one line.
 const oneLine = (s: string) => s.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 300);
 
+// One line of at most maxTokens tokens, ending in an ellipsis when cut. For echoed input and labels.
+function clip(s: string, maxTokens: number): string {
+  const t = oneLine(s);
+  if (countTokens(t) <= maxTokens) return t;
+  let lo = 0;
+  let hi = t.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (countTokens(t.slice(0, mid) + "…") <= maxTokens) lo = mid;
+    else hi = mid - 1;
+  }
+  if (lo > 0 && /[\ud800-\udbff]/.test(t[lo - 1]!)) lo--;
+  return t.slice(0, lo) + "…";
+}
+
+// The first `max` items, then "and N more".
+function capList(items: string[], max: number): string {
+  return items.length > max ? `${items.slice(0, max).join(", ")} and ${items.length - max} more` : items.join(", ");
+}
+
 export function citationLine(c: Citation, id: string): string {
   const where = oneLine(c.url ?? c.document);
   const heading = c.headingPath.length ? ` > ${oneLine(c.headingPath.join(" > "))}` : "";
@@ -465,61 +489,88 @@ export function truncateExcerpt(text: string, maxTokens: number): string {
 
 export async function search(docify: Docify, input: SearchInput): Promise<SearchResult> {
   const t0 = performance.now();
+  const q = checkQuery(input, t0);
+  const nonce = newNonce();
+  docify.recoverInterrupted();
+  // Embed before the read snapshot: an await between choosing generations and reading
+  // them would let a writer activate and garbage-collect them in between.
+  await embedFor(docify, q);
+  const snapshot = docify.db.transaction(() => rankSnapshot(docify, q))();
+  return finishSearch(docify, q, snapshot, nonce);
+}
+
+interface PreparedQuery {
+  input: SearchInput;
+  query: string;
+  mode: Mode;
+  graphWeight: number;
+  maxTokens: number;
+  qv: Float32Array | null;
+  timings: Record<string, number>;
+  t0: number;
+}
+
+function checkQuery(input: SearchInput, t0: number): PreparedQuery {
   const mode: Mode = input.mode ?? "combined";
   const graphWeight = Math.max(0, Math.min(input.graphWeight ?? DEFAULT_GRAPH_WEIGHT, 1));
   const maxTokens = Math.max(200, Math.min(input.maxTokens ?? 2000, 20000));
   const query = input.query.trim();
   if (!query) throw new DocifyError("invalid_input", "query is empty");
-  const timings: Record<string, number> = {};
-  const nonce = newNonce();
-  docify.recoverInterrupted();
-  // Embed before the read snapshot: an await between choosing generations and reading
-  // them would let a writer activate and garbage-collect them in between.
-  let qv: Float32Array | null = null;
-  if (mode === "vector" || mode === "combined") {
-    const te = performance.now();
-    qv = await embedQuery(docify.config, query);
-    timings.embedMs = Math.round(performance.now() - te);
+  return { input, query, mode, graphWeight, maxTokens, qv: null, timings: {}, t0 };
+}
+
+async function embedFor(docify: Docify, q: PreparedQuery) {
+  if (q.mode !== "vector" && q.mode !== "combined") return;
+  const te = performance.now();
+  q.qv = await embedQuery(docify.config, q.query);
+  q.timings.embedMs = Math.round(performance.now() - te);
+}
+
+type Snapshot = ReturnType<typeof rankSnapshot>;
+
+// Scope and ranking reads; the caller runs this inside a read transaction.
+function rankSnapshot(docify: Docify, { input, query, mode, graphWeight, qv, timings }: PreparedQuery) {
+  const scope = resolveScope(docify, input);
+  if (scope.status) return { scope, gens: [] as number[], ranked: null, missingSymbol: null as string | null };
+  const gens = [...scope.generations.keys()];
+  const vectorGens = gens.filter((g) => scope.generations.get(g)!.generation.embedding_model === embeddingIdentity(docify.config));
+  const graphGens = gens.filter((g) => scope.generations.get(g)!.generation.graph_status === "ok" || scope.generations.get(g)!.generation.graph_status === "partial");
+  const tr = performance.now();
+  const lex = mode === "lexical" || mode === "combined" ? lexicalRank(docify, query, gens) : [];
+  const vec = qv ? vectorRank(docify, qv, vectorGens) : [];
+  const seedPassages = mode === "combined" ? [...lex.slice(0, 3), ...vec.slice(0, 3)].map((r) => r.rowid) : [];
+  const gr = mode === "graph" || (mode === "combined" && graphWeight > 0) ? graphRank(docify, query, graphGens, seedPassages) : [];
+  timings.rankMs = Math.round(performance.now() - tr);
+  const lists: [string, { rowid: number; score: number }[]][] = [
+    ["lexical", lex],
+    ["vector", vec],
+    ["graph", gr],
+  ];
+  const fused = new Map<number, { score: number; via: string[] }>();
+  for (const [name, list] of lists) {
+    const weight = mode !== "combined" ? 1 : name === "graph" ? graphWeight : name === "lexical" ? Math.max(0, docify.config.lexicalWeight) : 1;
+    if (!weight) continue;
+    list.forEach((r, i) => {
+      const e = fused.get(r.rowid) ?? { score: 0, via: [] };
+      e.score += weight / (RRF_K + i + 1);
+      e.via.push(`${name}#${i + 1}`);
+      fused.set(r.rowid, e);
+    });
   }
-  const snapshot = docify.db.transaction(() => {
-    const scope = resolveScope(docify, input);
-    if (scope.status) return { scope, gens: [] as number[], ranked: null, missingSymbol: null as string | null };
-    const gens = [...scope.generations.keys()];
-    const vectorGens = gens.filter((g) => scope.generations.get(g)!.generation.embedding_model === embeddingIdentity(docify.config));
-    const graphGens = gens.filter((g) => scope.generations.get(g)!.generation.graph_status === "ok" || scope.generations.get(g)!.generation.graph_status === "partial");
-    const tr = performance.now();
-    const lex = mode === "lexical" || mode === "combined" ? lexicalRank(docify, query, gens) : [];
-    const vec = qv ? vectorRank(docify, qv, vectorGens) : [];
-    const seedPassages = mode === "combined" ? [...lex.slice(0, 3), ...vec.slice(0, 3)].map((r) => r.rowid) : [];
-    const gr = mode === "graph" || (mode === "combined" && graphWeight > 0) ? graphRank(docify, query, graphGens, seedPassages) : [];
-    timings.rankMs = Math.round(performance.now() - tr);
-    const lists: [string, { rowid: number; score: number }[]][] = [
-      ["lexical", lex],
-      ["vector", vec],
-      ["graph", gr],
-    ];
-    const fused = new Map<number, { score: number; via: string[] }>();
-    for (const [name, list] of lists) {
-      const weight = mode !== "combined" ? 1 : name === "graph" ? graphWeight : name === "lexical" ? Math.max(0, docify.config.lexicalWeight) : 1;
-      if (!weight) continue;
-      list.forEach((r, i) => {
-        const e = fused.get(r.rowid) ?? { score: 0, via: [] };
-        e.score += weight / (RRF_K + i + 1);
-        e.via.push(`${name}#${i + 1}`);
-        fused.set(r.rowid, e);
-      });
-    }
-    // An exact API symbol named in the query outranks fused similarity.
-    for (const rowid of exactSymbolHits(docify, query, gens)) {
-      const e = fused.get(rowid) ?? { score: 0, via: [] };
-      e.score += 2 / (RRF_K + 1);
-      e.via.push("symbol");
-      fused.set(rowid, e);
-    }
-    const order = [...fused].sort((a, b) => b[1].score - a[1].score);
-    const passages = loadPassages(docify, order.slice(0, CANDIDATES).map(([rowid]) => rowid), gens);
-    return { scope, gens, ranked: { order, passages, lex, vec, gr }, missingSymbol: symbolsAbsent(docify, query, gens) };
-  })();
+  // An exact API symbol named in the query outranks fused similarity.
+  for (const rowid of exactSymbolHits(docify, query, gens)) {
+    const e = fused.get(rowid) ?? { score: 0, via: [] };
+    e.score += 2 / (RRF_K + 1);
+    e.via.push("symbol");
+    fused.set(rowid, e);
+  }
+  const order = [...fused].sort((a, b) => b[1].score - a[1].score);
+  const passages = loadPassages(docify, order.slice(0, CANDIDATES).map(([rowid]) => rowid), gens);
+  return { scope, gens, ranked: { order, passages, lex, vec, gr }, missingSymbol: symbolsAbsent(docify, query, gens) };
+}
+
+// Evidence gate, packing and rendering. Reads nothing from the store.
+function finishSearch(docify: Docify, { query, mode, maxTokens, timings, t0 }: PreparedQuery, snapshot: Snapshot, nonce: string): SearchResult {
   const scope = snapshot.scope;
   const base = {
     query,
@@ -675,14 +726,20 @@ export interface SearchManyResult {
 type ManyDraft = Omit<SearchManyResult, "tokens" | "text" | "mode" | "maxTokens" | "tokenizer">;
 
 // Every status line comes before the first excerpt, so no document text can precede or forge one.
+// Echoed queries and warnings are clipped and lists capped, so the per-query status lines
+// stay small enough to share one budget.
+const MANY_QUERY_TOKENS = 30;
+const MANY_WARNING_TOKENS = 60;
+const MANY_LIST_ITEMS = 10;
+
 function renderMany(r: ManyDraft, tokens: number, nonce: string): string {
   const lines = [...headerLines(nonce), `queries: ${r.queries.length} | tokens: ${tokens}`];
-  for (const w of r.warnings) lines.push(`warning: ${oneLine(w)}`);
-  if (r.notIndexed.length) lines.push(`not indexed: ${r.notIndexed.join(", ")}`);
-  if (r.availableVersions) for (const [lib, v] of Object.entries(r.availableVersions)) lines.push(`available ${lib} versions: ${v.map((x) => x ?? "unknown").join(", ")}`);
+  for (const w of r.warnings) lines.push(`warning: ${clip(w, MANY_WARNING_TOKENS)}`);
+  if (r.notIndexed.length) lines.push(`not indexed: ${capList(r.notIndexed, MANY_LIST_ITEMS)}`);
+  if (r.availableVersions) for (const [lib, v] of Object.entries(r.availableVersions)) lines.push(`available ${lib} versions: ${capList(v.map((x) => x ?? "unknown"), MANY_LIST_ITEMS)}`);
   r.queries.forEach((q, i) => {
-    lines.push("", `query ${i + 1}: ${oneLine(q.query).split(nonce).join("?".repeat(nonce.length))}`, `status: ${q.status}`);
-    for (const w of q.warnings) lines.push(`warning: ${oneLine(w)}`);
+    lines.push("", `query ${i + 1}: ${clip(q.query, MANY_QUERY_TOKENS).split(nonce).join("?".repeat(nonce.length))}`, `status: ${q.status}`);
+    for (const w of q.warnings) lines.push(`warning: ${clip(w, MANY_WARNING_TOKENS)}`);
     lines.push(`hits: ${q.hits.length ? q.hits.map((n) => `[${n}]`).join(" ") : "none"}`);
     if (q.omitted) lines.push(`${q.omitted} more matching passages omitted to stay within the token budget.`);
   });
@@ -708,8 +765,13 @@ export async function searchMany(docify: Docify, input: SearchManyInput): Promis
   const maxTokens = Math.max(200, Math.min(common.maxTokens ?? 2000, 20000));
   const nonce = newNonce();
 
-  const results: SearchResult[] = [];
-  for (const query of queries) results.push(await search(docify, { ...common, query, maxTokens: MANY_INNER_BUDGET }));
+  // Embeddings first (the only await), then every query ranks in one read transaction,
+  // so all of them see the same generations and pins.
+  docify.recoverInterrupted();
+  const prepared = queries.map((query) => checkQuery({ ...common, query, maxTokens: MANY_INNER_BUDGET }, performance.now()));
+  for (const q of prepared) await embedFor(docify, q);
+  const snapshots = docify.db.transaction(() => prepared.map((q) => rankSnapshot(docify, q)))();
+  const results = prepared.map((q, i) => finishSearch(docify, q, snapshots[i]!, newNonce()));
 
   // Warnings every query reported (scope warnings) are shown once at the top.
   const shared = results[0]!.warnings.filter((w) => results.every((r) => r.warnings.includes(w)));
@@ -778,23 +840,30 @@ export async function searchMany(docify: Docify, input: SearchManyInput): Promis
     }
   }
 
-  // Same fixed-point enforcement as finalize(): the last picked hit goes first, then warnings.
+  // Same fixed-point enforcement as finalize(): the last picked hit goes first, then shared
+  // warnings, then per-query warnings. If the status lines alone still do not fit, refuse.
   const hits = [...picked];
   let dropped = 0;
+  let dropQueryWarnings = false;
   for (;;) {
     const draft = skeleton(hits);
     if (dropped) draft.warnings = [...draft.warnings.slice(0, -dropped), `${dropped} more warnings omitted to stay within the token budget`];
+    if (dropQueryWarnings) {
+      const n = draft.queries.reduce((sum, q) => sum + q.warnings.length, 0);
+      for (const q of draft.queries) q.warnings = [];
+      draft.warnings.push(`${n} per-query warnings omitted to stay within the token budget`);
+    }
     let tokens = countTokens(renderMany(draft, 0, nonce));
     let text = renderMany(draft, tokens, nonce);
     for (let i = 0; i < 3 && countTokens(text) !== tokens; i++) {
       tokens = countTokens(text);
       text = renderMany(draft, tokens, nonce);
     }
-    if (tokens <= maxTokens || (!hits.length && dropped >= shared.length)) {
-      return { ...draft, mode, maxTokens, tokens, tokenizer: TOKENIZER, text };
-    }
+    if (tokens <= maxTokens) return { ...draft, mode, maxTokens, tokens, tokenizer: TOKENIZER, text };
     if (hits.length) hits.pop();
-    else dropped++;
+    else if (dropped < shared.length) dropped++;
+    else if (!dropQueryWarnings && results.some((r) => r.warnings.some((w) => !shared.includes(w)))) dropQueryWarnings = true;
+    else throw new DocifyError("invalid_input", `max_tokens ${maxTokens} is too small for ${queries.length} queries (their status lines need ${tokens}); raise max_tokens or send fewer queries`);
   }
 }
 
@@ -882,18 +951,32 @@ export interface OutlineResult {
 // Lists documents and their sections from the active generation only. Paths, URLs and
 // headings are document text, so each is kept to one line and the whole listing sits in a
 // nonce frame like excerpts: nothing inside can start a line that reads as a status line.
+// Echoed input (source ids, paths, headings) is clipped to this many tokens.
+const ECHO_TOKENS = 30;
+
+const overBudget = (tokens: number, maxTokens: number) =>
+  new DocifyError("invalid_input", `max_tokens ${maxTokens} is too small for this response (it needs ${tokens}); raise max_tokens`);
+
 export function outline(docify: Docify, input: OutlineInput): OutlineResult {
-  const maxTokens = input.maxTokens ?? 2000;
+  // One read transaction so the generation cannot change, or be collected, between the reads.
+  return docify.db.transaction(() => outlineSnapshot(docify, input))();
+}
+
+function outlineSnapshot(docify: Docify, input: OutlineInput): OutlineResult {
+  const maxTokens = Math.max(200, Math.min(input.maxTokens ?? 2000, 20000));
   const nonce = newNonce();
   const base = { source: input.source, generation: null as number | null, documents: [] as OutlineDocument[], omittedDocuments: 0, omittedSections: 0 };
   const plain = (status: OutlineResult["status"], message: string): OutlineResult => {
     const text = `${HEADER}\nstatus: ${status}\n${message}`;
-    return { ...base, status, tokens: countTokens(text), text };
+    const tokens = countTokens(text);
+    if (tokens > maxTokens) throw overBudget(tokens, maxTokens);
+    return { ...base, status, tokens, text };
   };
   const src = docify.getSource(input.source);
-  if (!src) return plain("source_unknown", `No source with id ${oneLine(input.source)}. Call docs_sources for the registered ids.`);
+  if (!src) return plain("source_unknown", `No source with id ${clip(input.source, ECHO_TOKENS)}. Call docs_sources for the registered ids.`);
+  const srcId = clip(src.id, ECHO_TOKENS);
   const gen = src.active_generation ? docify.getGeneration(src.active_generation) : null;
-  if (!gen || gen.status !== "active") return plain("not_indexed", `Source ${src.id} has no prepared generation. Run docify prepare ${src.id}.`);
+  if (!gen || gen.status !== "active") return plain("not_indexed", `Source ${srcId} has no prepared generation. Run docify prepare ${srcId}.`);
 
   const prefix = input.path ?? "";
   const rows = docify.db
@@ -924,7 +1007,7 @@ export function outline(docify: Docify, input: OutlineInput): OutlineResult {
   if (latest?.status === "failed") warnings.push(`the last refresh failed; generation ${gen.id} is served and may be outdated`);
   const totalSections = docs.reduce((n, d) => n + d.sections.length, 0);
   const libVersion = `${src.library}@${src.version ?? "unknown"}`;
-  const summary = `source: ${src.id}${src.id === libVersion ? "" : ` (${libVersion})`} | generation ${gen.id} | ${docs.length} documents, ${totalSections} sections${prefix ? ` under path ${oneLine(prefix)}` : ""}`;
+  const summary = `source: ${srcId}${src.id === libVersion ? "" : ` (${clip(libVersion, ECHO_TOKENS)})`} | generation ${gen.id} | ${docs.length} documents, ${totalSections} sections${prefix ? ` under path ${clip(prefix, ECHO_TOKENS)}` : ""}`;
   if (!docs.length) {
     const r = plain("no_match", `${summary}\nNo documents match this path prefix. Call docs_outline without path to see all documents.`);
     return { ...r, generation: gen.id };
@@ -988,6 +1071,7 @@ export function outline(docify: Docify, input: OutlineInput): OutlineResult {
     if (!last.sections.length) shown.pop();
     out = settle(shown, docs.length - shown.length, totalSections - count());
   }
+  if (out.tokens > maxTokens) throw overBudget(out.tokens, maxTokens);
   return {
     ...base,
     status: "ok",
@@ -998,6 +1082,10 @@ export function outline(docify: Docify, input: OutlineInput): OutlineResult {
     ...out,
   };
 }
+
+// Open lists at most this many alternative sections, and this many suggestions.
+const OPEN_MATCHES = 3;
+const OPEN_LIST_ITEMS = 10;
 
 export type OpenStatus = "ok" | "not_found" | "not_indexed" | "source_unknown";
 
@@ -1028,10 +1116,26 @@ const normHeading = (s: string) => s.replace(/`/g, "").trim().toLowerCase();
 const startsWithHeading = (text: string) => /^#{1,6}\s/.test(text);
 
 // Sections whose heading equals `heading`, as [start, end) ranges over passages in ord order.
-// A section runs while passages keep its heading path as a prefix, and stops at a sibling
-// that repeats the same heading.
-function findSections(rows: PassageRow[], heading: string) {
+// With the normalized document, a section runs from its heading line to the next heading of
+// the same or a higher level; that also splits repeated parents that have no body of their own,
+// which passages alone cannot show. Without it, a section runs while passages keep its heading
+// path as a prefix, and stops at a sibling that repeats the same heading.
+function findSections(rows: PassageRow[], heading: string, lines: string[] | null) {
   const want = normHeading(heading);
+  if (lines) {
+    const heads = headingLines(lines);
+    const out: { start: number; end: number; path: string[] }[] = [];
+    heads.forEach((h, i) => {
+      if (normHeading(h.path.at(-1)!) !== want) return;
+      const stop = heads.slice(i + 1).find((x) => x.level <= h.level)?.line ?? Infinity;
+      const start = rows.findIndex((r) => r.start_line >= h.line && r.start_line < stop);
+      if (start < 0) return;
+      let end = start;
+      while (end < rows.length && rows[end]!.start_line < stop) end++;
+      out.push({ start, end, path: h.path });
+    });
+    return out;
+  }
   const paths = rows.map((r) => JSON.parse(r.heading_path) as string[]);
   const has = (i: number, prefix: string[]) => prefix.every((h, k) => paths[i]![k] === h);
   const out: { start: number; end: number; path: string[] }[] = [];
@@ -1049,6 +1153,20 @@ function findSections(rows: PassageRow[], heading: string) {
   return out;
 }
 
+// The normalized markdown the passages were cut from, or null when it is gone or changed.
+// Built from config.home, never from the stored paths, so a moved store still finds it.
+function normalizedLines(docify: Docify, sourceId: string, gen: GenerationRow, file: string, sha: string): string[] | null {
+  if (!gen.snapshot_dir) return null;
+  const rel = relative(gen.snapshot_dir, file);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
+  try {
+    const text = readFileSync(join(docify.config.home, "snapshots", sourceId, String(gen.id), rel), "utf8");
+    return sha256(text) === sha ? text.split("\n") : null;
+  } catch {
+    return null; // collected or never written: fall back to passage heading paths
+  }
+}
+
 function closePaths(all: string[], path: string): string[] {
   const stem = (p: string) => (p.split(/[/#?]/).filter(Boolean).at(-1) ?? p).replace(/\.[a-z0-9]+$/i, "").toLowerCase();
   const want = stem(path);
@@ -1064,30 +1182,39 @@ export function open(docify: Docify, input: OpenInput): OpenResult {
   const heading = input.heading?.trim() ? input.heading.trim() : null;
   const base = { source: input.source, path: input.path, heading, maxTokens, section: null, passages: [], omitted: 0, continueFrom: null, otherMatches: [], suggestions: [] };
   const nonce = newNonce();
+  // Suggestions are capped, then dropped from the end until the text fits.
   const plain = (status: OpenStatus, message: string, suggestions: string[] = [], label = "close matches"): OpenResult => {
-    const lines = [HEADER, `status: ${status}`, message];
-    if (suggestions.length) lines.push(`${label}: ${suggestions.map(oneLine).join(", ")}`);
-    const text = lines.join("\n");
-    return { ...base, status, text, tokens: countTokens(text), suggestions };
+    const items = suggestions.map((x) => clip(x, ECHO_TOKENS));
+    for (let shown = Math.min(items.length, OPEN_LIST_ITEMS); ; shown--) {
+      const lines = [HEADER, `status: ${status}`, message];
+      if (items.length) lines.push(shown ? `${label}: ${items.slice(0, shown).join(", ")}${items.length > shown ? ` and ${items.length - shown} more` : ""}` : `${label}: ${items.length} omitted to stay within the token budget`);
+      const text = lines.join("\n");
+      const tokens = countTokens(text);
+      if (tokens <= maxTokens) return { ...base, status, text, tokens, suggestions };
+      if (shown <= 0) throw overBudget(tokens, maxTokens);
+    }
   };
 
   // One read transaction so the generation cannot change between the queries below.
   return docify.db.transaction((): OpenResult => {
     const src = docify.getSource(input.source);
     if (!src) {
-      const known = docify.listSourceRows().map((s) => s.id);
-      return plain("source_unknown", `No source with id ${oneLine(input.source)}. Known sources: ${known.join(", ") || "none"}.`);
+      const known = docify.listSourceRows().map((s) => clip(s.id, ECHO_TOKENS));
+      return plain("source_unknown", `No source with id ${clip(input.source, ECHO_TOKENS)}. Known sources: ${capList(known, OPEN_LIST_ITEMS) || "none"}.`);
     }
+    const srcId = clip(src.id, ECHO_TOKENS);
     const gen = src.active_generation ? docify.getGeneration(src.active_generation) : null;
-    if (!gen || gen.status !== "active") return plain("not_indexed", `Source ${src.id} has no prepared generation. Run docify prepare ${src.id}.`);
+    if (!gen || gen.status !== "active") return plain("not_indexed", `Source ${srcId} has no prepared generation. Run docify prepare ${srcId}.`);
 
     const urlPath = input.path.split("#")[0]!;
     const doc = docify.db
-      .query<{ id: number }, [number, string, string]>("SELECT id FROM documents WHERE generation_id = ? AND (path = ? OR url = ?) ORDER BY id LIMIT 1")
+      .query<{ id: number; normalized_file: string; normalized_sha256: string }, [number, string, string]>(
+        "SELECT id, normalized_file, normalized_sha256 FROM documents WHERE generation_id = ? AND (path = ? OR url = ?) ORDER BY id LIMIT 1",
+      )
       .get(gen.id, input.path, urlPath);
     if (!doc) {
       const all = docify.db.query<{ path: string; url: string | null }, [number]>("SELECT path, url FROM documents WHERE generation_id = ?").all(gen.id);
-      return plain("not_found", `No document ${oneLine(input.path)} in ${src.id}.`, closePaths(all.map((d) => d.url ?? d.path), input.path));
+      return plain("not_found", `No document ${clip(input.path, ECHO_TOKENS)} in ${srcId}.`, closePaths(all.map((d) => d.url ?? d.path), input.path));
     }
     const rowids = docify.db.query<{ rowid: number }, [number]>("SELECT rowid FROM passages WHERE document_id = ? ORDER BY ord").all(doc.id).map((r) => r.rowid);
     const loaded = loadPassages(docify, rowids, [gen.id]);
@@ -1096,10 +1223,10 @@ export function open(docify: Docify, input: OpenInput): OpenResult {
     let section: string[] | null = null;
     let otherMatches: OpenResult["otherMatches"] = [];
     if (heading) {
-      const found = findSections(rows, heading);
+      const found = findSections(rows, heading, normalizedLines(docify, src.id, gen, doc.normalized_file, doc.normalized_sha256));
       if (!found.length) {
-        const headings = [...new Set(rows.flatMap((r) => JSON.parse(r.heading_path) as string[]))].slice(0, 30);
-        return plain("not_found", `No heading "${oneLine(heading)}" in ${oneLine(input.path)} of ${src.id}.`, headings, "headings in this document");
+        const headings = [...new Set(rows.flatMap((r) => JSON.parse(r.heading_path) as string[]))];
+        return plain("not_found", `No heading "${clip(heading, ECHO_TOKENS)}" in ${clip(input.path, ECHO_TOKENS)} of ${srcId}.`, headings, "headings in this document");
       }
       const [first, ...rest] = found;
       otherMatches = rest.map((m) => ({ id: rows[m.start]!.id, headingPath: m.path }));
@@ -1109,11 +1236,15 @@ export function open(docify: Docify, input: OpenInput): OpenResult {
 
     const cites = rows.map(citationOf);
     const doc0 = cites[0];
+    // Document-derived labels are clipped to `label` tokens; `tight` is used when even no passage fits.
+    let label = 100;
+    let shownMatches = OPEN_MATCHES;
     const render = (n: number, cut: string | null, tokens: number) => {
       const lines = [...headerLines(nonce), `status: ok | tokens: ${tokens}`];
-      if (doc0) lines.push(`document: ${doc0.library}@${doc0.version ?? "unknown"} | ${oneLine(doc0.url ?? doc0.document)} | passages ${n} of ${rows.length}`, `preserved source: ${oneLine(doc0.rawFile)}`);
-      if (section) lines.push(`section: ${oneLine(section.join(" > "))}`);
-      for (const m of otherMatches) lines.push(`also matches: ${oneLine(m.headingPath.join(" > "))} (id ${m.id})`);
+      if (doc0) lines.push(`document: ${clip(`${doc0.library}@${doc0.version ?? "unknown"}`, label)} | ${clip(doc0.url ?? doc0.document, label)} | passages ${n} of ${rows.length}`, `preserved source: ${clip(doc0.rawFile, label)}`);
+      if (section) lines.push(`section: ${clip(section.join(" > "), label)}`);
+      for (const m of otherMatches.slice(0, shownMatches)) lines.push(`also matches: ${clip(m.headingPath.join(" > "), label)} (id ${m.id})`);
+      if (otherMatches.length > shownMatches) lines.push(`and ${otherMatches.length - shownMatches} more matches; docs_outline lists every section id`);
       for (let i = 0; i < n; i++) {
         const excerpt = i === n - 1 && cut !== null ? cut : rows[i]!.text;
         lines.push("", citationLine(cites[i]!, rows[i]!.id), ...framed(excerpt, nonce));
@@ -1134,6 +1265,12 @@ export function open(docify: Docify, input: OpenInput): OpenResult {
     };
 
     let best = measure(0, null);
+    if (best.tokens > maxTokens) {
+      label = 25;
+      shownMatches = 0;
+      best = measure(0, null);
+      if (best.tokens > maxTokens) throw overBudget(best.tokens, maxTokens);
+    }
     let n = 0;
     let cut: string | null = null;
     for (let i = 1; i <= rows.length; i++) {

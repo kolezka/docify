@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll, spyOn } from "bun:test";
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -152,4 +152,59 @@ test("docs_search takes exactly one of query or queries", async () => {
   expect(many.text).toContain("queries: 2 | tokens: ");
   await expect(searchMany(d, { ...lexical, queries: [] })).rejects.toThrow("1 to 8");
   await expect(searchMany(d, { ...lexical, queries: ["ok", "  "] })).rejects.toThrow("query 2 is empty");
+});
+
+test("every query of one call reads the same generations", async () => {
+  // A loopback embedder that lets the test act between two query embeddings.
+  let onEmbed: (() => void) | null = null;
+  const stub = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const { input } = (await req.json()) as { input: string[] };
+      onEmbed?.();
+      return Response.json({ embeddings: input.map(() => [1, 0, 0, 0]) });
+    },
+  });
+  const h = tempDir();
+  const dir = writeDocs(join(tempDir("docify-src-"), "gen"), { "guide.md": "# Guide\n\n## Notes\n\nneedle oldvalue\n" });
+  const x = newDocify(h, { embeddingProvider: "ollama", embeddingUrl: `http://127.0.0.1:${stub.port}`, embeddingModel: "fake", embeddingDims: 4, embeddingQueryPrefix: "" });
+  try {
+    x.addSource({ library: "gen", version: "1", kind: "local", locator: dir });
+    const g1 = (await x.prepare("gen@1", { graphRunner: fakeGraph })).generationId;
+    writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Notes\n\nneedle newvalue\n");
+    const g2 = (await x.prepare("gen@1", { graphRunner: fakeGraph })).generationId;
+    const activate = (on: number, off: number) =>
+      x.db.transaction(() => {
+        x.db.run("UPDATE generations SET status = 'superseded' WHERE id = ?", [off]);
+        x.db.run("UPDATE generations SET status = 'active' WHERE id = ?", [on]);
+        x.db.run("UPDATE sources SET active_generation = ? WHERE id = 'gen@1'", [on]);
+      })();
+    // Serve g1 again; the second query embedding activates g2, as a prepare finishing mid-call would.
+    activate(g1, g2);
+    let calls = 0;
+    onEmbed = () => {
+      if (++calls === 2) activate(g2, g1);
+    };
+    const r = await searchMany(x, { library: "gen", mode: "combined", project: h, queries: ["needle", "guide needle"], maxTokens: 4000 });
+    expect(calls).toBe(2);
+    expect(r.hits.length).toBeGreaterThan(0);
+    expect(new Set(r.hits.map((hit) => hit.citation.generation)).size).toBe(1);
+  } finally {
+    x.close();
+    stub.stop(true);
+    rmSync(h, { recursive: true, force: true });
+  }
+});
+
+test("the status envelope of many long queries never exceeds max_tokens", async () => {
+  const long = "needle ".repeat(100).trim();
+  const r = await searchMany(d, { ...lexical, queries: Array(8).fill(long), maxTokens: 500 });
+  expect(r.tokens).toBe(countTokens(r.text));
+  expect(r.tokens).toBeLessThanOrEqual(500);
+  expect(r.text.split("\n").filter((l) => l.startsWith("status: "))).toHaveLength(8);
+  expect(r.text).toContain("query 8: needle needle");
+  expect(r.text).toContain("…");
+  // Eight status blocks cannot fit in 200 tokens: say so instead of going over.
+  await expect(searchMany(d, { ...lexical, queries: Array(8).fill(long), maxTokens: 200 })).rejects.toThrow("too small for 8 queries");
 });

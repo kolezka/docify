@@ -139,3 +139,57 @@ test("headings and paths cannot forge status lines or close the frame", () => {
   const at = r.text.indexOf("source_unknown");
   expect(at).toBeGreaterThan(r.text.indexOf(`<<<doc ${nonce}`));
 });
+
+test("one read snapshot: a writer activating and collecting between reads does not change the answer", async () => {
+  const h = tempDir();
+  const dir = writeDocs(join(tempDir("docify-src-"), "race"), { "guide.md": "# Guide\n\n## Notes\n\nOld body.\n" });
+  const cfg = { embeddingProvider: "openai", embeddingBaseUrlEnv: URL_ENV, embeddingApiKeyEnv: KEY_ENV, embeddingModel: "m", embeddingDims: 3 };
+  const x = newDocify(h, cfg);
+  const writer = newDocify(h, { ...cfg, keepGenerations: 1 });
+  try {
+    x.addSource({ library: "race", version: "1", kind: "local", locator: dir });
+    const g1 = (await x.prepare("race@1", { graphRunner: fakeGraph })).generationId;
+    writeFileSync(join(dir, "guide.md"), "# Guide\n\n## Notes\n\nNew body.\n");
+    const g2 = (await x.prepare("race@1", { graphRunner: fakeGraph })).generationId;
+    const activate = (db: Docify["db"], on: number, off: number) =>
+      db.transaction(() => {
+        db.run("UPDATE generations SET status = 'superseded' WHERE id = ?", [off]);
+        db.run("UPDATE generations SET status = 'active' WHERE id = ?", [on]);
+        db.run("UPDATE sources SET active_generation = ? WHERE id = 'race@1'", [on]);
+      })();
+    activate(x.db, g1, g2);
+    // The moment outline has picked g1, another connection activates g2 and deletes g1.
+    const get = x.getGeneration.bind(x);
+    let fired = false;
+    x.getGeneration = (id: number) => {
+      const row = get(id);
+      if (!fired && id === g1) {
+        fired = true;
+        activate(writer.db, g2, g1);
+        (writer as unknown as { collectGarbage(s: string): void }).collectGarbage("race@1");
+      }
+      return row;
+    };
+    const r = outline(x, { source: "race@1" });
+    expect(fired).toBe(true);
+    expect(get(g1)).toBeNull();
+    expect(r.status).toBe("ok");
+    expect(r.generation).toBe(g1);
+    expect(r.documents.map((doc) => doc.path)).toEqual(["guide.md"]);
+  } finally {
+    writer.close();
+    x.close();
+    rmSync(h, { recursive: true, force: true });
+  }
+});
+
+test("every status path stays within max_tokens, echoed input included", () => {
+  const long = "界".repeat(400);
+  for (const r of [outline(d, { source: "lib@1.0", path: long, maxTokens: 200 }), outline(d, { source: long, maxTokens: 200 }), outline(d, { source: "lib@1.0", maxTokens: 1 })]) {
+    expect(r.tokens).toBe(countTokens(r.text));
+    expect(r.tokens).toBeLessThanOrEqual(200);
+  }
+  const none = outline(d, { source: "lib@1.0", path: long, maxTokens: 200 });
+  expect(none.status).toBe("no_match");
+  expect(none.text).toContain("…");
+});
