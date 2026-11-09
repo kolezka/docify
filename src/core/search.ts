@@ -142,46 +142,76 @@ function ftsQuery(query: string): string | null {
   return parts.length ? parts.join(" OR ") : null;
 }
 
+// The scoping fields of a search; docs_scope takes only these.
+export type ScopeInput = Pick<SearchInput, "library" | "version" | "sources" | "project">;
+
+export type VersionReason = "explicit version" | "project pin" | "project pin not registered" | "all versions";
+
+export interface ScopeLibrary {
+  library: string;
+  version: string | null; // the version asked for, null when all versions are searched
+  reason: VersionReason;
+  registered: (string | null)[];
+}
+
 interface Scope {
   generations: Map<number, { source: SourceRow; generation: GenerationRow }>;
   warnings: string[];
   notIndexed: string[];
   status: SearchStatus | null;
   availableVersions?: Record<string, (string | null)[]>;
+  // Undefined when scope resolution stopped before pins were read.
+  pins?: { file: string | null; values: Record<string, string> };
+  libraries: ScopeLibrary[];
 }
 
 // Read-only; callers run it inside the same transaction as the ranking reads.
-export function resolveScope(docify: Docify, input: SearchInput): Scope {
+export function resolveScope(docify: Docify, input: ScopeInput | SearchInput): Scope {
   const all = docify.listSourceRows();
   const warnings: string[] = [];
   let candidates = all;
   const versionsOf = (lib: string) => all.filter((s) => s.library === lib).map((s) => s.version);
   if (input.sources?.length) {
     const unknown = input.sources.filter((id) => !all.some((s) => s.id === id));
-    if (unknown.length) return { generations: new Map(), warnings, notIndexed: [], status: "source_unknown", availableVersions: undefined };
+    if (unknown.length) return { generations: new Map(), warnings, notIndexed: [], status: "source_unknown", availableVersions: undefined, libraries: [] };
     candidates = all.filter((s) => input.sources!.includes(s.id));
   }
   if (input.library) {
     const lib = input.library.toLowerCase();
     candidates = candidates.filter((s) => s.library === lib);
-    if (!candidates.length) return { generations: new Map(), warnings: [`no source registered for library "${lib}"`], notIndexed: [], status: "source_unknown" };
+    if (!candidates.length) return { generations: new Map(), warnings: [`no source registered for library "${lib}"`], notIndexed: [], status: "source_unknown", libraries: [] };
   }
   const pins = DocifyClass.readPins(input.project);
+  const pinInfo = { file: input.project ? DocifyClass.pinFile(input.project) : null, values: pins };
   const libraries = [...new Set(candidates.map((s) => s.library))];
+  const libraryInfo: ScopeLibrary[] = [];
   const selected: SourceRow[] = [];
   for (const lib of libraries) {
     const ofLib = candidates.filter((s) => s.library === lib);
-    const wanted = input.version && (input.library || libraries.length === 1) ? input.version : pins[lib];
+    const explicit = input.version && (input.library || libraries.length === 1);
+    const wanted = explicit ? input.version : pins[lib];
     if (wanted) {
       const match = ofLib.filter((s) => s.version === wanted);
+      const info: ScopeLibrary = { library: lib, version: wanted, reason: explicit ? "explicit version" : "project pin", registered: versionsOf(lib) };
+      libraryInfo.push(info);
       if (!match.length) {
         if (input.version) {
-          return { generations: new Map(), warnings: [`${lib} version ${wanted} is not registered`], notIndexed: [], status: "version_unavailable", availableVersions: { [lib]: versionsOf(lib) } };
+          return {
+            generations: new Map(),
+            warnings: [`${lib} version ${wanted} is not registered`],
+            notIndexed: [],
+            status: "version_unavailable",
+            availableVersions: { [lib]: versionsOf(lib) },
+            pins: pinInfo,
+            libraries: libraryInfo,
+          };
         }
         warnings.push(`project pin ${lib}@${wanted} is not registered; searching all ${lib} versions`);
+        info.reason = "project pin not registered";
         selected.push(...ofLib);
       } else selected.push(...match);
     } else {
+      libraryInfo.push({ library: lib, version: null, reason: "all versions", registered: versionsOf(lib) });
       if (new Set(ofLib.map((s) => s.version)).size > 1) {
         warnings.push(`several ${lib} versions match (${ofLib.map((s) => s.version ?? "unknown").join(", ")}); pass version or pin one to avoid mixing`);
       }
@@ -213,7 +243,7 @@ export function resolveScope(docify: Docify, input: SearchInput): Scope {
     const failed = selected.some((s) => docify.generations(s.id)[0]?.status === "failed");
     status = selected.length ? (failed ? "update_failed" : "not_indexed") : "not_indexed";
   }
-  return { generations, warnings, notIndexed, status };
+  return { generations, warnings, notIndexed, status, pins: pinInfo, libraries: libraryInfo };
 }
 
 function placeholders(n: number) {
@@ -724,4 +754,62 @@ export function renderSources(list: SourceInfo[]): string {
       return parts.join("\n");
     })
     .join("\n");
+}
+
+export interface ScopeResult {
+  status: SearchStatus; // "ok" when search would run; its hits could still be weak or absent
+  project: string | null;
+  pins?: { file: string | null; values: Record<string, string> };
+  libraries: ScopeLibrary[];
+  selected: { source: string; library: string; version: string | null; generation: number }[];
+  notIndexed: string[];
+  availableVersions?: Record<string, (string | null)[]>;
+  registered: Record<string, (string | null)[]>;
+  warnings: string[];
+  text: string;
+}
+
+// What a search with these filters would search, without searching. Side-effect free:
+// unlike search() and sources() it does not call recoverInterrupted(), which writes.
+export function scope(docify: Docify, input: ScopeInput): ScopeResult {
+  return docify.db.transaction(() => {
+    const s = resolveScope(docify, input);
+    const registered: Record<string, (string | null)[]> = {};
+    for (const row of docify.listSourceRows()) (registered[row.library] ??= []).push(row.version);
+    const result: Omit<ScopeResult, "text"> = {
+      status: s.status ?? "ok",
+      project: input.project ?? null,
+      pins: s.pins,
+      libraries: s.libraries,
+      selected: [...s.generations.values()].map((x) => ({ source: x.source.id, library: x.source.library, version: x.source.version, generation: x.generation.id })),
+      notIndexed: s.notIndexed,
+      availableVersions: s.availableVersions,
+      registered,
+      warnings: s.warnings,
+    };
+    return { ...result, text: renderScope(result) };
+  })();
+}
+
+const versionList = (v: (string | null)[]) => v.map((x) => x ?? "unknown").join(", ");
+
+export function renderScope(r: Omit<ScopeResult, "text">): string {
+  const lines = ["Docify scope: what docs_search would search with these filters. Nothing was searched.", `status: ${r.status}`];
+  if (!r.pins) lines.push("pins: not read (scope stopped before pins apply)");
+  else {
+    const pins = Object.entries(r.pins.values).map(([lib, v]) => `${lib}@${v}`);
+    lines.push(`pins file: ${r.pins.file ? oneLine(r.pins.file) : "none"}`, `pins: ${pins.length ? oneLine(pins.join(", ")) : "none"}`);
+  }
+  for (const l of r.libraries) {
+    lines.push(`library ${l.library}: ${l.version === null ? "all versions" : `version ${oneLine(l.version)}`} (${l.reason}); registered versions: ${versionList(l.registered)}`);
+  }
+  for (const s of r.selected) lines.push(`selected: ${s.source} (${s.library}@${s.version ?? "unknown"}) generation ${s.generation}`);
+  if (r.notIndexed.length) lines.push(`not indexed: ${r.notIndexed.join(", ")}`);
+  if (r.availableVersions) for (const [lib, v] of Object.entries(r.availableVersions)) lines.push(`available ${lib} versions: ${versionList(v)}`);
+  for (const w of r.warnings) lines.push(`warning: ${oneLine(w)}`);
+  if (r.status === "source_unknown") {
+    const libs = Object.entries(r.registered).map(([lib, v]) => `${lib} (${versionList(v)})`);
+    lines.push(`registered libraries: ${libs.length ? libs.join(", ") : "none"}`);
+  }
+  return lines.join("\n");
 }

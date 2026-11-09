@@ -1,4 +1,4 @@
-// Drives the stdio MCP server like a host would: list tools, search, read, unavailable version.
+// Drives the stdio MCP server like a host would: list tools, search, read, unavailable version, scope.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -13,4 +13,5 @@ console.log(text(s).split("\n").slice(0, 6).join("\n"));
 const id = /id (p_[0-9a-f]{20})/.exec(text(s))?.[1];
 if (id) console.log("read:", text(await client.callTool({ name: "docs_read", arguments: { id, max_tokens: 400 } })).split("\n").slice(0, 4).join(" | "));
 console.log("v9:", text(await client.callTool({ name: "docs_search", arguments: { query: "WAL", library: "bun", version: "9.9" } })).split("\n").slice(1, 4).join(" | "));
+console.log("scope:", text(await client.callTool({ name: "docs_scope", arguments: { library: "bun", version: "9.9" } })).split("\n").slice(1, 5).join(" | "));
 await client.close();

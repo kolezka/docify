@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Docify, DocifyError } from "../core/docify.ts";
-import { read, renderSources, search, sources } from "../core/search.ts";
+import { read, renderSources, scope, search, sources } from "../core/search.ts";
 import { VERSION } from "../version.ts";
 
 const pkg = { name: "docify", version: VERSION };
@@ -86,6 +86,28 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     async () => {
       try {
         return { content: [{ type: "text", text: renderSources(sources(docify)) }] };
+      } catch (err) {
+        return fail(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "docs_scope",
+    {
+      title: "Show what a search would search",
+      description:
+        "Resolve library, version and source filters the way docs_search does, without searching: status, the .docify.json pins used, the version chosen per library and why, the selected sources with their active generation, and the warnings search would give. Use it after version_unavailable, source_unknown or a mixed-version warning.",
+      inputSchema: {
+        library: z.string().optional().describe("Library name, e.g. bun"),
+        version: z.string().optional().describe("Library version; omit to use the project pin"),
+        sources: z.array(z.string()).optional().describe("Restrict to source ids from docs_sources"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return { content: [{ type: "text", text: scope(docify, { library: args.library, version: args.version, sources: args.sources, project }).text }] };
       } catch (err) {
         return fail(err);
       }

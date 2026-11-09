@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { Docify, DocifyError } from "./core/docify.ts";
-import { read, renderSources, search, sources, type Mode } from "./core/search.ts";
+import { read, renderSources, scope, search, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
 import { VERSION, requireVersion } from "./version.ts";
 
@@ -18,6 +18,8 @@ Preparation (may use the network or the configured graph provider):
 Queries (local and offline only):
   sources                       list sources, versions and preparation state
   search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
+  scope [--library L] [--version V] [--source ID] [--json]
+                                show what search would search with these filters
   read <passage-id> [--max-tokens N] [--json]
   pin <library> [version]       pin (or unpin) a version in ./.docify.json
 
@@ -137,6 +139,12 @@ async function main(argv: string[]) {
           project: process.env.DOCIFY_PROJECT ?? process.cwd(),
           graphWeight: values["graph-weight"] ? Number(values["graph-weight"]) : undefined,
         });
+        console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
+        if (r.status !== "ok") process.exitCode = 3;
+        break;
+      }
+      case "scope": {
+        const r = scope(docify, { library: values.library, version: values.version, sources: values.source, project: process.env.DOCIFY_PROJECT ?? process.cwd() });
         console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
         if (r.status !== "ok") process.exitCode = 3;
         break;

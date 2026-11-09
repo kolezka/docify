@@ -129,8 +129,9 @@ When the model leaves some documents out or a request fails, Graphify still retu
 docify search "keep WAL sidecar files after close" --library bun --max-tokens 1500
 docify read p_0123456789abcdef0123
 docify sources
+docify scope --library bun   # what a search would search: pins, chosen versions, generations
 docify serve             # one-screen UI; open the printed http://127.0.0.1:4747/#token=... URL (--port to change)
-docify mcp               # MCP server on stdio: docs_search, docs_read, docs_sources
+docify mcp               # MCP server on stdio: docs_search, docs_read, docs_sources, docs_scope
 ```
 
 `search` also takes `--version`, `--source` (repeatable), `--mode` and `--graph-weight`; `search` and `read` take `--json` for the full result. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
