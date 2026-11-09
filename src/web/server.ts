@@ -5,6 +5,7 @@ import { timingSafeEqual } from "node:crypto";
 import { Docify, DocifyError } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
+import { graphView } from "../core/graph-view.ts";
 import { uiAssets } from "./bundle.ts";
 import { LogReadError } from "../core/logs.ts";
 import { LOOPBACK_HOSTS, hostAllowed, hostGuard, originAllowed, parseAllowedHosts, splitList } from "../http/host.ts";
@@ -223,6 +224,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           return json({ ok: true });
         }),
       },
+      "/api/sources/:id/graph": { GET: api((req) => json(graphView(docify, decodeURIComponent(req.params.id!)))) },
       "/api/sources/:id/prepare": {
         POST: api(async (req) => {
           const id = decodeURIComponent(req.params.id!);

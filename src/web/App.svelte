@@ -4,13 +4,14 @@
   import Settings from "./views/Settings.svelte";
   import Sources from "./views/Sources.svelte";
   import Logs from "./views/Logs.svelte";
+  import Graph from "./views/Graph.svelte";
 
-  type View = "workspace" | "settings" | "logs";
+  type View = "workspace" | "graph" | "settings" | "logs";
 
   function initialView(): View {
     try {
       const stored = sessionStorage.getItem("docify-view");
-      return stored === "settings" || stored === "logs" ? stored : "workspace";
+      return stored === "settings" || stored === "logs" || stored === "graph" ? stored : "workspace";
     } catch {
       return "workspace";
     }
@@ -38,7 +39,9 @@
     <Sources class="lg:w-[40%]" />
     <Search class="lg:w-[60%]" />
   </main>
-  {#if view === "settings"}
+  {#if view === "graph"}
+    <Graph />
+  {:else if view === "settings"}
     <Settings />
   {:else if view === "logs"}
     <Logs />

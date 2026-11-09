@@ -67,6 +67,8 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 
 The **Logs** tab uses a log viewer vendored from `kolezka/svelte-log-viewer` (`src/web/lib/log-viewer/`) for timestamped preparation progress, errors, warnings and live Graphify stdout/stderr. It polls once per second, offers text and stream filters and follows new lines. CLI and web preparations share the latest 10,000 log lines in `<DOCIFY_HOME>/logs.sqlite`; each line is limited to 8,192 characters. Configured embedding and graph API-key values are redacted before storage. Failed reads are reported in the view without clearing lines already loaded. Only runs made with this logging-enabled build are recorded; older runs have no history.
 
+The **Graph** tab draws the active generation's Graphify graph in 3D with WebGL2: drag to orbit, scroll to zoom, click a node to see the page it came from, the passage that grounds it and what it links to. Faded nodes have no grounding passage. Pages Graphify left without nodes are listed in the inspector. A source prepared with **No graph** has nothing to show here. The browser needs WebGL2.
+
 ## macOS app
 
 `apps/macos` is a small SwiftUI window (macOS 14 or later, built with the Swift toolchain) that lists sources and adds, prepares, cancels and removes them. Its Settings window switches the embedding provider and the graph model, and keeps the LiteLLM URL and key; the key goes to the macOS Keychain, never to `config.json`. The app runs the `docify` CLI, so it shares the store with the CLI and the web UI.
