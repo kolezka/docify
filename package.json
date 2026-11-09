@@ -17,6 +17,7 @@
     "js-tiktoken": "1.0.21",
     "node-html-markdown": "2.0.0",
     "svelte": "5.57.3",
+    "svelte-log-viewer": "git+ssh://git@github.com/kolezka/svelte-log-viewer.git#ef28afca51287cd9d631662ef7d522c9953ae69a",
     "tailwind-merge": "3.7.0",
     "tailwind-variants": "4.0.1",
     "tailwindcss": "4.3.5",

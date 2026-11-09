@@ -11,6 +11,10 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
+    // The pinned private viewer ships Svelte source, without a prebuilt dist directory.
+    "paths": {
+      "svelte-log-viewer": ["./node_modules/svelte-log-viewer/src/lib/index.ts"]
+    },
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,

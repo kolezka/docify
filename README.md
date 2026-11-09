@@ -10,6 +10,8 @@ bun link                 # puts `docify` on PATH (~/.bun/bin)
 docify setup             # pinned Graphify into ~/.config/docify/graphify-venv, embedding model into ~/.config/docify/models
 ```
 
+The pinned `svelte-log-viewer` dependency is installed over Git SSH and needs access to `kolezka/svelte-log-viewer`. Docify compiles its Svelte source directly; there is no need to enable dependency lifecycle scripts.
+
 `setup` is the only command that downloads models. The store lives in `~/.config/docify` (override with `DOCIFY_HOME`), outside any plugin directory.
 
 Older versions kept the store in `~/.cache/docify`. Docify keeps using it while `~/.config/docify` does not exist. To move it, first make sure every `docify` you run is this version (an older one would create a new empty store at the old path), stop `docify serve`, the macOS app and agent sessions running `docify mcp`, then:
@@ -62,6 +64,8 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 ## Web UI
 
 `docify serve` starts a local page on `127.0.0.1` and prints its URL once, with a per-start access token. Workspace registers, prepares and removes sources and shows the exact text a search hands to agents. Settings edits every `config.json` key, shows which environment variables the server sees (credential values are never shown) and edits project pins in `.docify.json`. `graphifyBin` and `modelsDir` are read-only there because Docify runs or loads code from them; change them in `config.json` or with `DOCIFY_GRAPHIFY_BIN` and `DOCIFY_MODELS_DIR`. A save is refused while the page is preparing a source. The theme follows the system unless you pick Light or Dark in the top bar.
+
+The **Logs** tab uses `svelte-log-viewer` for timestamped preparation progress, errors, warnings and live Graphify stdout/stderr. It polls once per second, offers text and stream filters and follows new lines. CLI and web preparations share the latest 10,000 log lines in `<DOCIFY_HOME>/logs.sqlite`; each line is limited to 8,192 characters. Configured embedding and graph API-key values are redacted before storage. Failed reads are reported in the view without clearing lines already loaded. Only runs made with this logging-enabled build are recorded; older runs have no history.
 
 ## macOS app
 

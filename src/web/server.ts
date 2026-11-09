@@ -6,6 +6,7 @@ import { Docify, DocifyError } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
 import { uiAssets } from "./bundle.ts";
+import { LogReadError } from "../core/logs.ts";
 
 const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404 };
 
@@ -30,8 +31,10 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
 
   const json = (data: unknown, status = 200) => Response.json(data, { status });
   const fail = (err: unknown) => {
+    if (err instanceof LogReadError) return json({ error: err.message, code: "logs_unavailable" }, 500);
     if (err instanceof ConfigError) return json({ error: err.message, code: "invalid_input", field: err.field ?? null }, 400);
     if (err instanceof DocifyError) return json({ error: err.message, code: err.code }, STATUS_BY_CODE[err.code] ?? 400);
+    docify.logs.append("docify", err instanceof Error ? err.message : String(err), "system", "error");
     console.error(err);
     return json({ error: String(err instanceof Error ? err.message : err), code: "internal" }, 500);
   };
@@ -76,6 +79,19 @@ export async function startServer(port: number, opts: { docify?: Docify; quiet?:
     port,
     development: false,
     routes: {
+      "/api/logs": {
+        GET: api((req) => {
+          const params = new URL(req.url).searchParams;
+          const integer = (key: string, fallback: number, min: number, max: number) => {
+            const raw = params.get(key);
+            if (raw === null) return fallback;
+            const value = Number(raw);
+            if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min || value > max) throw new DocifyError("invalid_input", `invalid ${key}`);
+            return value;
+          };
+          return json(docify.logs.read(integer("after", 0, 0, Number.MAX_SAFE_INTEGER), integer("limit", 1000, 1, 1000)));
+        }),
+      },
       "/api/sources": {
         GET: api(() => json(sources(docify))),
         POST: api(async (req) => {
