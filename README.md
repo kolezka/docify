@@ -12,14 +12,14 @@ docify setup             # pinned Graphify into ~/.config/docify/graphify-venv, 
 
 `setup` is the only command that downloads models. The store lives in `~/.config/docify` (override with `DOCIFY_HOME`), outside any plugin directory.
 
-Older versions kept the store in `~/.cache/docify`. Docify keeps using it while `~/.config/docify` does not exist. To move it, first make sure every `docify` you run is this version (an older one would create a new empty store at the old path), stop `docify serve`, the macOS app and agent sessions running `docify mcp`, then:
+Older versions kept the store in `~/.cache/docify`. Docify keeps using it while `~/.config/docify` does not exist. To move it, first make sure every `docify` you run is this version (an older one would create a new empty store at the old path), stop `docify serve` and agent sessions running `docify mcp`, then:
 
 ```bash
 mkdir -p ~/.config && mv ~/.cache/docify ~/.config/docify
 rm -rf ~/.config/docify/graphify-venv && docify setup   # the venv's scripts hold absolute paths
 ```
 
-`make` lists shortcuts for these and the other commands below: `make check` type-checks and tests, `make app-run` builds and opens the macOS app with this checkout's CLI.
+`make` lists shortcuts for these and the other commands below: `make check` type-checks and tests.
 
 ## Embeddings
 
@@ -68,16 +68,6 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 The **Logs** tab uses a log viewer vendored from `kolezka/svelte-log-viewer` (`src/web/lib/log-viewer/`) for timestamped preparation progress, errors, warnings and live Graphify stdout/stderr. It polls once per second, offers text and stream filters and follows new lines. CLI and web preparations share the latest 10,000 log lines in `<DOCIFY_HOME>/logs.sqlite`; each line is limited to 8,192 characters. Configured embedding and graph API-key values are redacted before storage. Failed reads are reported in the view without clearing lines already loaded. Only runs made with this logging-enabled build are recorded; older runs have no history.
 
 The **Graph** tab draws the active generation's Graphify graph in 3D with WebGL2: drag to orbit, scroll to zoom, click a node to see the page it came from, the passage that grounds it and what it links to. Faded nodes have no grounding passage. Pages Graphify left without nodes are listed in the inspector. A source prepared with **No graph** has nothing to show here. The browser needs WebGL2.
-
-## macOS app
-
-`apps/macos` is a small SwiftUI window (macOS 14 or later, built with the Swift toolchain) that lists sources and adds, prepares, cancels and removes them. Its Settings window switches the embedding provider and the graph model, and keeps the LiteLLM URL and key; the key goes to the macOS Keychain, never to `config.json`. The app runs the `docify` CLI, so it shares the store with the CLI and the web UI.
-
-```bash
-make app-run             # build and open it with this checkout's CLI
-```
-
-See `apps/macos/README.md` for details.
 
 ## Prepare documentation
 
@@ -144,7 +134,7 @@ These are the defaults. The base URL must be HTTP or HTTPS without credentials, 
 
 Docify discovers links and applies origin, path, depth, page and byte limits to the documents it collects. Neither browser provider is a network sandbox. Crawl4AI can follow redirects and load subrequests before Docify checks the returned page. Browserless intercepts later main-frame navigation requests and lets Docify check their destination before following them, but does not confine subresources, frames, popups, service workers or other browser activity. These checks do not block access to private networks or guarantee safe browser egress. Run rendering services in a trusted, isolated environment with network-level egress controls appropriate for the URLs being crawled.
 
-Both rendering providers skip `.md` export probes. Crawl4AI preserves Markdown links when its browser wraps Markdown pages and `llms.txt` indexes in HTML. If a remote provider fails, times out or returns malformed data, preparation fails rather than switching to another crawler; the previous generation keeps serving. Queries never use these providers. The macOS app has no crawler control; it preserves these config keys when saving.
+Both rendering providers skip `.md` export probes. Crawl4AI preserves Markdown links when its browser wraps Markdown pages and `llms.txt` indexes in HTML. If a remote provider fails, times out or returns malformed data, preparation fails rather than switching to another crawler; the previous generation keeps serving. Queries never use these providers.
 
 ```bash
 docify add openclaw https://docs.openclaw.ai/llms.txt --id openclaw
@@ -369,8 +359,8 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `DOCIFY_MCP_RATE`, `DOCIFY_MCP_IP_RATE` | MCP limits per client and per IP (default `60/min`, `120/min`) |
 | `DOCIFY_TRUST_PROXY` | `1` takes the client IP from `X-Forwarded-For`; only behind a proxy |
 | `LITELLM_BASE_URL`, `LITELLM_API_KEY` | Graph provider and `openai` embeddings, by default |
-| `DOCIFY_BIN` | `docify` executable the macOS app runs |
+| `DOCIFY_BIN` | `docify` executable the DSH adapter starts |
 
-`.env.example` lists them with their defaults. Copy it to `.env` for commands run from the checkout root (`bun src/cli.ts`, `bun test`, `make serve`); Bun reads `.env` only from the current directory, so a linked `docify` elsewhere, the MCP server and the macOS app need the variables in their own environment.
+`.env.example` lists them with their defaults. Copy it to `.env` for commands run from the checkout root (`bun src/cli.ts`, `bun test`, `make serve`); Bun reads `.env` only from the current directory, so a linked `docify` elsewhere, and the MCP server need the variables in their own environment.
 
 Design and status: `docs/design.md`, `docs/implementation-plan.md`, `docs/feasibility.md`, `docs/evaluation.md`, `docs/verification.md`.
