@@ -1,4 +1,4 @@
-# Shortcuts for the commands in README.md. `make` alone lists them.
+# Shortcuts for the commands in docs/guide.md. `make` alone lists them.
 
 .DEFAULT_GOAL := help
 .PHONY: help install link setup test typecheck check serve mcp eval mcp-smoke
