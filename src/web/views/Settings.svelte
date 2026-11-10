@@ -248,7 +248,7 @@
     return p.source === "environment" ? `from ${p.variable}` : p.source === "config.json" ? "from config.json" : "default";
   }
 
-  // Starting values measured in docs/evaluation.md; apps/macos Settings.swift applies the same ones.
+  // Starting values measured in docs/evaluation.md.
   function onProvider(p: Provider) {
     if (!form || !desc) return;
     if (p === "transformers") {
