@@ -1,0 +1,17 @@
+Copyright (c) 2026 Mariusz Rakus. All rights reserved.
+
+This software and its source code, documentation and other materials in this
+repository (the "Software") are the exclusive property of Mariusz Rakus and are
+protected by copyright law.
+
+No license or other right to use, copy, modify, merge, publish, distribute,
+sublicense or sell the Software, in whole or in part, is granted by making it
+available, unless Mariusz Rakus gives prior written permission.
+
+Third-party materials included in this repository, such as the files under
+fixtures/corpus/ and dependencies installed by package managers, remain under
+their own licenses.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.

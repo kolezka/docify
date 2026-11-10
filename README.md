@@ -364,3 +364,7 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 `.env.example` lists them with their defaults. Copy it to `.env` for commands run from the checkout root (`bun src/cli.ts`, `bun test`, `make serve`); Bun reads `.env` only from the current directory, so a linked `docify` elsewhere, and the MCP server need the variables in their own environment.
 
 Design and status: `docs/design.md`, `docs/implementation-plan.md`, `docs/feasibility.md`, `docs/evaluation.md`, `docs/verification.md`.
+
+## License
+
+Copyright (c) 2026 Mariusz Rakus. All rights reserved. See `LICENSE`.
