@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { Check, ChevronDown } from "@lucide/svelte";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
   import Group from "../components/Group.svelte";
   import Row from "../components/Row.svelte";
@@ -69,6 +70,16 @@
   type SectionId = (typeof SECTIONS)[number]["id"];
   const MAIN_SECTIONS = SECTIONS.slice(0, 5).map((s) => ({ value: s.id as SectionId, label: s.title }));
   const MORE_SECTIONS = SECTIONS.slice(5);
+  const inMore = $derived(MORE_SECTIONS.some((s) => s.id === section));
+  let moreOpen = $state(false);
+  let moreRoot: HTMLElement | undefined = $state();
+  function closeMoreOutside(event: MouseEvent) {
+    if (moreOpen && moreRoot && !moreRoot.contains(event.target as Node)) moreOpen = false;
+  }
+  function pickMore(id: SectionId) {
+    moreOpen = false;
+    go(id);
+  }
   // Sections whose fields Save and Revert apply to.
   const CONFIG_SECTIONS: SectionId[] = ["embeddings", "search", "crawling", "graph", "storage"];
   const SECTION_KEY = "docify-settings-section";
@@ -401,20 +412,45 @@
   <p class={cn(footnote, "mx-3.5 mt-2.5 flex items-start gap-1.5")}><StatusIcon tone="warn" size={12} class="mt-px" />{text}</p>
 {/snippet}
 
+<svelte:window onclick={closeMoreOutside} onkeydown={(e) => e.key === "Escape" && (moreOpen = false)} />
+
 <div class="flex min-h-0 flex-1 flex-col">
   <Toolbar>
     <!-- Wide windows: five segments plus "More". Narrow ones: one popup with all eight. -->
-    <div class="hidden items-center gap-2 xl:flex">
-      <Segmented options={MAIN_SECTIONS} value={section} label="Settings section" onchange={go} />
-      <select
-        aria-label="More settings sections"
-        class={popup({ class: cn(MORE_SECTIONS.some((s) => s.id === section) && "border-accent") })}
-        value={MORE_SECTIONS.some((s) => s.id === section) ? section : ""}
-        onchange={(ev) => go((ev.currentTarget as HTMLSelectElement).value as SectionId)}
-      >
-        <option value="" disabled>More</option>
-        {#each MORE_SECTIONS as s (s.id)}<option value={s.id}>{s.title}</option>{/each}
-      </select>
+    <div class="hidden xl:flex">
+      <Segmented options={MAIN_SECTIONS} value={section} label="Settings section" onchange={go}>
+        {#snippet trailing()}
+          <div class="relative" bind:this={moreRoot}>
+            <button
+              type="button"
+              class={cn(
+                "flex h-6 items-center gap-1 rounded-md px-3 text-[13px] font-medium text-label transition-colors focus-visible:ring-[3px] focus-visible:ring-accent-soft focus-visible:outline-none",
+                inMore ? "bg-seg-on shadow-[0_1px_2px_rgb(0_0_0/0.15)]" : "hover:bg-surface/50",
+              )}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              onclick={() => (moreOpen = !moreOpen)}
+            >
+              {inMore ? titleOf(section) : "More"}<ChevronDown size={12} strokeWidth={2} />
+            </button>
+            {#if moreOpen}
+              <div role="menu" class="absolute top-[calc(100%+6px)] right-0 z-20 min-w-[200px] rounded-[10px] border border-sep bg-surface p-1 shadow-float">
+                {#each MORE_SECTIONS as s (s.id)}
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={section === s.id}
+                    class="flex h-7 w-full items-center gap-2 rounded-md px-2.5 text-left text-[13px] text-label hover:bg-accent hover:text-white"
+                    onclick={() => pickMore(s.id)}
+                  >
+                    <span class="flex w-3 shrink-0 justify-center">{#if section === s.id}<Check size={12} strokeWidth={2.5} />{/if}</span>{s.title}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/snippet}
+      </Segmented>
     </div>
     <select
       aria-label="Settings section"
