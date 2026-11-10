@@ -129,7 +129,13 @@ function readHooks(root) {
     for (const group of groups ?? []) {
       for (const hook of group.hooks ?? []) {
         if (hook.type !== "command" || !hook.command) continue;
-        out.push({ event, matcher: group.matcher ?? "", command: hook.command, timeout: hook.timeout ?? DEFAULT_HOOK_TIMEOUT_S });
+        const spec = { event, matcher: group.matcher ?? "", command: hook.command, timeout: hook.timeout ?? DEFAULT_HOOK_TIMEOUT_S };
+        if (hook.args !== void 0) {
+          if (!Array.isArray(hook.args) || !hook.args.every((arg) => typeof arg === "string")) throw new Error(`hooks.json: ${event} hook "${hook.command}" has args that are not a list of strings`);
+          spec.args = hook.args;
+        }
+        if (hook.onFailure === "block" || hook.onFailure === "continue") spec.onFailure = hook.onFailure;
+        out.push(spec);
       }
     }
   }
@@ -156,6 +162,15 @@ Arguments: ${args}`;
 }
 
 // src/hooks.ts
+var PLACEHOLDERS = ["CLAUDE_PLUGIN_ROOT", "CLAUDE_PROJECT_DIR"];
+function expandPlaceholders(text, env) {
+  let out = text;
+  for (const name of PLACEHOLDERS) {
+    const value = env[name];
+    if (value !== void 0) out = out.replaceAll("${" + name + "}", value).replaceAll("$" + name, value);
+  }
+  return out;
+}
 var HOOK_STDOUT_LIMIT = 256 * 1024;
 var HOOK_DRAIN_MS = 50;
 var PLAIN_CONTEXT_EVENTS = /* @__PURE__ */ new Set(["SessionStart", "UserPromptSubmit"]);
@@ -166,7 +181,8 @@ function runHook(hook, input, env, signal) {
     let truncated = false;
     let settled = false;
     let drain;
-    const child = spawn("/bin/sh", ["-c", hook.command], { cwd: input.cwd || process.cwd(), env, stdio: ["pipe", "pipe", "pipe"], detached: true });
+    const options = { cwd: input.cwd || process.cwd(), env, stdio: ["pipe", "pipe", "pipe"], detached: true };
+    const child = hook.args ? spawn(expandPlaceholders(hook.command, env), hook.args.map((arg) => expandPlaceholders(arg, env)), options) : spawn("/bin/sh", ["-c", hook.command], options);
     const killGroup = () => {
       try {
         if (child.pid !== void 0) process.kill(-child.pid, "SIGKILL");
@@ -622,9 +638,14 @@ ${renderCommand(body, invocation.rawInput, root)}` }],
           (hook) => runHook(hook, input, env, options.signal).catch((error) => ({ code: null, stdout: "", stderr: String(error?.message ?? error), timedOut: false }))
         )
       );
-      return settled.map((result) => {
-        if (!result.aborted && (result.timedOut || result.code !== 0 && result.code !== 2)) warn(`${event} hook exited ${result.code}: ${result.stderr.trim().slice(0, 300)}`);
+      return settled.map((result, index) => {
+        const failed = !result.aborted && (result.timedOut || result.code !== 0 && result.code !== 2);
+        if (failed) warn(`${event} hook exited ${result.code}: ${result.stderr.trim().slice(0, 300)}`);
         const interpreted = interpretHookResult(result, event);
+        if (failed && list[index].onFailure === "block") {
+          interpreted.decision = "block";
+          interpreted.reason = `${pluginName} hook failed and its onFailure is "block": ${result.stderr.trim().slice(0, 300) || `exit ${result.code}`}`;
+        }
         for (const notice of interpreted.notices) warn(`${event}: ${notice}`);
         return interpreted;
       });

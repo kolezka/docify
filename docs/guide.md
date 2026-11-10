@@ -223,6 +223,16 @@ Or, for every profile, add the rows from `dsh/cordis.patch.yml` to `~/.dsh/cordi
 
 The tools appear as `mcp__docify__docs_search` and so on. DSH starts the server with its own environment: set `DOCIFY_BIN` when `~/.bun/bin` is not on its PATH. DSH also drops variables whose names contain `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, so with the `openai` embedding provider pass the key variable in the row's `env:`, or queries cannot be embedded.
 
+`dsh/claude-compat.js` is a vendored copy of the `@kolezka/claude-plugins-dsh` runtime, currently from commit `a721298` of that repository. Do not edit it. Refresh and check it with the CLI from a built checkout of claude-plugins-dsh (the npm 0.1.0 release may be older than that commit):
+
+```bash
+node /path/to/claude-plugins-dsh/dist/bin/cli.js sync integrations/claude-code/docify
+node /path/to/claude-plugins-dsh/dist/bin/cli.js sync --check integrations/claude-code/docify
+node /path/to/claude-plugins-dsh/dist/bin/cli.js inspect integrations/claude-code/docify
+```
+
+`inspect` should list the `docify` skill. The runtime does not read `mcpServers` from `plugin.json`, so the MCP server comes only from the `dsh-mcp-client` row above; `tests/dsh-adapter.test.ts` checks that row against `plugin.json`.
+
 All three start `docify mcp`, so `docify` must be on PATH. They ship a skill that tells the agent when to search and how to read statuses. Neither installs hooks, and neither forces the agent to search.
 
 The plugins start `docify mcp --require <their version>`. If the `docify` on PATH is older, the MCP server does not start and the error names both versions; run `bun link` in a current checkout. A `docify` from before this check does not know `--require` and fails on the unknown option, which also means it needs updating.
