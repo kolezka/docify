@@ -51,7 +51,7 @@ Wall time for `docify prepare` with graph extraction through LiteLLM `deepseek/d
 
 ## bge-m3 through Ollama (2026-11-04)
 
-Same 28 questions, budget 1500, no graph (`--no-graph`), Ollama 0.40.6 with `bge-m3` on an RTX 3060 reached over the LAN. Reproduce: `docker compose up -d` (or another Ollama), the config in the README "Embeddings" section, prepare the three fixture sources, `bun scripts/eval.ts --modes combined,lexical,vector`.
+Same 28 questions, budget 1500, no graph (`--no-graph`), Ollama 0.40.6 with `bge-m3` on an RTX 3060 reached over the LAN. Reproduce: `docker compose up -d` (or another Ollama), the config in the guide's "Embeddings" section (`docs/guide.md`), prepare the three fixture sources, `bun scripts/eval.ts --modes combined,lexical,vector`.
 
 | Model, mode | Pass | Must-pass | Passage recall | MRR | p95 ms |
 | --- | --- | --- | --- | --- | --- |
@@ -64,7 +64,7 @@ bge-m3 similarities run about 0.08 below bge-small on this corpus. With the bge-
 
 ## Embeddings through a remote LiteLLM (2026-11-08)
 
-Same 28 questions, budget 1500, no graph, provider `openai` against a LiteLLM proxy on another machine that serves `bge-m3` (`ollama/bge-m3`) and `bge-small-en` (`ollama/bge-small-en:v1.5`). Reproduce: a store with the matching config from the README, the three fixture sources prepared with `--no-graph`, then `bun scripts/eval.ts --modes combined,vector` and `bun scripts/eval-similarity.ts`, which prints each question's best vector similarity.
+Same 28 questions, budget 1500, no graph, provider `openai` against a LiteLLM proxy on another machine that serves `bge-m3` (`ollama/bge-m3`) and `bge-small-en` (`ollama/bge-small-en:v1.5`). Reproduce: a store with the matching config from the guide (`docs/guide.md`), the three fixture sources prepared with `--no-graph`, then `bun scripts/eval.ts --modes combined,vector` and `bun scripts/eval-similarity.ts`, which prints each question's best vector similarity.
 
 | Model through LiteLLM, mode | Pass | Must-pass | Passage recall | MRR | p50 ms | p95 ms |
 | --- | --- | --- | --- | --- | --- | --- |

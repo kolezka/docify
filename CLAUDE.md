@@ -57,7 +57,7 @@ Settings go through `/api/config`: `validateConfigPatch()` and `saveConfig()` in
 
 The Graph tab (`views/Graph.svelte`) reads `/api/sources/:id/graph`, built by `graphView()` in `src/core/graph-view.ts` from the DB tables of the active generation in one read transaction (not from `graph.json`). Hyperedges stored as `group:` edges come back as `groups`, not edges. `lib/graph-renderer.ts` is a hand-written WebGL2 renderer with the force layout run in the browser; no graph library, because the CSP only allows bundled scripts. It draws on demand, not in a loop. Each graph gets a new `<canvas>`: `dispose()` loses the WebGL context, and a lost context cannot be reused.
 
-**Agent integrations** (`integrations/claude-code`, `integrations/codex`): separate plugin packaging with the same skill text, both running `docify mcp`. `integrations/claude-code/docify/dsh/` loads the Claude Code plugin into DeepSeek Harness through the vendored `claude-compat.js` (refresh it with `@kolezka/claude-plugins-dsh sync`, never edit it) and starts `docify mcp` through its own `dsh-mcp-client` row. Install commands are in README.md.
+**Agent integrations** (`integrations/claude-code`, `integrations/codex`): separate plugin packaging with the same skill text, both running `docify mcp`. `integrations/claude-code/docify/dsh/` loads the Claude Code plugin into DeepSeek Harness through the vendored `claude-compat.js` (refresh it with `@kolezka/claude-plugins-dsh sync`, never edit it) and starts `docify mcp` through its own `dsh-mcp-client` row. Install commands are in docs/guide.md.
 
 ## Rules that are easy to break
 
