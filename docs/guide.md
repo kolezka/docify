@@ -199,7 +199,15 @@ codex plugin add docify@docify-local
 # remove: codex plugin remove docify@docify-local && codex plugin marketplace remove docify-local
 ```
 
-DeepSeek Harness loads the Claude Code plugin through the adapter in `integrations/claude-code/docify/dsh/`. Install the bundle, which brings the `docify` skill and the MCP server:
+DeepSeek Harness loads the Claude Code plugin through the adapter in `integrations/claude-code/docify/dsh/`. The adapter imports the published [`claude-plugin-dsh`](https://www.npmjs.com/package/claude-plugin-dsh) runtime (pinned to 0.1.0 in `dsh/package.json` and `dsh/bun.lock`), so install its dependencies first. DSH does not install them for you:
+
+```bash
+cd /path/to/ai-docify/integrations/claude-code/docify/dsh && bun install --frozen-lockfile
+```
+
+To check what the adapter registers without DSH, run `bun x claude-plugin-dsh@0.1.0 inspect /path/to/ai-docify/integrations/claude-code/docify`; it lists the `docify` skill. Do not run that CLI's `sync` or `scaffold` on this adapter: they write a vendored copy of the runtime, which this adapter no longer uses. To move to a newer runtime, change the exact version in `dsh/package.json`, run `bun install` in `dsh/` and commit the updated `bun.lock`.
+
+Then install the bundle, which brings the `docify` skill and the MCP server:
 
 ```bash
 dsh plugin --profile <profile> add file:/path/to/ai-docify/integrations/claude-code/docify/dsh
