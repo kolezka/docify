@@ -137,3 +137,12 @@ test("the description never exposes credential values and names where each path 
   expect(d.values.embeddingApiKeyEnv).toBe("MY_KEY");
   expect(d.defaults.embeddingApiKeyEnv).toBe("LITELLM_API_KEY");
 });
+
+test("crawl limits have validated persisted global defaults", () => {
+  const home = tempDir();
+  expect(loadConfig(home)).toMatchObject({ maxPages: 50, maxDepth: 2 });
+  saveConfig(home, { maxPages: 123, maxDepth: 0 });
+  expect(loadConfig(home)).toMatchObject({ maxPages: 123, maxDepth: 0 });
+  for (const value of [0, -1, 1.5, "3", 100001]) expect(() => validateConfigPatch({ maxPages: value })).toThrow();
+  for (const value of [-1, 1.5, "3", 1001]) expect(() => validateConfigPatch({ maxDepth: value })).toThrow();
+});

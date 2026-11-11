@@ -1315,6 +1315,8 @@ export interface SourceInfo {
   version: string | null;
   kind: string;
   locator: string;
+  crawl: { maxPages?: number; maxDepth?: number } | null;
+  effectiveCrawl: { maxPages: number; maxDepth: number } | null;
   crawlProvider: string | null;
   effectiveCrawlProvider: string | null;
   crawl4ai?: import("./docify.ts").Crawl4aiSourceOptions;
@@ -1338,12 +1340,15 @@ export function sources(docify: Docify): SourceInfo[] {
     let state: SourceInfo["state"] = active ? "ready" : "not_indexed";
     if (latest?.status === "staging") state = "preparing";
     else if (latest?.status === "failed") state = active ? "stale" : "failed";
+    const crawl = JSON.parse(s.options).crawl ?? {};
     return {
       id: s.id,
       library: s.library,
       version: s.version,
       kind: s.kind,
       locator: s.locator,
+      crawl: s.kind === "url" ? { ...(crawl.maxPages === undefined ? {} : { maxPages: crawl.maxPages }), ...(crawl.maxDepth === undefined ? {} : { maxDepth: crawl.maxDepth }) } : null,
+      effectiveCrawl: s.kind === "url" ? { maxPages: crawl.maxPages ?? docify.config.maxPages, maxDepth: crawl.maxDepth ?? docify.config.maxDepth } : null,
       crawlProvider: s.kind === "url" ? (JSON.parse(s.options).crawlProvider ?? null) : null,
       effectiveCrawlProvider: s.kind === "url" ? (JSON.parse(s.options).crawlProvider ?? docify.config.crawlProvider) : null,
       crawl4ai: s.kind === "url" ? (JSON.parse(s.options).crawl4ai ?? {}) : undefined,

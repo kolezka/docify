@@ -41,6 +41,8 @@ export interface DocifyConfig {
   // How URL sources are fetched during prepare. "builtin" fetches pages directly; "crawl4ai" renders
   // each page through a Crawl4AI server at crawl4aiUrl (POST /crawl), for JavaScript-only docs.
   crawlProvider: "builtin" | "crawl4ai";
+  maxPages: number;
+  maxDepth: number;
   crawl4aiUrl: string;
   // Name of the environment variable holding the Crawl4AI bearer token, never the value.
   crawl4aiApiKeyEnv: string;
@@ -120,6 +122,8 @@ export function defaultConfig(home: string, env: Env = process.env): DocifyConfi
     weakVectorSim: 0.5,
     graph: DEFAULT_GRAPH,
     crawlProvider: "builtin",
+    maxPages: 50,
+    maxDepth: 2,
     crawl4aiUrl: "http://127.0.0.1:11235",
     crawl4aiApiKeyEnv: "CRAWL4AI_API_KEY",
     crawl4aiTimeoutSeconds: 120,
@@ -154,6 +158,8 @@ export const EDITABLE_KEYS = [
   "graph",
   "keepGenerations",
   "crawlProvider",
+  "maxPages",
+  "maxDepth",
   "crawl4aiUrl",
   "crawl4aiApiKeyEnv",
   "crawl4aiTimeoutSeconds",
@@ -312,6 +318,12 @@ export function validateConfigPatch(input: unknown): ConfigPatch {
         break;
       case "graph":
         out.graph = graphField(v);
+        break;
+      case "maxPages":
+        out.maxPages = numberField(key, v, 1, 100_000, true);
+        break;
+      case "maxDepth":
+        out.maxDepth = numberField(key, v, 0, 1000, true);
         break;
       case "crawlProvider":
         if (v !== "builtin" && v !== "crawl4ai") throw new ConfigError("crawlProvider must be builtin or crawl4ai", key);

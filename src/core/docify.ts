@@ -85,6 +85,21 @@ function validateCrawl4aiOptions(value: unknown): Crawl4aiSourceOptions {
   return options as Crawl4aiSourceOptions;
 }
 
+type CrawlLimitPatch = { maxPages?: number | null; maxDepth?: number | null };
+
+function validateCrawlLimitPatch(value: unknown, allowNull: boolean): CrawlLimitPatch {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new DocifyError("invalid_input", "crawl must be an object");
+  const patch = value as Record<string, unknown>;
+  for (const [key, v] of Object.entries(patch)) {
+    if (key !== "maxPages" && key !== "maxDepth") throw new DocifyError("invalid_input", `unknown crawl option: ${key}`);
+    if (allowNull && v === null) continue;
+    const min = key === "maxPages" ? 1 : 0;
+    const max = key === "maxPages" ? 100_000 : 1000;
+    if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) throw new DocifyError("invalid_input", `crawl.${key} must be a whole number between ${min} and ${max}`);
+  }
+  return patch as CrawlLimitPatch;
+}
+
 export interface AddSourceInput {
   library: string;
   version?: string | null;
@@ -226,6 +241,11 @@ export class Docify {
       validateCrawlProvider(input.crawlProvider);
       if (input.kind !== "url") throw new DocifyError("invalid_input", "crawlProvider applies only to URL sources");
     }
+    if (input.crawl !== undefined) {
+      for (const key of ["maxPages", "maxDepth"] as const) {
+        if (key in input.crawl) validateCrawlLimitPatch({ [key]: input.crawl[key] }, false);
+      }
+    }
     let locator = input.locator.trim();
     if (input.kind === "local") {
       locator = resolve(locator.replace(/^~(?=$|\/)/, homedir()));
@@ -254,10 +274,11 @@ export class Docify {
     return this.getSource(id)!;
   }
 
-  updateSourceCrawler(id: string, provider: CrawlProvider | null | undefined, crawl4ai?: unknown): SourceRow {
-    if (provider === undefined && crawl4ai === undefined) throw new DocifyError("invalid_input", "crawler settings are required");
+  updateSourceCrawler(id: string, provider: CrawlProvider | null | undefined, crawl4ai?: unknown, crawl?: unknown): SourceRow {
+    if (provider === undefined && crawl4ai === undefined && crawl === undefined) throw new DocifyError("invalid_input", "crawler settings are required");
     if (provider !== null && provider !== undefined) validateCrawlProvider(provider);
     const runOptions = crawl4ai === undefined ? undefined : validateCrawl4aiOptions(crawl4ai);
+    const limitPatch = crawl === undefined ? undefined : validateCrawlLimitPatch(crawl, true);
     return this.db.transaction(() => {
       const source = this.requireSource(id);
       if (source.kind !== "url") throw new DocifyError("invalid_input", "crawlProvider applies only to URL sources");
@@ -266,6 +287,13 @@ export class Docify {
       if (provider === null) delete options.crawlProvider;
       else if (provider !== undefined) options.crawlProvider = provider;
       if (runOptions !== undefined) options.crawl4ai = runOptions;
+      if (limitPatch !== undefined) {
+        options.crawl = { ...options.crawl };
+        for (const [key, value] of Object.entries(limitPatch)) {
+          if (value === null) delete options.crawl[key];
+          else options.crawl[key] = value;
+        }
+      }
       this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
       return this.requireSource(id);
     }).immediate();
@@ -431,7 +459,7 @@ export class Docify {
       const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits>; crawlProvider?: CrawlProvider; crawl4ai?: Crawl4aiSourceOptions };
       const provider = source.kind === "local" ? "local" : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
       if (provider !== "local") validateCrawlProvider(provider);
-      const limits = { ...DEFAULT_LIMITS, ...sourceOpts.crawl };
+      const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth } : {}), ...sourceOpts.crawl };
       const downloadedAt = nowIso();
       const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
       const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts);

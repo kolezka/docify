@@ -37,7 +37,7 @@
     "browserlessTimeoutSeconds",
   ] as const;
   const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers"] as const;
-  type FieldKey = Exclude<(typeof SCALAR_KEYS)[number], "embeddingProvider" | "crawlProvider">;
+  type FieldKey = Exclude<(typeof SCALAR_KEYS)[number], "embeddingProvider" | "crawlProvider"> | "maxPages" | "maxDepth";
   type GraphKey = (typeof GRAPH_KEYS)[number];
 
   const providers: { value: Provider; label: string }[] = [
@@ -110,7 +110,7 @@
   function sectionOf(key: string): SectionId {
     if (key.startsWith("graph")) return "graph";
     if (key.startsWith("embedding")) return "embeddings";
-    if (key.startsWith("crawl") || key.startsWith("browserless")) return "crawling";
+    if (key.startsWith("crawl") || key.startsWith("browserless") || key === "maxPages" || key === "maxDepth") return "crawling";
     if (key === "keepGenerations") return "storage";
     return "search";
   }
@@ -193,6 +193,7 @@
     const out: Record<string, unknown> = {};
     if (!form || !desc) return out;
     for (const key of SCALAR_KEYS) if (form[key] !== desc.values[key]) out[key] = form[key];
+    for (const key of ["maxPages", "maxDepth"] as const) if (form[key] !== desc.values[key]) out[key] = form[key];
     const before = desc.values.graph;
     if (!form.graphEnabled) {
       if (before !== null) out.graph = null;
@@ -218,6 +219,9 @@
     if (!form) return e;
     for (const key of ["embeddingDims", "embeddingTimeoutSeconds", "strongVectorSim", "weakVectorSim", "lexicalWeight", "keepGenerations", "crawl4aiTimeoutSeconds", "browserlessTimeoutSeconds"] as const) {
       if (typeof form[key] !== "number" || Number.isNaN(form[key])) e[key] = "enter a number";
+    }
+    for (const [key, min, max] of [["maxPages", 1, 100000], ["maxDepth", 0, 1000]] as const) {
+      if (!Number.isSafeInteger(form[key]) || form[key] < min || form[key] > max) e[key] = `enter a whole number from ${min} to ${max}`;
     }
     if (form.graphEnabled) {
       for (const key of ["tokenBudget", "apiTimeoutSeconds", "maxConcurrency", "timeoutSeconds"] as const) {
@@ -656,6 +660,10 @@
           <Row label="Crawler">
             <Segmented options={crawlProviders} bind:value={form.crawlProvider} label="Default crawl provider" />
           </Row>
+        </Group>
+        <Group title="Crawl limits" hint="Defaults for URL sources. Individual sources can override these limits.">
+          {@render field(form, "maxPages", "Max pages", { number: true, min: "1", max: "100000", step: "1", width: "w-[140px]" })}
+          {@render field(form, "maxDepth", "Max depth", { sub: "0 fetches only the start page", number: true, min: "0", max: "1000", step: "1", width: "w-[140px]" })}
         </Group>
         <Group
           title="Crawl4AI"
