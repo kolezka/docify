@@ -140,9 +140,11 @@ test("the description never exposes credential values and names where each path 
 
 test("crawl limits have validated persisted global defaults", () => {
   const home = tempDir();
-  expect(loadConfig(home)).toMatchObject({ maxPages: 50, maxDepth: 2 });
-  saveConfig(home, { maxPages: 123, maxDepth: 0 });
-  expect(loadConfig(home)).toMatchObject({ maxPages: 123, maxDepth: 0 });
+  expect(loadConfig(home)).toMatchObject({ maxPages: 50, maxDepth: 2, maxTotalBytes: 50_000_000 });
+  saveConfig(home, { maxPages: 123, maxDepth: 0, maxTotalBytes: 100_000_000 });
+  expect(loadConfig(home)).toMatchObject({ maxPages: 123, maxDepth: 0, maxTotalBytes: 100_000_000 });
+  expect(describeConfig(loadConfig(home)).values.maxTotalBytes).toBe(100_000_000);
+  for (const value of [0, -1, 1.5, "3", 1_000_000_001]) expect(() => validateConfigPatch({ maxTotalBytes: value })).toThrow();
   for (const value of [0, -1, 1.5, "3", 100001]) expect(() => validateConfigPatch({ maxPages: value })).toThrow();
   for (const value of [-1, 1.5, "3", 1001]) expect(() => validateConfigPatch({ maxDepth: value })).toThrow();
 });
