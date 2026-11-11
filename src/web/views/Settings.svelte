@@ -29,6 +29,7 @@
     "lexicalWeight",
     "keepGenerations",
     "crawlProvider",
+    "maxTotalBytes",
     "crawl4aiUrl",
     "crawl4aiApiKeyEnv",
     "crawl4aiTimeoutSeconds",
@@ -110,7 +111,7 @@
   function sectionOf(key: string): SectionId {
     if (key.startsWith("graph")) return "graph";
     if (key.startsWith("embedding")) return "embeddings";
-    if (key.startsWith("crawl") || key.startsWith("browserless") || key === "maxPages" || key === "maxDepth") return "crawling";
+    if (key.startsWith("crawl") || key.startsWith("browserless") || key === "maxPages" || key === "maxDepth" || key === "maxTotalBytes") return "crawling";
     if (key === "keepGenerations") return "storage";
     return "search";
   }
@@ -220,7 +221,7 @@
     for (const key of ["embeddingDims", "embeddingTimeoutSeconds", "strongVectorSim", "weakVectorSim", "lexicalWeight", "keepGenerations", "crawl4aiTimeoutSeconds", "browserlessTimeoutSeconds"] as const) {
       if (typeof form[key] !== "number" || Number.isNaN(form[key])) e[key] = "enter a number";
     }
-    for (const [key, min, max] of [["maxPages", 1, 100000], ["maxDepth", 0, 1000]] as const) {
+    for (const [key, min, max] of [["maxPages", 1, 100000], ["maxDepth", 0, 1000], ["maxTotalBytes", 1, 1000000000]] as const) {
       if (!Number.isSafeInteger(form[key]) || form[key] < min || form[key] > max) e[key] = `enter a whole number from ${min} to ${max}`;
     }
     if (form.graphEnabled) {
@@ -664,6 +665,7 @@
         <Group title="Crawl limits" hint="Defaults for URL sources. Individual sources can override these limits.">
           {@render field(form, "maxPages", "Max pages", { number: true, min: "1", max: "100000", step: "1", width: "w-[140px]" })}
           {@render field(form, "maxDepth", "Max depth", { sub: "0 fetches only the start page", number: true, min: "0", max: "1000", step: "1", width: "w-[140px]" })}
+          {@render field(form, "maxTotalBytes", "Max total size", { sub: "Total downloaded content per URL source; larger limits use more memory", number: true, min: "1", max: "1000000000", step: "1", unit: "bytes", width: "w-[180px]" })}
         </Group>
         <Group
           title="Crawl4AI"

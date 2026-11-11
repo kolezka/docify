@@ -185,7 +185,9 @@ test("URL source crawler can be set, changed and inherited through the API", asy
 
 test("crawl limits round trip through settings and source APIs", async () => {
   const { call } = await setup();
-  expect((await call("/api/config", "PUT", { maxPages: 8, maxDepth: 3 })).status).toBe(200);
+  expect((await call("/api/config", "PUT", { maxPages: 8, maxDepth: 3, maxTotalBytes: 100_000_000 })).status).toBe(200);
+  expect((await call("/api/config")).data.values.maxTotalBytes).toBe(100_000_000);
+  expect((await call("/api/config", "PUT", { maxTotalBytes: 0 })).status).toBe(400);
   expect((await call("/api/config", "PUT", { maxDepth: -1 })).status).toBe(400);
   const added = await call("/api/sources", "POST", { library: "crawl-limits", kind: "url", locator: "https://example.com/docs/", crawl: { maxDepth: 0 } });
   expect(added.status).toBe(201);

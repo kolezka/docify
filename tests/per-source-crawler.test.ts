@@ -162,6 +162,19 @@ test("crawl limits inherit, persist independently, and preserve other options", 
   } finally { d.close(); }
 });
 
+test("prepare enforces the configured total byte limit and honors existing source overrides", async () => {
+  const d = newDocify(home(), config);
+  try {
+    const id = d.addSource({ library: "bytes", kind: "url", locator: url }).id;
+    d.saveConfig({ maxTotalBytes: 10 });
+    await expect(d.prepare(id, { graph: false, fetcher })).rejects.toThrow("crawl exceeded 10 bytes");
+    d.saveConfig({ maxTotalBytes: 1000 });
+    expect((await d.prepare(id, { graph: false, fetcher })).status).toBe("activated");
+    const limited = d.addSource({ library: "override", kind: "url", locator: url, crawl: { maxTotalBytes: 10 } }).id;
+    await expect(d.prepare(limited, { graph: false, fetcher })).rejects.toThrow("crawl exceeded 10 bytes");
+  } finally { d.close(); }
+});
+
 test("prepare applies global and source crawl limits without changing URL scope", async () => {
   const d = newDocify(home(), config);
   try {
