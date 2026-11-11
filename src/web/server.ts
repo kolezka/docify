@@ -274,6 +274,17 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           } });
         }),
       },
+      "/api/sources/:id/documents": {
+        GET: api((req) => json(docify.db.transaction(() => {
+          const source = docify.requireSource(decodeURIComponent(req.params.id!));
+          const generation = source.active_generation ? docify.getGeneration(source.active_generation) : null;
+          if (!generation || generation.status !== "active") return { source: source.id, generation: null, paths: [] };
+          const rows = docify.db.query<{ path: string }, [number]>(
+            "SELECT path FROM documents WHERE generation_id = ? ORDER BY path",
+          ).all(generation.id);
+          return { source: source.id, generation: generation.id, paths: rows.map((row) => row.path) };
+        })())),
+      },
       "/api/sources/:id/graph": { GET: api((req) => json(graphView(docify, decodeURIComponent(req.params.id!)))) },
       "/api/sources/:id/prepare": {
         POST: api(async (req) => {

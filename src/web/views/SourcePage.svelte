@@ -6,6 +6,7 @@
   import Row from "../components/Row.svelte";
   import StatusChip from "../components/StatusChip.svelte";
   import StatusIcon from "../components/StatusIcon.svelte";
+  import SourceTree from "../components/SourceTree.svelte";
   import Toolbar from "../components/Toolbar.svelte";
   import { api, downloadArtifact, errorText, type SourceInfo } from "../lib/api.ts";
   import { ago, fraction } from "../lib/format.ts";
@@ -320,6 +321,7 @@
             <span class="text-[13px] text-label2" title={g.downloadedAt ?? undefined}><span class="font-mono">#{g.id}</span>, downloaded {ago(g.downloadedAt)}</span>
           </Row>
         </Group>
+        <SourceTree sourceId={s.id} generation={g.id} />
       {:else if !preparing && !failure}
         <div class={notice({ class: "mt-6" })}>
           <StatusIcon tone="info" class="mt-0.5" />
