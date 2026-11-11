@@ -10,10 +10,13 @@
   },
   "files": [
     "index.js",
-    "claude-compat.js",
     "cordis.patch.yml",
-    "locale/*.json"
+    "locale/*.json",
+    "bun.lock"
   ],
+  "dependencies": {
+    "claude-plugin-dsh": "0.1.0"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
