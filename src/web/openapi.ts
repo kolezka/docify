@@ -103,6 +103,14 @@ export function openApiSpec() {
           responses: { "200": { description: "PNG or PDF attachment" }, ...errors(401, 404) },
         },
       },
+      "/api/sources/{id}/documents": {
+        get: {
+          summary: "List document paths in the active generation",
+          description: "Returns an empty path list and null generation when the source is not prepared.",
+          parameters: [idParam("Source id")],
+          responses: { "200": ok("Document paths", { type: "object", properties: { source: { type: "string" }, generation: { type: ["integer", "null"] }, paths: { type: "array", items: { type: "string" } } } }), ...errors(401, 404) },
+        },
+      },
       "/api/sources/{id}/graph": {
         get: {
           summary: "Graph of the active generation",
