@@ -148,3 +148,13 @@ test("crawl limits have validated persisted global defaults", () => {
   for (const value of [0, -1, 1.5, "3", 100001]) expect(() => validateConfigPatch({ maxPages: value })).toThrow();
   for (const value of [-1, 1.5, "3", 1001]) expect(() => validateConfigPatch({ maxDepth: value })).toThrow();
 });
+
+test("config.example.json passes the strict settings check and spells out the whole graph object", () => {
+  const example = JSON.parse(readFileSync(join(import.meta.dir, "..", "config.example.json"), "utf8"));
+  expect(validateConfigPatch(example)).toEqual(example);
+  // A partial graph in config.json replaces the defaults, so the example must list every key.
+  expect(Object.keys(example.graph).sort()).toEqual(Object.keys(DEFAULT_GRAPH).sort());
+  const home = tempDir();
+  writeFileSync(join(home, "config.json"), JSON.stringify(example));
+  expect(loadConfig(home)).toMatchObject(example);
+});
