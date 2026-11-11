@@ -36,6 +36,9 @@
   let scanFullPage = $state("");
   let captureScreenshot = $state("");
   let capturePdf = $state("");
+  let editingLimits = $state(false);
+  let maxPages = $state("");
+  let maxDepth = $state("");
 
   // Page state belongs to one source; start fresh when another one is shown.
   $effect.pre(() => {
@@ -46,6 +49,7 @@
       confirmRemove = false;
       showAllMissing = false;
       editingCrawl4ai = false;
+      editingLimits = false;
     });
   });
 
@@ -57,6 +61,7 @@
   const phaseIndex = $derived(PHASES.indexOf((s?.latest?.phase ?? "") as (typeof PHASES)[number]));
   const failure = $derived(s?.latest?.status === "failed" ? (s.latest.error ?? "failed") : null);
   const crawl4ai = $derived<Crawl4aiSettings>(s?.crawl4ai ?? {});
+  const crawlLimits = $derived(s?.crawl ?? {});
   const crawl4aiChanged = $derived(Object.keys(crawl4ai).length);
   const stat = (key: string): number | null => (typeof g?.stats[key] === "number" ? (g.stats[key] as number) : null);
   const graphMissing = $derived(Array.isArray(g?.stats.graphMissing) ? (g.stats.graphMissing as string[]) : []);
@@ -101,6 +106,20 @@
 
   function setCrawler(value: string) {
     run(() => api(path, { method: "PATCH", body: { crawlProvider: value || null } }));
+  }
+
+  function editLimits() {
+    maxPages = crawlLimits.maxPages === undefined ? "" : String(crawlLimits.maxPages);
+    maxDepth = crawlLimits.maxDepth === undefined ? "" : String(crawlLimits.maxDepth);
+    editingLimits = true;
+  }
+
+  function saveLimits(event: SubmitEvent) {
+    event.preventDefault();
+    run(async () => {
+      await api(path, { method: "PATCH", body: { crawl: { maxPages: maxPages === "" ? null : Number(maxPages), maxDepth: maxDepth === "" ? null : Number(maxDepth) } } });
+      editingLimits = false;
+    });
   }
 
   function editCrawl4ai() {
@@ -345,6 +364,26 @@
       {/if}
 
       {#if s.kind === "url"}
+        <Group title="Crawl limits" hint="Leave a field blank to use the global setting. Changes apply on the next update.">
+          {#if editingLimits}
+            <form onsubmit={saveLimits}>
+              <Row label="Max pages" for="source-max-pages">
+                <input id="source-max-pages" class={input({ mono: true, class: "w-24" })} type="number" min="1" max="100000" step="1" placeholder="Global" value={maxPages} oninput={(e) => (maxPages = e.currentTarget.value)} disabled={busy || preparing} />
+              </Row>
+              <Row label="Max depth" sub="0 fetches only the start page" for="source-max-depth">
+                <input id="source-max-depth" class={input({ mono: true, class: "w-24" })} type="number" min="0" max="1000" step="1" placeholder="Global" value={maxDepth} oninput={(e) => (maxDepth = e.currentTarget.value)} disabled={busy || preparing} />
+              </Row>
+              <Row class="justify-end">
+                <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingLimits = false)}>Cancel</button>
+                <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy || preparing}>Save</button>
+              </Row>
+            </form>
+          {:else}
+            <Row label="Max pages"><span class="font-mono text-[13px] text-label2">{crawlLimits.maxPages ?? "Global default"}</span></Row>
+            <Row label="Max depth"><span class="font-mono text-[13px] text-label2">{crawlLimits.maxDepth ?? "Global default"}</span></Row>
+            <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy || preparing} onclick={editLimits}>Edit limits</button></Row>
+          {/if}
+        </Group>
         <Group title="Crawler">
           <Row label="Fetch pages with" sub="Applies on the next update" for="source-crawler">
             <select id="source-crawler" class={popup()} value={s.crawlProvider ?? ""} disabled={busy || preparing} onchange={(e) => setCrawler(e.currentTarget.value)}>

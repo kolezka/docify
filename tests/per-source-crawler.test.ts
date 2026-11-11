@@ -142,3 +142,46 @@ test("prepare selects each source provider and rebuilds identical content after 
     expect((await d.prepare(id, { graph: false, fetcher })).status).toBe("unchanged");
   } finally { d.close(); }
 });
+
+test("crawl limits inherit, persist independently, and preserve other options", () => {
+  const dir = home();
+  let d = newDocify(dir);
+  const id = d.addSource({ library: "limits", kind: "url", locator: url, crawl: { maxBytesPerPage: 1234, maxDepth: 0 } }).id;
+  d.saveConfig({ maxPages: 9, maxDepth: 4 });
+  expect(sources(d).find(s => s.id === id)).toMatchObject({ crawl: { maxDepth: 0 }, effectiveCrawl: { maxPages: 9, maxDepth: 0 } });
+  d.updateSourceCrawler(id, undefined, undefined, { maxPages: 3, maxDepth: null });
+  expect(JSON.parse(d.requireSource(id).options).crawl).toEqual({ maxBytesPerPage: 1234, maxPages: 3 });
+  d.close();
+  d = newDocify(dir);
+  try {
+    expect(sources(d).find(s => s.id === id)).toMatchObject({ crawl: { maxPages: 3 }, effectiveCrawl: { maxPages: 3, maxDepth: 4 } });
+    for (const crawl of [{ maxPages: 0 }, { maxDepth: -1 }, { maxPages: 1.5 }, { maxDepth: "2" }, { extra: 1 }, null]) {
+      expect(() => d.updateSourceCrawler(id, undefined, undefined, crawl)).toThrow();
+    }
+    expect(JSON.parse(d.requireSource(id).options).crawl).toEqual({ maxBytesPerPage: 1234, maxPages: 3 });
+  } finally { d.close(); }
+});
+
+test("prepare applies global and source crawl limits without changing URL scope", async () => {
+  const d = newDocify(home(), config);
+  try {
+    d.saveConfig({ maxPages: 2, maxDepth: 1 });
+    const id = d.addSource({ library: "limits", kind: "url", locator: url }).id;
+    const calls: string[] = [];
+    const crawlFetcher = async (input: string | URL | Request) => {
+      const target = String(input);
+      calls.push(target);
+      if (target.endsWith(".md")) return new Response("not found", { status: 404 });
+      const html = target === url
+        ? '<a href="/docs/a">a</a><a href="/docs/b">b</a><a href="/outside">outside</a><a href="http://other.test/docs/x">other</a>'
+        : '<h1>Child</h1><a href="/docs/deep">deep</a>';
+      return new Response(html, { headers: { "content-type": "text/html" } });
+    };
+    await d.prepare(id, { graph: false, fetcher: crawlFetcher });
+    expect(calls).toEqual([url, 'http://docs.test/docs/a.md', 'http://docs.test/docs/a']);
+    d.updateSourceCrawler(id, undefined, undefined, { maxPages: 10, maxDepth: 0 });
+    calls.length = 0;
+    await d.prepare(id, { graph: false, fetcher: crawlFetcher });
+    expect(calls).toEqual([url]);
+  } finally { d.close(); }
+});

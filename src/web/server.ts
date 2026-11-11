@@ -218,7 +218,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           if (!locator || !library) throw new DocifyError("invalid_input", "library and locator are required");
           const provider = b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, false)!;
           if (kind === "local") {
-            if (provider !== undefined) throw new DocifyError("invalid_input", "crawlProvider is only valid for URL sources");
+            if (provider !== undefined || b.crawl !== undefined) throw new DocifyError("invalid_input", "crawler settings are only valid for URL sources");
             // The UI may only register paths inside DOCIFY_SOURCE_ROOTS.
             let real: string;
             try {
@@ -231,15 +231,19 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
             }
             return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator: real }), 201);
           }
-          return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator, crawlProvider: provider }), 201);
+          if (b.crawl !== undefined) {
+            const crawl = b.crawl;
+            if (!crawl || typeof crawl !== "object" || Array.isArray(crawl) || Object.keys(crawl).some((key) => key !== "maxPages" && key !== "maxDepth")) throw new DocifyError("invalid_input", "crawl must contain only maxPages and maxDepth");
+          }
+          return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator, crawlProvider: provider, crawl: b.crawl as never }), 201);
         }),
       },
       "/api/sources/:id": {
         PATCH: api(async (req) => {
           const b = await body(req);
-          if (b.crawlProvider === undefined && b.crawl4ai === undefined) throw new DocifyError("invalid_input", "crawler settings are required");
+          if (b.crawlProvider === undefined && b.crawl4ai === undefined && b.crawl === undefined) throw new DocifyError("invalid_input", "crawler settings are required");
           const provider = b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, true);
-          docify.updateSourceCrawler(decodeURIComponent(req.params.id!), provider, b.crawl4ai);
+          docify.updateSourceCrawler(decodeURIComponent(req.params.id!), provider, b.crawl4ai, b.crawl);
           return json({ ok: true });
         }),
         DELETE: api((req) => {
