@@ -9,7 +9,6 @@ dist
 .env.*
 !.env.example
 .DS_Store
-apps/macos/.build
 tests
 docs
 scripts

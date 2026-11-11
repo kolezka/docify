@@ -1,11 +1,7 @@
-# Shortcuts for the commands in README.md. `make` alone lists them.
-
-APP_DIR := apps/macos
-# The app runs this checkout's CLI, not whatever `docify` is on PATH.
-DOCIFY_BIN ?= $(CURDIR)/src/cli.ts
+# Shortcuts for the commands in docs/guide.md. `make` alone lists them.
 
 .DEFAULT_GOAL := help
-.PHONY: help install link setup test typecheck check serve mcp eval mcp-smoke app app-run clean
+.PHONY: help install link setup test typecheck check serve mcp eval mcp-smoke
 
 help: ## List the targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-11s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -38,12 +34,3 @@ eval: ## Run the retrieval evaluation against the prepared store
 
 mcp-smoke: ## Drive the MCP server over stdio
 	bun scripts/mcp-smoke.ts
-
-app: ## Build the macOS app (release)
-	cd $(APP_DIR) && swift build -c release
-
-app-run: ## Build and open the macOS app with this checkout's CLI
-	cd $(APP_DIR) && DOCIFY_BIN="$(DOCIFY_BIN)" swift run
-
-clean: ## Remove the macOS app build output
-	rm -rf $(APP_DIR)/.build

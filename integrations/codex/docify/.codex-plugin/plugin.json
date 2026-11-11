@@ -2,7 +2,7 @@
   "name": "docify",
   "version": "0.1.0",
   "description": "Search locally prepared documentation with cited, token-bounded excerpts. Queries run offline.",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {

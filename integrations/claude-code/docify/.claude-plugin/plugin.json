@@ -3,7 +3,7 @@
   "name": "docify",
   "version": "0.1.1",
   "description": "Search locally prepared documentation with cited, token-bounded excerpts. Queries run offline.",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "keywords": [
     "documentation",
     "retrieval",

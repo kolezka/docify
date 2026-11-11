@@ -79,7 +79,6 @@ export class ConfigError extends Error {
 
 type Env = Record<string, string | undefined>;
 
-// Settings.swift resolves the same path; change them together.
 export function docifyHome(env: Env = process.env, userHome = homedir()): string {
   if (env.DOCIFY_HOME !== undefined) return env.DOCIFY_HOME;
   const current = join(userHome, ".config", "docify");
