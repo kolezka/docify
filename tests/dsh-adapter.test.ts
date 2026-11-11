@@ -93,12 +93,14 @@ test("without the installed runtime the adapter fails to load and names the miss
   expect(run.stdout).toBe("");
 });
 
-test("the DSH bundle patch loads this adapter and starts the same MCP server as plugin.json", () => {
-  // The runtime does not read mcpServers, so the patch row is the only way DSH gets the tools.
+test("the DSH bundle connects to the existing HTTP MCP server without starting a process", () => {
   const rows = (Bun.YAML.parse(readFileSync(join(pluginRoot, "dsh", "cordis.patch.yml"), "utf8")) as { insert: any[] }[]).flatMap((patch) => patch.insert);
   expect(rows.map((row) => row.name)).toEqual([readJson("dsh/package.json").name, "@deepseek-ai/dsh-mcp-client"]);
-  const server = readJson(".claude-plugin/plugin.json").mcpServers.docify;
   const config = rows[1].config;
-  expect({ serverName: config.serverName, transport: config.transport, args: config.args }).toEqual({ serverName: "docify", transport: "stdio", args: server.args });
-  expect(config.command).toBe(`process.env.DOCIFY_BIN || "${server.command}"`);
+  expect(config.serverName).toBe("docify");
+  expect(config.transport).toBe("streamable-http");
+  expect(config.url).toBe('process.env.DOCIFY_MCP_URL || "http://127.0.0.1:4747/mcp"');
+  expect(config.headers.Authorization).toBe('`Bearer ${process.env.DOCIFY_MCP_TOKEN || ""}`');
+  expect(config.command).toBeUndefined();
+  expect(config.args).toBeUndefined();
 });

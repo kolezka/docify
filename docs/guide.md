@@ -211,7 +211,9 @@ cd /path/to/ai-docify/integrations/claude-code/docify/dsh && bun install --froze
 
 To check what the adapter registers without DSH, run `bun x claude-plugin-dsh@0.1.0 inspect /path/to/ai-docify/integrations/claude-code/docify`; it lists the `docify` skill. Do not run that CLI's `sync` or `scaffold` on this adapter: they write a vendored copy of the runtime, which this adapter no longer uses. To move to a newer runtime, change the exact version in `dsh/package.json`, run `bun install` in `dsh/` and commit the updated `bun.lock`.
 
-Then install the bundle, which brings the `docify` skill and the MCP server:
+Start a Docify service with `DOCIFY_MCP_TOKENS` configured as described below. Set `DOCIFY_MCP_TOKEN` in the DSH process environment to the token for this client (the token only, not `name:token`). Optionally set `DOCIFY_MCP_URL`; it defaults to `http://127.0.0.1:4747/mcp`. Restart DSH after changing its environment. Do not commit tokens. Configure the embedding credentials in the service environment, not the DSH client.
+
+Then install the bundle, which brings the `docify` skill and connects to that service:
 
 ```bash
 dsh plugin --profile <profile> add file:/path/to/ai-docify/integrations/claude-code/docify/dsh
@@ -227,17 +229,16 @@ Or, for every profile, add the rows from `dsh/cordis.patch.yml` to `~/.dsh/cordi
       name: "@deepseek-ai/dsh-mcp-client"
       config:
         serverName: docify
-        transport: stdio
-        command: !!js 'process.env.DOCIFY_BIN || "docify"'
-        args: [mcp, --require, "0.1.0"]
+        transport: streamable-http
+        url: !!js 'process.env.DOCIFY_MCP_URL || "http://127.0.0.1:4747/mcp"'
+        headers:
+          Authorization: !!js '`Bearer ${process.env.DOCIFY_MCP_TOKEN || ""}`'
         failOnStartupError: false
 ```
 
-The tools appear as `mcp__docify__docs_search` and so on. DSH starts the server with its own environment: set `DOCIFY_BIN` when `~/.bun/bin` is not on its PATH. DSH also drops variables whose names contain `KEY`, `TOKEN`, `SECRET` or `PASSWORD`, so with the `openai` embedding provider pass the key variable in the row's `env:`, or queries cannot be embedded.
+The tools appear as `mcp__docify__docs_search` and so on. If the service or token is missing, the connection fails and the tools are not registered. HTTP uses the server's project pins and does not enforce the plugin's minimum version; keep the service current.
 
-All three start `docify mcp`, so `docify` must be on PATH. They ship a skill that tells the agent when to search and how to read statuses. Neither installs hooks, and neither forces the agent to search.
-
-The plugins start `docify mcp --require <their version>`. If the `docify` on PATH is older, the MCP server does not start and the error names both versions; run `bun link` in a current checkout. A `docify` from before this check does not know `--require` and fails on the unknown option, which also means it needs updating.
+The Claude Code and Codex plugins start `docify mcp`, so `docify` must be on PATH. Their `--require <version>` check refuses an older executable; update it with `bun link` in a current checkout. All three integrations ship a skill that tells the agent when to search and how to read statuses.
 
 ## Versions and releases
 
@@ -373,7 +374,8 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `DOCIFY_MCP_RATE`, `DOCIFY_MCP_IP_RATE` | MCP limits per client and per IP (default `60/min`, `120/min`) |
 | `DOCIFY_TRUST_PROXY` | `1` takes the client IP from `X-Forwarded-For`; only behind a proxy |
 | `LITELLM_BASE_URL`, `LITELLM_API_KEY` | Graph provider and `openai` embeddings, by default |
-| `DOCIFY_BIN` | `docify` executable the DSH adapter starts |
+| `DOCIFY_MCP_URL` | DSH client endpoint; defaults to `http://127.0.0.1:4747/mcp` |
+| `DOCIFY_MCP_TOKEN` | DSH client bearer token, matching one token in the service's `DOCIFY_MCP_TOKENS` |
 
 `.env.example` lists them with their defaults. Copy it to `.env` for commands run from the checkout root (`bun src/cli.ts`, `bun test`, `make serve`); Bun reads `.env` only from the current directory, so a linked `docify` elsewhere, and the MCP server need the variables in their own environment.
 
