@@ -11,6 +11,10 @@ export interface GraphProviderConfig {
   apiKeyEnv?: string;
   maxConcurrency?: number;
   timeoutSeconds?: number;
+  mode?: "standard" | "deep";
+  tokenBudget?: number;
+  apiTimeoutSeconds?: number;
+  maxWorkers?: number | null;
 }
 
 export interface DocifyConfig {
@@ -58,6 +62,10 @@ export const DEFAULT_GRAPH: GraphProviderConfig = {
   apiKeyEnv: "LITELLM_API_KEY",
   maxConcurrency: 4,
   timeoutSeconds: 900,
+  mode: "standard",
+  tokenBudget: 60000,
+  apiTimeoutSeconds: 600,
+  maxWorkers: null,
 };
 
 export class ConfigError extends Error {
@@ -164,7 +172,7 @@ const LOCKED_KEYS: Record<string, string> = { home: "DOCIFY_HOME", graphifyBin: 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 // Model names reach argv and the model loader: no leading dash, no path traversal.
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
-const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds"];
+const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers"];
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -233,6 +241,19 @@ function graphField(v: unknown): Partial<GraphProviderConfig> | null {
         break;
       case "timeoutSeconds":
         out.timeoutSeconds = numberField(field, value, 1, 86_400);
+        break;
+      case "mode":
+        if (value !== "standard" && value !== "deep") throw new ConfigError(`${field} must be standard or deep`, field);
+        out.mode = value;
+        break;
+      case "tokenBudget":
+        out.tokenBudget = numberField(field, value, 1, 10_000_000, true);
+        break;
+      case "apiTimeoutSeconds":
+        out.apiTimeoutSeconds = numberField(field, value, 1, 86_400);
+        break;
+      case "maxWorkers":
+        out.maxWorkers = value === null ? null : numberField(field, value, 1, 256, true);
         break;
       default:
         throw new ConfigError(`unknown graph setting: ${k} (known: ${GRAPH_KEYS.join(", ")})`, field);

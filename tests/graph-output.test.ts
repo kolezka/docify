@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runGraphify } from "../src/core/graph.ts";
 import { newDocify, tempDir } from "./helpers.ts";
@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const args = process.argv.slice(2);
 const work = args[args.indexOf("--out") + 1];
+writeFileSync(join(work, "argv.json"), JSON.stringify(args));
 process.stdout.write("graph fixture started\\n");
 process.stderr.write("WARNING: fixture stderr\\n");
 const bytes = new TextEncoder().encode("Zażółć\\rnext\\nfinal tail");
@@ -47,6 +48,22 @@ test("Graphify emits decoded stdout and stderr before exit and flushes the final
     expect(lines.filter((line) => line.stream === "stdout").map((line) => line.text)).toEqual(["graph fixture started", "Zażółć", "next", "final tail"]);
     expect(result.log).toContain("final tail");
     expect(result.log).toContain("WARNING: fixture stderr");
+  } finally { d.close(); }
+});
+
+test("Graphify receives configured extraction options and retains owned arguments", async () => {
+  const { d, release } = fixture();
+  Object.assign(d.config.graph!, { mode: "deep", tokenBudget: 12000, apiTimeoutSeconds: 45, maxWorkers: 3, maxConcurrency: 2 });
+  writeFileSync(release, "go");
+  try {
+    await runGraphify(d.config, "options", [], undefined, true);
+    const argv = JSON.parse(readFileSync(join(d.config.home, "graphify", "options", "argv.json"), "utf8")) as string[];
+    for (const [flag, value] of [["--mode", "deep"], ["--token-budget", "12000"], ["--api-timeout", "45"], ["--max-workers", "3"], ["--max-concurrency", "2"]]) {
+      expect(argv[argv.indexOf(flag!) + 1]).toBe(value);
+    }
+    expect(argv).toContain("--no-cluster");
+    expect(argv).toContain("--force");
+    expect(argv[argv.indexOf("--out") + 1]).toBe(join(d.config.home, "graphify", "options"));
   } finally { d.close(); }
 });
 
