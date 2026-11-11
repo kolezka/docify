@@ -49,6 +49,10 @@ test("wrong types and out-of-range values are errors, never coerced or dropped",
   rejects(() => validateConfigPatch({ embeddingModel: "org/../../etc" }), "embeddingModel", /\.\./);
   rejects(() => validateConfigPatch({ embeddingUrl: "file:///etc/passwd" }), "embeddingUrl", /http or https/);
   rejects(() => validateConfigPatch({ graph: { maxConcurrency: 0 } }), "graph.maxConcurrency", /between 1 and 64/);
+  rejects(() => validateConfigPatch({ graph: { mode: "fast" } }), "graph.mode", /standard or deep/);
+  rejects(() => validateConfigPatch({ graph: { tokenBudget: 0 } }), "graph.tokenBudget", /between/);
+  rejects(() => validateConfigPatch({ graph: { apiTimeoutSeconds: -1 } }), "graph.apiTimeoutSeconds", /between/);
+  rejects(() => validateConfigPatch({ graph: { maxWorkers: 1.5 } }), "graph.maxWorkers", /whole number/);
   expect(validateConfigPatch({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434/", graph: null })).toEqual({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434", graph: null });
 });
 
@@ -71,6 +75,14 @@ test("a partial graph change is merged over the default provider, not written as
   expect(loadConfig(home).graph).toBeNull();
   saveConfig(home, { graph: { maxConcurrency: 2 } }, {});
   expect(loadConfig(home).graph).toEqual({ ...DEFAULT_GRAPH, maxConcurrency: 2 });
+});
+
+test("graph extraction settings round-trip and workers can return to automatic", () => {
+  const home = tempDir();
+  saveConfig(home, { graph: { mode: "deep", tokenBudget: 12345, apiTimeoutSeconds: 30, maxWorkers: 2 } }, {});
+  expect(loadConfig(home).graph).toMatchObject({ mode: "deep", tokenBudget: 12345, apiTimeoutSeconds: 30, maxWorkers: 2 });
+  saveConfig(home, { graph: { maxWorkers: null } }, {});
+  expect(loadConfig(home).graph?.maxWorkers).toBeNull();
 });
 
 test("cross-field rules use the merged values", () => {

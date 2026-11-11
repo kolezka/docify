@@ -11,7 +11,7 @@
   import { button, cn, footnote, input, notice as noticeStyle, popup } from "../lib/ui.ts";
 
   type Provider = EditableConfig["embeddingProvider"];
-  type GraphForm = { backend: string; model: string; baseUrlEnv?: string; baseUrlSuffix?: string; apiKeyEnv?: string; maxConcurrency?: number; timeoutSeconds?: number };
+  type GraphForm = { backend: string; model: string; baseUrlEnv?: string; baseUrlSuffix?: string; apiKeyEnv?: string; maxConcurrency?: number; timeoutSeconds?: number; mode?: "standard" | "deep"; tokenBudget?: number; apiTimeoutSeconds?: number; maxWorkers?: number };
   type Form = Omit<EditableConfig, "graph"> & { graphEnabled: boolean; graph: GraphForm };
 
   const SCALAR_KEYS = [
@@ -35,7 +35,7 @@
     "browserlessApiKeyEnv",
     "browserlessTimeoutSeconds",
   ] as const;
-  const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds"] as const;
+  const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers"] as const;
   type FieldKey = Exclude<(typeof SCALAR_KEYS)[number], "embeddingProvider" | "crawlProvider">;
   type GraphKey = (typeof GRAPH_KEYS)[number];
 
@@ -165,7 +165,7 @@
 
   function toForm(d: ConfigDescription): Form {
     const values = JSON.parse(JSON.stringify(d.values)) as EditableConfig;
-    const graph = { ...(d.defaults.graph ?? { backend: "", model: "" }), ...(values.graph ?? {}) };
+    const graph: GraphForm = { ...(d.defaults.graph ?? { backend: "", model: "" }), ...(values.graph ?? {}), maxWorkers: values.graph?.maxWorkers ?? undefined };
     return { ...values, graphEnabled: values.graph !== null, graph };
   }
 
@@ -187,7 +187,15 @@
       if (before !== null) out.graph = null;
     } else {
       const changed: Record<string, unknown> = {};
-      for (const k of GRAPH_KEYS) if (before === null || form.graph[k] !== before[k]) changed[k] = form.graph[k];
+      const effectiveBefore: GraphForm = { ...(desc.defaults.graph ?? { backend: "", model: "" }), ...(before ?? {}), maxWorkers: before?.maxWorkers ?? undefined };
+      for (const k of GRAPH_KEYS) {
+        const value = form.graph[k];
+        if (before === null) {
+          if (value !== undefined) changed[k] = value;
+        } else if (value !== effectiveBefore[k]) {
+          changed[k] = value ?? null;
+        }
+      }
       if (Object.keys(changed).length) out.graph = changed;
     }
     return out;
@@ -199,6 +207,14 @@
     if (!form) return e;
     for (const key of ["embeddingDims", "embeddingTimeoutSeconds", "strongVectorSim", "weakVectorSim", "lexicalWeight", "keepGenerations", "crawl4aiTimeoutSeconds", "browserlessTimeoutSeconds"] as const) {
       if (typeof form[key] !== "number" || Number.isNaN(form[key])) e[key] = "enter a number";
+    }
+    if (form.graphEnabled) {
+      for (const key of ["tokenBudget", "apiTimeoutSeconds", "maxConcurrency", "timeoutSeconds"] as const) {
+        const value = form.graph[key];
+        if (value === undefined || !Number.isInteger(value) || value < 1) e[`graph.${key}`] = "enter a positive whole number";
+      }
+      const workers = form.graph.maxWorkers;
+      if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) e["graph.maxWorkers"] = "enter a positive whole number, or leave blank for automatic";
     }
     if (!e.strongVectorSim && !e.weakVectorSim && form.weakVectorSim > form.strongVectorSim) e.weakVectorSim = "must not be above strong match similarity";
     return e;
@@ -633,6 +649,17 @@
           <Group title="Server environment" hint="Only variable names are stored, never values.">
             {@render graphField(form.graph, "baseUrlEnv", "Base URL variable", { env: true, width: "w-[310px] max-w-[60%]" })}
             {@render graphField(form.graph, "apiKeyEnv", "API key variable", { env: true, width: "w-[310px] max-w-[60%]" })}
+          </Group>
+          <Group title="Graphify runtime" hint="Changes apply on the next forced preparation. Use force prepare to rebuild existing graphs with these settings.">
+            <Row label="Mode" for="setting-graph-mode">
+              <select id="setting-graph-mode" class={popup()} bind:value={form.graph.mode}>
+                <option value="standard">Standard</option>
+                <option value="deep">Deep</option>
+              </select>
+            </Row>
+            {@render graphField(form.graph, "tokenBudget", "Token budget", { sub: "Default: 60000", number: true, min: "1", step: "1", width: "w-[140px]" })}
+            {@render graphField(form.graph, "apiTimeoutSeconds", "API timeout", { sub: "Default: 600 seconds", number: true, min: "1", step: "1", unit: "seconds", width: "w-[140px]" })}
+            {@render graphField(form.graph, "maxWorkers", "Max workers", { sub: "Leave blank for automatic selection", number: true, min: "1", step: "1", width: "w-[140px]" })}
           </Group>
           <Group title="Limits">
             {@render graphField(form.graph, "maxConcurrency", "Max concurrency", { number: true, min: "1", step: "1", width: "w-[140px]" })}
