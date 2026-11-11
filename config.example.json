@@ -1,0 +1,24 @@
+{
+  "embeddingProvider": "openai",
+  "embeddingModel": "bge-m3",
+  "embeddingDims": 1024,
+  "embeddingQueryPrefix": "",
+  "embeddingBaseUrlEnv": "LITELLM_BASE_URL",
+  "embeddingApiKeyEnv": "LITELLM_API_KEY",
+  "embeddingTimeoutSeconds": 120,
+  "strongVectorSim": 0.58,
+  "weakVectorSim": 0.48,
+  "graph": {
+    "backend": "openai",
+    "model": "deepseek/deepseek-flash-nothink",
+    "baseUrlEnv": "LITELLM_BASE_URL",
+    "baseUrlSuffix": "/v1",
+    "apiKeyEnv": "LITELLM_API_KEY",
+    "maxConcurrency": 4,
+    "timeoutSeconds": 900,
+    "mode": "standard",
+    "tokenBudget": 60000,
+    "apiTimeoutSeconds": 600,
+    "maxWorkers": null
+  }
+}
