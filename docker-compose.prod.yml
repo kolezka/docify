@@ -1,5 +1,6 @@
 # Production deployment: Docify web UI behind a reverse proxy.
 #   cp .env.example .env    # optionally set DOCIFY_WEB_TOKEN and DOCIFY_ALLOWED_HOSTS
+#   docker network create shared-services    # once per host
 #   docker compose -f docker-compose.prod.yml up -d --build
 # The UI is then on http://127.0.0.1:4747/, or http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN> with a token.
 #
@@ -21,6 +22,10 @@ services:
       - "${DOCIFY_BIND:-127.0.0.1}:${DOCIFY_HOST_PORT:-4747}:4747"
     expose:
       - "4747"
+    networks:
+      default: {}
+      # Lets the container reach crawlers such as Crawl4AI and Browserless by name.
+      shared-services: {}
     environment:
       DOCIFY_HOST: 0.0.0.0
       DOCIFY_PORT: "4747"
@@ -64,3 +69,8 @@ services:
 
 volumes:
   docify-data:
+
+networks:
+  shared-services:
+    external: true
+    name: shared-services
