@@ -11,11 +11,11 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 async function setup() {
   const home = tempDir();
   const d = newDocify(home);
-  const server = await startServer(0, { docify: d, quiet: true });
+  const server = await startServer(0, { docify: d, quiet: true, token: "a".repeat(32) });
   cleanup.push(() => { server.stop(true); d.close(); });
   const base = `http://127.0.0.1:${server.port}`;
   const get = (query = "", auth = true) => fetch(`${base}/api/logs${query}`, {
-    headers: auth ? { "x-docify-token": server.token } : {},
+    headers: auth ? { "x-docify-token": server.token! } : {},
   });
   const add = (library: string) => d.addSource({ library, kind: "local", locator: writeDocs(tempDir(), { "a.md": "# A\n\nText." }) });
   return { home, d, get, add };

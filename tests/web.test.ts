@@ -14,7 +14,7 @@ async function setup(opts: { project?: string } = {}) {
   const home = tempDir();
   const d = newDocify(home);
   const project = opts.project ?? tempDir("docify-project-");
-  const server = await startServer(0, { docify: d, quiet: true, project });
+  const server = await startServer(0, { docify: d, quiet: true, project, token: "a".repeat(32) });
   cleanup.push(() => {
     server.stop(true);
     d.close();
@@ -23,7 +23,7 @@ async function setup(opts: { project?: string } = {}) {
   const call = async (path: string, method = "GET", body?: unknown) => {
     const res = await fetch(base + path, {
       method,
-      headers: { "x-docify-token": server.token, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+      headers: { "x-docify-token": server.token!, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, data: await res.json() };

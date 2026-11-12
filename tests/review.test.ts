@@ -112,11 +112,11 @@ test("symlinks that leave the registered root are not collected", () => {
 
 test("the web API rejects requests without the per-start token", async () => {
   const d = await prepared("# A\n\n## Ibis\n\nIbis text.\n");
-  const server = await startServer(0, { docify: d, quiet: true });
+  const server = await startServer(0, { docify: d, quiet: true, token: "a".repeat(32) });
   const base = `http://127.0.0.1:${server.port}`;
   expect((await fetch(`${base}/api/sources`)).status).toBe(401);
   expect((await fetch(`${base}/api/sources`, { headers: { "x-docify-token": "0".repeat(48) } })).status).toBe(401);
-  const ok = await fetch(`${base}/api/sources`, { headers: { "x-docify-token": server.token } });
+  const ok = await fetch(`${base}/api/sources`, { headers: { "x-docify-token": server.token! } });
   expect(ok.status).toBe(200);
   expect((await fetch(`${base}/`)).status).toBe(200);
   server.stop(true);

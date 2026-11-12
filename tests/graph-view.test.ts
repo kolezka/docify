@@ -92,9 +92,9 @@ test("the active graph comes back with pages, grounding, one edge per pair and h
 test("the web API serves the graph and maps an unknown source to 404", async () => {
   const d = setup();
   await d.prepare("lib@1", { graphRunner: runner });
-  const server = await startServer(0, { docify: d, quiet: true, project: tempDir("docify-project-") });
+  const server = await startServer(0, { docify: d, quiet: true, project: tempDir("docify-project-"), token: "a".repeat(32) });
   cleanup.push(() => server.stop(true));
-  const get = (path: string) => fetch(`http://127.0.0.1:${server.port}${path}`, { headers: { "x-docify-token": server.token } });
+  const get = (path: string) => fetch(`http://127.0.0.1:${server.port}${path}`, { headers: { "x-docify-token": server.token! } });
 
   const ok = await get(`/api/sources/${encodeURIComponent("lib@1")}/graph`);
   expect(ok.status).toBe(200);

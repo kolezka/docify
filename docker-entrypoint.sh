@@ -10,7 +10,7 @@ unset_empty() {
     if [ -z "$value" ]; then unset "$name"; fi
   done
 }
-unset_empty DOCIFY_ALLOWED_HOSTS DOCIFY_SOURCE_ROOTS LITELLM_BASE_URL LITELLM_API_KEY
+unset_empty DOCIFY_WEB_TOKEN DOCIFY_ALLOWED_HOSTS DOCIFY_SOURCE_ROOTS LITELLM_BASE_URL LITELLM_API_KEY
 
 if [ "${DOCIFY_SETUP:-false}" = "true" ]; then
   bun /app/src/cli.ts setup
