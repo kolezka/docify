@@ -4,11 +4,11 @@ import { newDocify, tempDir } from "./helpers.ts";
 
 test("document paths are authenticated, complete, and restricted to the active generation", async () => {
   const docify = newDocify(tempDir());
-  const server = await startServer(0, { docify, quiet: true });
+  const server = await startServer(0, { docify, quiet: true, token: "d".repeat(32) });
   try {
     const source = docify.addSource({ library: "docs", version: "1", kind: "local", locator: tempDir() });
     const base = `http://127.0.0.1:${server.port}/api/sources`;
-    const get = (id: string, token = server.token) => fetch(`${base}/${encodeURIComponent(id)}/documents`, { headers: { "x-docify-token": token } });
+    const get = (id: string, token = server.token!) => fetch(`${base}/${encodeURIComponent(id)}/documents`, { headers: { "x-docify-token": token } });
     expect((await get(source.id, "wrong")).status).toBe(401);
     const missing = await get("missing");
     expect(missing.status).toBe(404);

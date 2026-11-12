@@ -32,13 +32,13 @@ afterAll(() => {
 // Source roots are read when the server starts.
 async function serve(d: Docify, roots: string) {
   process.env.DOCIFY_SOURCE_ROOTS = roots;
-  const server = await startServer(0, { docify: d, quiet: true, project: tempDir("docify-project-") });
+  const server = await startServer(0, { docify: d, quiet: true, project: tempDir("docify-project-"), token: "a".repeat(32) });
   cleanup.push(() => {
     server.stop(true);
     d.close();
   });
   const base = `http://127.0.0.1:${server.port}`;
-  const headers = { "x-docify-token": server.token };
+  const headers = { "x-docify-token": server.token! };
   return { base, headers };
 }
 

@@ -25,7 +25,7 @@ export function openApiSpec() {
       title: "Docify web API",
       version: "1",
       description:
-        "The HTTP API behind the Docify web UI. Every call needs the access token that `docify serve` prints in the URL fragment (`#token=...`), or `DOCIFY_WEB_TOKEN` on a hosted deployment, sent as `X-Docify-Token`. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
+        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
     },
     servers: [{ url: "/" }],
     security: [{ docifyToken: [] }],

@@ -16,10 +16,10 @@ test("artifact downloads are authenticated and limited to active snapshot files"
   mkdirSync(staging, { recursive: true });
   writeFileSync(join(active, "screenshot.png"), "active image");
   writeFileSync(join(staging, "screenshot.png"), "staging image");
-  const server = await startServer(0, { docify: d, quiet: true });
+  const server = await startServer(0, { docify: d, quiet: true, token: "a".repeat(32) });
   try {
     const url = `http://127.0.0.1:${server.port}/api/sources/${source.id}/artifacts`;
-    const get = (suffix: string) => fetch(`${url}/${suffix}`, { headers: { "x-docify-token": server.token } });
+    const get = (suffix: string) => fetch(`${url}/${suffix}`, { headers: { "x-docify-token": server.token! } });
     expect((await fetch(`${url}/screenshot`)).status).toBe(401);
     const image = await get("screenshot");
     expect(image.status).toBe(200);

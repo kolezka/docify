@@ -67,7 +67,7 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 
 ## Web UI
 
-`docify serve` starts a local page on `127.0.0.1` and prints its URL once, with a per-start access token. Workspace registers, prepares and removes sources and shows the exact text a search hands to agents. Settings edits every `config.json` key, shows which environment variables the server sees (credential values are never shown) and edits project pins in `.docify.json`. `graphifyBin` and `modelsDir` are read-only there because Docify runs or loads code from them; change them in `config.json` or with `DOCIFY_GRAPHIFY_BIN` and `DOCIFY_MODELS_DIR`. A save is refused while the page is preparing a source. The theme follows the system unless you pick Light or Dark in the top bar.
+`docify serve` starts a local page on `127.0.0.1` and prints its URL once. Set `DOCIFY_WEB_TOKEN` to require an access token; without it the page needs none. Workspace registers, prepares and removes sources and shows the exact text a search hands to agents. Settings edits every `config.json` key, shows which environment variables the server sees (credential values are never shown) and edits project pins in `.docify.json`. `graphifyBin` and `modelsDir` are read-only there because Docify runs or loads code from them; change them in `config.json` or with `DOCIFY_GRAPHIFY_BIN` and `DOCIFY_MODELS_DIR`. A save is refused while the page is preparing a source. The theme follows the system unless you pick Light or Dark in the top bar.
 
 The **Logs** tab uses a log viewer vendored from `kolezka/svelte-log-viewer` (`src/web/lib/log-viewer/`) for timestamped preparation progress, errors, warnings and live Graphify stdout/stderr. It polls once per second, offers text and stream filters and follows new lines. CLI and web preparations share the latest 10,000 log lines in `<DOCIFY_HOME>/logs.sqlite`; each line is limited to 8,192 characters. Configured embedding and graph API-key values are redacted before storage. Failed reads are reported in the view without clearing lines already loaded. Only runs made with this logging-enabled build are recorded; older runs have no history.
 
@@ -162,7 +162,7 @@ docify outline bun@1.4.3 --path api/   # documents, headings and section ids of 
 docify open bun@1.4.3 sqlite.mdx --heading "Transactions"
 docify sources
 docify scope --library bun   # what a search would search: pins, chosen versions, generations
-docify serve             # one-screen UI; open the printed http://127.0.0.1:4747/#token=... URL (--port to change)
+docify serve             # one-screen UI; open the printed http://127.0.0.1:4747/ URL (--port to change)
 docify mcp               # MCP server on stdio: docs_search, docs_read, docs_outline, docs_open, docs_sources, docs_scope
 ```
 
@@ -254,16 +254,16 @@ It needs a clean working tree. It writes the new version into `package.json`, bo
 
 ## Hosting (Docker, Coolify)
 
-The image runs the web UI on port 4747 and keeps state in `/data`. It ships the bge-small model and the Graphify runtime, so the default `transformers` provider works without network access. Every request to `/api` needs the access token; there is no anonymous mode.
+The image runs the web UI on port 4747 and keeps state in `/data`. It ships the bge-small model and the Graphify runtime, so the default `transformers` provider works without network access. `DOCIFY_WEB_TOKEN` and `DOCIFY_ALLOWED_HOSTS` are both optional. Without a token, `/api` is open to anyone who can reach the port; Host and Origin checks still apply.
 
 ### Compose
 
 ```bash
-cp .env.example .env          # set DOCIFY_WEB_TOKEN (16+ characters) and DOCIFY_ALLOWED_HOSTS
+cp .env.example .env          # optional: DOCIFY_WEB_TOKEN (16+ characters) and DOCIFY_ALLOWED_HOSTS
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Open `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>`. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; the public routes are `/healthz`, which returns `{"ok":true,"version":"X.Y.Z"}`, and the API reference at `/api/docs`, which holds no data.
+Open `http://127.0.0.1:4747/`, or `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>` when a token is set. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; the public routes are `/healthz`, which returns `{"ok":true,"version":"X.Y.Z"}`, and the API reference at `/api/docs`, which holds no data.
 
 `DOCIFY_ALLOWED_HOSTS` lists the hostnames the server answers for, comma separated; a bare hostname matches any port. When it is empty and the server binds a non-loopback address, any Host is accepted and a warning is logged, so set it in production. `DOCIFY_BIND` defaults to `127.0.0.1`: put a reverse proxy in front, or set it to `0.0.0.0` when the port must be reachable directly.
 
@@ -300,10 +300,10 @@ Drop `--no-graph` when LiteLLM is configured (`LITELLM_BASE_URL`, `LITELLM_API_K
 ### Coolify
 
 1. Create a Docker Compose resource from the repository, using `docker-compose.prod.yml` as the compose file.
-2. Set `DOCIFY_WEB_TOKEN` (16+ characters) and `DOCIFY_ALLOWED_HOSTS` to the domain Coolify gives the app, in the resource's environment variables.
+2. Optionally set `DOCIFY_WEB_TOKEN` (16+ characters) and `DOCIFY_ALLOWED_HOSTS` to the domain Coolify gives the app, in the resource's environment variables. Without a token, anyone who finds the domain can use the UI.
 3. Set the domain to point at container port `4747`. Coolify's Traefik terminates TLS; the origin check accepts `https://<domain>` behind the proxy.
 4. Keep `/data` persistent. The named volume in the compose file is enough; a Coolify-managed volume works too.
-5. Deploy, open `https://<domain>/#token=<DOCIFY_WEB_TOKEN>`, and check that `/healthz` returns 200.
+5. Deploy, open `https://<domain>/` (add `#token=<DOCIFY_WEB_TOKEN>` when a token is set), and check that `/healthz` returns 200.
 
 If the domain changes, update `DOCIFY_ALLOWED_HOSTS` and redeploy.
 
@@ -367,8 +367,8 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `DOCIFY_GRAPHIFY_BIN` | Graphify executable (default `<store>/graphify-venv/bin/graphify`) |
 | `DOCIFY_PROJECT` | Project directory whose `.docify.json` pins apply (CLI search and MCP) |
 | `DOCIFY_HOST`, `DOCIFY_PORT` | Web bind address and port (`serve` also takes `--host`/`--port`) |
-| `DOCIFY_WEB_TOKEN` | Stable web token (16+ characters); without it every `serve` start generates a new one |
-| `DOCIFY_ALLOWED_HOSTS` | Host values the web server answers for, comma separated; `*` accepts any |
+| `DOCIFY_WEB_TOKEN` | Optional web token (16+ characters); without it the web UI and `/api` need no token |
+| `DOCIFY_ALLOWED_HOSTS` | Optional Host values the web server answers for, comma separated; `*` accepts any |
 | `DOCIFY_SOURCE_ROOTS` | Directories the web UI may add local sources from, separated by `:` (default: home) |
 | `DOCIFY_MCP_TOKENS` | `name:token` pairs, comma separated; enables MCP over HTTP at `/mcp` |
 | `DOCIFY_MCP_RATE`, `DOCIFY_MCP_IP_RATE` | MCP limits per client and per IP (default `60/min`, `120/min`) |

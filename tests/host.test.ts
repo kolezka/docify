@@ -112,6 +112,32 @@ test("a POST through a TLS proxy passes the Origin check, a cross-site Origin do
   }
 });
 
+test("without a token or DOCIFY_WEB_TOKEN the API needs no token, but still checks Host and Origin", async () => {
+  const d = newDocify(temp());
+  const saved = process.env.DOCIFY_WEB_TOKEN;
+  // An empty value, as compose passes for a variable unset in .env, also means no token.
+  process.env.DOCIFY_WEB_TOKEN = "";
+  const server = await startServer(0, { docify: d, quiet: true });
+  try {
+    expect(server.token).toBeNull();
+    const base = `http://127.0.0.1:${server.port}`;
+    expect((await fetch(`${base}/api/sources`)).status).toBe(200);
+    expect((await fetch(`${base}/api/sources`, { headers: { "x-docify-token": "stale" } })).status).toBe(200);
+    expect((await fetch(`${base}/api/sources`, { headers: { host: "evil.test" } })).status).toBe(403);
+    const cross = await fetch(`${base}/api/search`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.test" },
+      body: JSON.stringify({ query: "anything" }),
+    });
+    expect(cross.status).toBe(403);
+  } finally {
+    server.stop(true);
+    if (saved === undefined) delete process.env.DOCIFY_WEB_TOKEN;
+    else process.env.DOCIFY_WEB_TOKEN = saved;
+    d.close();
+  }
+});
+
 test("the token must be long enough and DOCIFY_WEB_TOKEN is used when no token is passed", async () => {
   const d = newDocify(temp());
   await expect(startServer(0, { docify: d, quiet: true, token: "short" })).rejects.toThrow(/16 characters/);

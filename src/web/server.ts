@@ -85,19 +85,19 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   const sourceRoots = parseSourceRoots();
   const host = opts.host ?? process.env.DOCIFY_HOST ?? "127.0.0.1";
   let boundPort = port;
-  // Loopback is shared by every local user, so each server start gets a secret that is shown
-  // only in the URL fragment (never sent to the server or logged) and required on /api.
-  // A hosted deployment sets DOCIFY_WEB_TOKEN, which keeps the URL stable across restarts.
-  const envToken = process.env.DOCIFY_WEB_TOKEN?.trim();
-  const token = opts.token ?? envToken ?? Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("hex");
-  if (token.length < 16) throw new Error("the web access token must be at least 16 characters (DOCIFY_WEB_TOKEN)");
+  // The token is optional. Without one, /api is open to anyone who reaches the port; Host and
+  // Origin checks still apply. The UI reads it from the URL fragment, so it is never logged.
+  const envToken = process.env.DOCIFY_WEB_TOKEN?.trim() || undefined;
+  const token: string | null = opts.token ?? envToken ?? null;
+  if (token !== null && token.length < 16) throw new Error("the web access token must be at least 16 characters (DOCIFY_WEB_TOKEN)");
   const tokenFromEnv = !opts.token && !!envToken;
   const configuredHosts = opts.allowedHosts?.length ? splitList(opts.allowedHosts.join(",")) : parseAllowedHosts();
   // Binding beyond loopback without an allowlist: keep working behind any reverse proxy,
   // but say so, because the Host check then only protects against nothing.
   const allowAnyHost = configuredHosts.length === 0 && !LOOPBACK_HOSTS.has(host);
   const allowedHosts = new Set(configuredHosts);
-  const tokenOk = (given: string | null) => !!given && given.length === token.length && timingSafeEqual(Buffer.from(given), Buffer.from(token));
+  const tokenOk = (given: string | null) =>
+    token === null || (!!given && given.length === token.length && timingSafeEqual(Buffer.from(given), Buffer.from(token)));
 
   const json = (data: unknown, status = 200) => Response.json(data, { status });
   const fail = (err: unknown) => {
@@ -417,8 +417,10 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   if (!opts.quiet) {
     const where = `${host}:${boundPort}`;
     const warning = allowAnyHost ? " DOCIFY_ALLOWED_HOSTS is unset, so any Host is accepted; set it to your public domain." : "";
+    const url = `http://${host === "0.0.0.0" ? "localhost" : host}:${boundPort}/`;
     if (tokenFromEnv) console.log(`Docify UI listening on ${where}; the access token comes from DOCIFY_WEB_TOKEN.${warning}`);
-    else console.log(`Docify UI on http://${host === "0.0.0.0" ? "localhost" : host}:${boundPort}/#token=${token}${warning}`);
+    else if (token === null) console.log(`Docify UI on ${url}; no access token is set (DOCIFY_WEB_TOKEN), so anyone who can reach this port can use it.${warning}`);
+    else console.log(`Docify UI on ${url}#token=${token}${warning}`);
     if (mcpPipeline) {
       const names = mcp.clients.map((c) => c.name).join(", ");
       console.log(`MCP over HTTP on /mcp for ${names}; ${mcp.clientRate.limit} requests per ${mcp.clientRate.windowMs / 1000} s per client, ${mcp.ipRate.limit} per ${mcp.ipRate.windowMs / 1000} s per IP.`);

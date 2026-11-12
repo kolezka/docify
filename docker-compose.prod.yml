@@ -1,7 +1,7 @@
 # Production deployment: Docify web UI behind a reverse proxy.
-#   cp .env.example .env    # set DOCIFY_WEB_TOKEN and DOCIFY_ALLOWED_HOSTS
+#   cp .env.example .env    # optionally set DOCIFY_WEB_TOKEN and DOCIFY_ALLOWED_HOSTS
 #   docker compose -f docker-compose.prod.yml up -d --build
-# The UI is then on http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>.
+# The UI is then on http://127.0.0.1:4747/, or http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN> with a token.
 #
 # Coolify: create a Docker Compose resource from this file, set the same variables
 # in the UI, point the domain at container port 4747 and keep /data persistent.
@@ -26,8 +26,8 @@ services:
       DOCIFY_PORT: "4747"
       DOCIFY_HOME: /data
       DOCIFY_SOURCE_ROOTS: ${DOCIFY_SOURCE_ROOTS:-/sources}
-      # Required; the server refuses tokens shorter than 16 characters.
-      DOCIFY_WEB_TOKEN: ${DOCIFY_WEB_TOKEN:?set DOCIFY_WEB_TOKEN in .env}
+      # Optional; empty means no token. The server refuses tokens shorter than 16 characters.
+      DOCIFY_WEB_TOKEN: ${DOCIFY_WEB_TOKEN:-}
       # Public hostnames, comma separated. Empty accepts any Host and logs a warning.
       DOCIFY_ALLOWED_HOSTS: ${DOCIFY_ALLOWED_HOSTS:-}
       # MCP over HTTP at /mcp: name:token pairs, comma separated. Empty keeps /mcp off.

@@ -41,7 +41,7 @@ Backup (the database, settings and prepared snapshots; not models or the Graphif
 
 Servers:
   serve [--port 4747] [--host 127.0.0.1] [--allowed-host HOST]
-                                web UI; DOCIFY_WEB_TOKEN, DOCIFY_ALLOWED_HOSTS
+                                web UI; optional DOCIFY_WEB_TOKEN, DOCIFY_ALLOWED_HOSTS
                                 and DOCIFY_SOURCE_ROOTS are read from the environment;
                                 DOCIFY_MCP_TOKENS also serves MCP over HTTP at /mcp
   mcp [--require X.Y.Z]         MCP server on stdio; refuses to start when docify is older than X.Y.Z
