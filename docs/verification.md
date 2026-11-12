@@ -163,3 +163,13 @@ Branch `feat/mcp-http` on `feat/host-deployment` at `46553d7`, macOS 27, Bun 1.4
 - Live `bun src/cli.ts serve --port 4791` with `DOCIFY_MCP_TOKENS` and `DOCIFY_MCP_RATE=3/min` from the environment: startup line named the client and limits; `tools/list` without a token returned 401, then three 200 responses listing `docs_search`, `docs_read`, `docs_sources`, then 429 with `Retry-After: 20`.
 - `docker compose -f docker-compose.prod.yml config` with `DOCIFY_MCP_TOKENS` set: exit 0, rates default to `60/min` and `120/min`, `DOCIFY_TRUST_PROXY` to `1`.
 - Not verified: OpenClaw as a client, Claude Code's `claude mcp add --transport http` against a deployed server, Traefik's `X-Forwarded-For` in Coolify, and `docker build` (same `svelte-log-viewer` blocker as above).
+
+## 2026-11-12: compose state in host directories
+
+Both compose files bind-mount a host directory instead of a named volume: `docker-compose.prod.yml` mounts `${DOCIFY_DATA_DIR:-./data/docify}` at `/data`, `docker-compose.yml` mounts `${OLLAMA_DATA_DIR:-./data/ollama}` at `/root/.ollama`. macOS 27, Docker 29.9.2 (Docker Desktop).
+
+- `docker compose config --quiet` for both files: exit 0. The rendered prod mount is `type: bind` from `<checkout>/data/docify`, and from `/srv/docify` with `DOCIFY_DATA_DIR=/srv/docify`.
+- `docker build`: exit 0. With the stack up from that image on the default path, `docify add bindtest /sources` wrote `docify.sqlite` and `logs.sqlite` into `./data/docify`. After `down` and `up`, `docify sources` still listed `bindtest@unknown`.
+- Entrypoint guard: the image run with `--tmpfs /data:uid=0,mode=0755` exited 1 with `/data is not writable by uid 10001`. A shell run against a writable directory reached `bun ... serve`.
+- Ollama dev service: reached `healthy` and wrote `models/`, `cache/` and its key into `./data/ollama`, which stayed after `down`. `git status` does not show `data/`.
+- Not verified: a Linux host (Docker Desktop maps bind-mount ownership, so the `chown 10001:10001` step was not exercised there), Coolify, and the named-volume migration commands in the guide.

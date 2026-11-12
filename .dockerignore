@@ -10,5 +10,6 @@ dist
 !.env.example
 .DS_Store
 tests
+data
 docs
 scripts

@@ -5,6 +5,10 @@
 #
 # Coolify: create a Docker Compose resource from this file, set the same variables
 # in the UI, point the domain at container port 4747 and keep /data persistent.
+#
+# State (sqlite, snapshots, config.json) is bind-mounted from DOCIFY_DATA_DIR, default
+# ./data/docify next to this file. The container runs as uid 10001, so on Linux create the
+# directory first: mkdir -p data/docify && sudo chown 10001:10001 data/docify
 name: docify-prod
 
 services:
@@ -43,7 +47,7 @@ services:
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-}
     volumes:
-      - docify-data:/data
+      - ${DOCIFY_DATA_DIR:-./data/docify}:/data
       # Register local docs: mount them and add the path to DOCIFY_SOURCE_ROOTS.
       # - ./docs:/sources:ro
     healthcheck:
@@ -61,6 +65,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  docify-data:

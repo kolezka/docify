@@ -33,6 +33,8 @@ The default is `Xenova/bge-small-en-v1.5` in process, with no server. For multil
 docker compose up -d     # Ollama on 127.0.0.1:11434, pulls bge-m3 (about 1.5 GB the first time)
 ```
 
+The models are stored in `./data/ollama` in the checkout. Set `OLLAMA_DATA_DIR` to an absolute path to keep them elsewhere or share them between checkouts.
+
 Then put this in `~/.config/docify/config.json` and run `docify setup` (it checks the server) and `docify prepare` for each source:
 
 ```json
@@ -260,6 +262,7 @@ The image runs the web UI on port 4747 and keeps state in `/data`. It ships the 
 
 ```bash
 cp .env.example .env          # optional: DOCIFY_WEB_TOKEN (16+ characters) and DOCIFY_ALLOWED_HOSTS
+mkdir -p data/docify && sudo chown 10001:10001 data/docify   # Linux only, see below
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
@@ -267,16 +270,27 @@ Open `http://127.0.0.1:4747/`, or `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKE
 
 `DOCIFY_ALLOWED_HOSTS` lists the hostnames the server answers for, comma separated; a bare hostname matches any port. When it is empty and the server binds a non-loopback address, any Host is accepted and a warning is logged, so set it in production. `DOCIFY_BIND` defaults to `127.0.0.1`: put a reverse proxy in front, or set it to `0.0.0.0` when the port must be reachable directly.
 
-State lives in the `docify-prod_docify-data` volume (sqlite, snapshots, `config.json`). To change the embedding provider, edit that file and restart:
+State (sqlite, snapshots, `config.json`) lives in a host directory bind-mounted at `/data`: `./data/docify` next to the compose file, or `DOCIFY_DATA_DIR` when set. The container runs as uid 10001. On Linux the directory must be owned by that uid, otherwise the entrypoint stops with a message naming the `chown` to run. Docker Desktop on macOS does not need it. Back up the directory while the container is stopped, or use `docify export`.
+
+To change the embedding provider, edit `data/docify/config.json` on the host and restart:
 
 ```bash
-docker compose -f docker-compose.prod.yml cp docify:/data/config.json ./config.json
-# edit ./config.json
-docker compose -f docker-compose.prod.yml cp ./config.json docify:/data/config.json
 docker compose -f docker-compose.prod.yml restart docify
 ```
 
-For a provider with a custom model, also set `DOCIFY_MODELS_DIR=/data/models` and `DOCIFY_SETUP=true` so the download goes to the writable volume, then prepare every source again. See "Embeddings" for the provider settings.
+Earlier versions of the compose file kept state in the named volume `docify-prod_docify-data`. To move it to the directory, stop the stack and copy it once:
+
+```bash
+docker compose -f docker-compose.prod.yml down
+mkdir -p data/docify
+docker run --rm -v docify-prod_docify-data:/from:ro -v "$PWD/data/docify":/to alpine cp -a /from/. /to/
+sudo chown -R 10001:10001 data/docify   # Linux only
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Remove the old volume with `docker volume rm docify-prod_docify-data` once the UI shows your sources.
+
+For a provider with a custom model, also set `DOCIFY_MODELS_DIR=/data/models` and `DOCIFY_SETUP=true` so the download goes to the writable data directory, then prepare every source again. See "Embeddings" for the provider settings.
 
 ### Local documentation
 
@@ -284,7 +298,7 @@ Mount a directory read-only and add it to `DOCIFY_SOURCE_ROOTS`:
 
 ```yaml
     volumes:
-      - docify-data:/data
+      - ${DOCIFY_DATA_DIR:-./data/docify}:/data
       - ./docs:/sources:ro
 ```
 
@@ -302,7 +316,7 @@ Drop `--no-graph` when LiteLLM is configured (`LITELLM_BASE_URL`, `LITELLM_API_K
 1. Create a Docker Compose resource from the repository, using `docker-compose.prod.yml` as the compose file.
 2. Optionally set `DOCIFY_WEB_TOKEN` (16+ characters) and `DOCIFY_ALLOWED_HOSTS` to the domain Coolify gives the app, in the resource's environment variables. Without a token, anyone who finds the domain can use the UI.
 3. Set the domain to point at container port `4747`. Coolify's Traefik terminates TLS; the origin check accepts `https://<domain>` behind the proxy.
-4. Keep `/data` persistent. The named volume in the compose file is enough; a Coolify-managed volume works too.
+4. Keep `/data` persistent. Set `DOCIFY_DATA_DIR` to an absolute host path owned by uid 10001, or replace the bind mount with a Coolify-managed volume.
 5. Deploy, open `https://<domain>/` (add `#token=<DOCIFY_WEB_TOKEN>` when a token is set), and check that `/healthz` returns 200.
 
 If the domain changes, update `DOCIFY_ALLOWED_HOSTS` and redeploy.
