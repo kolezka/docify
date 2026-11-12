@@ -260,8 +260,11 @@ The image runs the web UI on port 4747 and keeps state in `/data`. It ships the 
 
 ```bash
 cp .env.example .env          # optional: DOCIFY_WEB_TOKEN (16+ characters) and DOCIFY_ALLOWED_HOSTS
+docker network create shared-services    # once per host
 docker compose -f docker-compose.prod.yml up -d --build
 ```
+
+The container joins the external `shared-services` network, so it reaches a crawler on the same host by name. Put the Crawl4AI or Browserless stack on that network with an alias, for example `crawl4ai`, and set the crawler URL to `http://crawl4ai:11235`. `127.0.0.1` inside the container is the container itself.
 
 Open `http://127.0.0.1:4747/`, or `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>` when a token is set. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; the public routes are `/healthz`, which returns `{"ok":true,"version":"X.Y.Z"}`, and the API reference at `/api/docs`, which holds no data.
 
@@ -299,7 +302,7 @@ Drop `--no-graph` when LiteLLM is configured (`LITELLM_BASE_URL`, `LITELLM_API_K
 
 ### Coolify
 
-1. Create a Docker Compose resource from the repository, using `docker-compose.prod.yml` as the compose file.
+1. Run `docker network create shared-services` once on the server, then create a Docker Compose resource from the repository, using `docker-compose.prod.yml` as the compose file.
 2. Optionally set `DOCIFY_WEB_TOKEN` (16+ characters) and `DOCIFY_ALLOWED_HOSTS` to the domain Coolify gives the app, in the resource's environment variables. Without a token, anyone who finds the domain can use the UI.
 3. Set the domain to point at container port `4747`. Coolify's Traefik terminates TLS; the origin check accepts `https://<domain>` behind the proxy.
 4. Keep `/data` persistent. The named volume in the compose file is enough; a Coolify-managed volume works too.
