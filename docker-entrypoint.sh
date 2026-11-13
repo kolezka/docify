@@ -15,9 +15,13 @@ unset_empty DOCIFY_WEB_TOKEN DOCIFY_ALLOWED_HOSTS DOCIFY_SOURCE_ROOTS LITELLM_BA
 # A bind-mounted host directory keeps its host owner. Fail with a clear message instead of
 # a sqlite error deep in startup.
 data_dir="${DOCIFY_HOME:-/data}"
+# DOCIFY_DATA_DIR is the host path, passed in by the compose file so the hint can name it.
 if ! [ -w "$data_dir" ]; then
+  host_dir="${DOCIFY_DATA_DIR:-<host directory mounted at $data_dir>}"
   echo "docify: $data_dir is not writable by uid $(id -u). On the host run:" >&2
-  echo "  sudo chown -R $(id -u):$(id -g) <DOCIFY_DATA_DIR>" >&2
+  echo "  sudo mkdir -p $host_dir" >&2
+  echo "  sudo chown -R $(id -u):$(id -g) $host_dir" >&2
+  echo "  sudo chmod -R u+rwX,g+rX,g-w,o-rwx $host_dir" >&2
   exit 1
 fi
 
