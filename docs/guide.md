@@ -294,18 +294,12 @@ For a provider with a custom model, also set `DOCIFY_MODELS_DIR=/data/models` an
 
 ### Local documentation
 
-Mount a directory read-only and add it to `DOCIFY_SOURCE_ROOTS`:
+The compose file mounts `~/Development` read-only at `/sources`, which is the default `DOCIFY_SOURCE_ROOTS`. Set `DOCIFY_SOURCES_DIR` to mount another directory. Each repository is then `/sources/<repo>`. Only Markdown and HTML files are indexed; dot directories, `node_modules`, `.git` and `graphify-out` are skipped. On Linux the files must be readable by uid 10001.
 
-```yaml
-    volumes:
-      - ${DOCIFY_DATA_DIR:-./data/docify}:/data
-      - ./docs:/sources:ro
-```
-
-Then register and prepare it inside the container:
+Register and prepare a repository inside the container:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec docify bun src/cli.ts add handbook /sources
+docker compose -f docker-compose.prod.yml exec docify bun src/cli.ts add docify /sources/docify
 docker compose -f docker-compose.prod.yml exec docify bun src/cli.ts prepare <source-id> --no-graph
 ```
 

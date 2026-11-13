@@ -48,8 +48,8 @@ services:
       LITELLM_API_KEY: ${LITELLM_API_KEY:-}
     volumes:
       - ${DOCIFY_DATA_DIR:-./data/docify}:/data
-      # Register local docs: mount them and add the path to DOCIFY_SOURCE_ROOTS.
-      # - ./docs:/sources:ro
+      # Local repos, read-only, registered as /sources/<repo>. Only Markdown and HTML are indexed.
+      - ${DOCIFY_SOURCES_DIR:-~/Development}:/sources:ro
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.DOCIFY_PORT||'4747')+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

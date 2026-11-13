@@ -173,3 +173,13 @@ Both compose files bind-mount a host directory instead of a named volume: `docke
 - Entrypoint guard: the image run with `--tmpfs /data:uid=0,mode=0755` exited 1 with `/data is not writable by uid 10001`. A shell run against a writable directory reached `bun ... serve`.
 - Ollama dev service: reached `healthy` and wrote `models/`, `cache/` and its key into `./data/ollama`, which stayed after `down`. `git status` does not show `data/`.
 - Not verified: a Linux host (Docker Desktop maps bind-mount ownership, so the `chown 10001:10001` step was not exercised there), Coolify, and the named-volume migration commands in the guide.
+
+### ~/Development mounted at /sources
+
+`docker-compose.prod.yml` mounts `${DOCIFY_SOURCES_DIR:-~/Development}` read-only at `/sources`.
+
+- `docker compose config`: the source renders as `/Users/<user>/Development` (compose expands `~`), and as `/tmp` with `DOCIFY_SOURCES_DIR=/tmp`; `read_only: true`.
+- In the running container, `touch /sources/x` failed with `Read-only file system`.
+- `docify add docify /sources/docify` and `prepare docify@unknown --no-graph`: generation 1 activated with 19 documents and 225 passages.
+- `docify search "how are generations activated" --source docify@unknown --max-tokens 300`: status `weak_match`, top hit `CLAUDE.md > Architecture`, lines 36-46.
+- Not verified: a Linux host, where the files must be readable by uid 10001.
