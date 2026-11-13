@@ -240,7 +240,8 @@ test("a URL source prepared with crawlProvider crawl4ai is rendered by the servi
   const asked = requests.map((q) => q.body.urls[0] as string);
   expect(requests.every((q) => q.auth === `Bearer ${KEY}`)).toBe(true);
   expect(requests.every((q) => q.body.urls.length === 1)).toBe(true);
-  expect(requests[0]!.body.browser_config).toEqual({ type: "BrowserConfig", params: { headless: true } });
+  // Every page asks for stealth: the server applies config.yml browser kwargs only to its own endpoints, not /crawl.
+  expect(requests.every((q) => JSON.stringify(q.body.browser_config) === JSON.stringify({ type: "BrowserConfig", params: { headless: true, enable_stealth: true } }))).toBe(true);
   expect(requests[0]!.body.crawler_config.type).toBe("CrawlerRunConfig");
   expect(requests[0]!.body.crawler_config.params.cache_mode).toBe("bypass");
   // Out-of-scope links are never sent to the service, and an in-scope redirect is not rendered twice.

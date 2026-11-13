@@ -81,7 +81,8 @@ export function crawl4aiFetcher(opts: Crawl4aiOptions, render: Crawl4aiRenderOpt
     const capture = opts.capture && sameUrl(target, opts.capture.startUrl) === true ? opts.capture : undefined;
     const body = {
       urls: [target],
-      browser_config: { type: "BrowserConfig", params: { headless: true } },
+      // The server applies its config.yml browser kwargs only to its own endpoints, so /crawl gets stealth only when asked.
+      browser_config: { type: "BrowserConfig", params: { headless: true, enable_stealth: true } },
       crawler_config: { type: "CrawlerRunConfig", params: {
         cache_mode: "bypass", stream: render.stream ?? false,
         ...(capture?.screenshot && { screenshot: true }),
