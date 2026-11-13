@@ -298,7 +298,7 @@ For a provider with a custom model, also set `DOCIFY_MODELS_DIR=/data/models` an
 
 ### Local documentation
 
-The compose file mounts `DOCIFY_SOURCES_DIR` read-only at `/sources`, which is the default `DOCIFY_SOURCE_ROOTS`. The variable is required (`.env.example` sets `~/Development`); compose stops without it. It has no default because Coolify uses a default in a volume path instead of the value it holds for the variable, and turns a relative one into a directory of its own. Each repository is then `/sources/<repo>`. Only Markdown and HTML files are indexed; dot directories, `node_modules`, `.git` and `graphify-out` are skipped. On Linux the files must be readable by uid 10001.
+The compose file mounts `DOCIFY_SOURCES_DIR` read-only at `/sources`, which is the default `DOCIFY_SOURCE_ROOTS`. `.env.example` sets it to `~/Development`. Without it the mount comes from `/srv/docify/sources`; on a server, make that a link to the repositories: `sudo mkdir -p /srv/docify && sudo ln -s /home/<user>/Development /srv/docify/sources`. Each repository is then `/sources/<repo>`. Only Markdown and HTML files are indexed; dot directories, `node_modules`, `.git` and `graphify-out` are skipped. On Linux the files must be readable by uid 10001.
 
 Register and prepare a repository inside the container:
 
@@ -315,7 +315,7 @@ Drop `--no-graph` when LiteLLM is configured (`LITELLM_BASE_URL`, `LITELLM_API_K
 2. Optionally set `DOCIFY_WEB_TOKEN` (16+ characters) and `DOCIFY_ALLOWED_HOSTS` to the domain Coolify gives the app, in the resource's environment variables. Without a token, anyone who finds the domain can use the UI.
 3. Set the domain to point at container port `4747`. Coolify's Traefik terminates TLS; the origin check accepts `https://<domain>` behind the proxy.
 4. Keep `/data` persistent. Before the first deploy, create `/data/docify` on the server owned by uid 10001 (the commands under "Compose"), or set `DOCIFY_DATA_DIR` to another absolute host path prepared the same way.
-5. Set `DOCIFY_SOURCES_DIR` to an absolute host path, for example `/home/<user>/Development`. Leave `DOCIFY_SOURCE_ROOTS` unset or `/sources`: it is a path inside the container, so `~` there means `/home/docify`.
+5. Create the `/srv/docify/sources` link from "Local documentation". Coolify mounts the compose default and ignores `DOCIFY_SOURCES_DIR` set in its UI; it also rejects `${VAR:?}` in a volume path. Leave `DOCIFY_SOURCE_ROOTS` unset or `/sources`: it is a path inside the container, so `~` there means `/home/docify`.
 6. Deploy, open `https://<domain>/` (add `#token=<DOCIFY_WEB_TOKEN>` when a token is set), and check that `/healthz` returns 200.
 
 If the domain changes, update `DOCIFY_ALLOWED_HOSTS` and redeploy.
