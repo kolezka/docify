@@ -1,5 +1,5 @@
 # Production deployment: Docify web UI behind a reverse proxy.
-#   cp .env.example .env    # optionally set DOCIFY_WEB_TOKEN and DOCIFY_ALLOWED_HOSTS
+#   cp .env.example .env    # set DOCIFY_SOURCES_DIR; optionally DOCIFY_WEB_TOKEN and DOCIFY_ALLOWED_HOSTS
 #   docker network create shared-services    # once per host
 #   docker compose -f docker-compose.prod.yml up -d --build
 # The UI is then on http://127.0.0.1:4747/, or http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN> with a token.
@@ -57,7 +57,8 @@ services:
     volumes:
       - ${DOCIFY_DATA_DIR:-/data/docify}:/data
       # Local repos, read-only, registered as /sources/<repo>. Only Markdown and HTML are indexed.
-      - ${DOCIFY_SOURCES_DIR:-~/Development}:/sources:ro
+      # Required, no default: Coolify uses a default here instead of the variable it holds.
+      - ${DOCIFY_SOURCES_DIR:?set DOCIFY_SOURCES_DIR to the host directory mounted at /sources}:/sources:ro
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:'+(process.env.DOCIFY_PORT||'4747')+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
