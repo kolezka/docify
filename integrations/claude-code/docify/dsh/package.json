@@ -1,6 +1,6 @@
 {
   "name": "@kolezka/docify-dsh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "DeepSeek Harness adapter for the docify Claude Code plugin",
   "type": "module",
@@ -15,7 +15,7 @@
     "bun.lock"
   ],
   "dependencies": {
-    "claude-plugin-dsh": "0.1.0"
+    "claude-plugin-dsh": "0.2.0"
   },
   "dsh": {
     "bundle": {
