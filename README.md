@@ -74,7 +74,7 @@ codex plugin marketplace add ./integrations/codex
 codex plugin add docify@docify-local
 ```
 
-The Claude Code and Codex plugins start `docify mcp` and ship a skill that tells the agent when to search and how to read the results. The DeepSeek Harness adapter connects to an existing Docify service over HTTP. Other MCP clients can use stdio or HTTP.
+The Codex plugin starts `docify mcp`. The Claude Code plugin and the DeepSeek Harness adapter connect to an existing Docify service over HTTP (`DOCIFY_MCP_URL`, `DOCIFY_MCP_TOKEN`). Each ships a skill that tells the agent when to search and how to read the results. Other MCP clients can use stdio or HTTP.
 
 ## Ways to use it
 

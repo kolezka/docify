@@ -197,6 +197,13 @@ claude plugin install docify@docify-local
 # remove: claude plugin uninstall docify@docify-local && claude plugin marketplace remove docify-local
 ```
 
+The Claude Code plugin does not start Docify. It connects to a running Docify service over HTTP (see MCP over HTTP below), local or remote. Set these in the environment of the `claude` process, for example in your shell profile or under `env` in Claude Code's `settings.json`, then restart Claude Code:
+
+- `DOCIFY_MCP_TOKEN`: the token for this client, one of the tokens in the service's `DOCIFY_MCP_TOKENS` (the token only, not `name:token`).
+- `DOCIFY_MCP_URL`: the service's `/mcp` endpoint, such as `https://<domain>/mcp`. Defaults to `http://127.0.0.1:4747/mcp`.
+
+`claude mcp list` shows `plugin:docify:docify: <url> (HTTP) - ✔ Connected` when it works. A wrong token shows HTTP 401, and an unreachable service shows a connection error; in both cases the `docs_*` tools are not registered. Do not commit the token.
+
 Codex:
 
 ```bash
@@ -240,7 +247,7 @@ Or, for every profile, add the rows from `dsh/cordis.patch.yml` to `~/.dsh/cordi
 
 The tools appear as `mcp__docify__docs_search` and so on. If the service or token is missing, the connection fails and the tools are not registered. HTTP uses the server's project pins and does not enforce the plugin's minimum version; keep the service current.
 
-The Claude Code and Codex plugins start `docify mcp`, so `docify` must be on PATH. Their `--require <version>` check refuses an older executable; update it with `bun link` in a current checkout. All three integrations ship a skill that tells the agent when to search and how to read statuses.
+The Codex plugin starts `docify mcp`, so `docify` must be on PATH. Its `--require <version>` check refuses an older executable; update it with `bun link` in a current checkout. The Claude Code plugin and the DeepSeek Harness adapter use HTTP: they get the server's project pins and do not check its version, so keep the service current. All three integrations ship a skill that tells the agent when to search and how to read statuses.
 
 ## Versions and releases
 

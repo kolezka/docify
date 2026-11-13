@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "docify",
   "version": "0.1.1",
-  "description": "Search locally prepared documentation with cited, token-bounded excerpts. Queries run offline.",
+  "description": "Search documentation prepared by a Docify service, with cited, token-bounded excerpts.",
   "license": "UNLICENSED",
   "keywords": [
     "documentation",
@@ -11,12 +11,11 @@
   ],
   "mcpServers": {
     "docify": {
-      "command": "docify",
-      "args": [
-        "mcp",
-        "--require",
-        "0.1.0"
-      ]
+      "type": "http",
+      "url": "${DOCIFY_MCP_URL:-http://127.0.0.1:4747/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${DOCIFY_MCP_TOKEN}"
+      }
     }
   },
   "author": {
