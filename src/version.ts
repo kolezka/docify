@@ -17,7 +17,7 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-// Plugins start `docify mcp --require <their version>`. The docify on PATH may come from an older
+// The Codex plugin starts `docify mcp --require <its version>`. The docify on PATH may come from an older
 // checkout, so refuse to start rather than serve tools the plugin's skill does not match.
 export function requireVersion(min: string, current = VERSION): void {
   if (compareVersions(current, min) < 0) {
