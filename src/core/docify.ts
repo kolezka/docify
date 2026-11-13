@@ -4,7 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { openDb, nowIso, SCHEMA_VERSION } from "./db.ts";
 import { loadConfig, saveConfig, type DocifyConfig } from "./config.ts";
-import { collectLocal, crawl, DEFAULT_LIMITS, type CrawlLimits, type Fetcher, type RawDoc } from "./collect.ts";
+import { collectLocal, crawl, DEFAULT_LIMITS, type CollectLog, type CrawlLimits, type Fetcher, type RawDoc } from "./collect.ts";
 import { normalize } from "./normalize.ts";
 import { chunk } from "./chunk.ts";
 import { countTokens } from "./tokens.ts";
@@ -462,7 +462,9 @@ export class Docify {
       const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth, maxTotalBytes: this.config.maxTotalBytes } : {}), ...sourceOpts.crawl };
       const downloadedAt = nowIso();
       const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
-      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts);
+      const collectLog: CollectLog = (level, text) => this.logs.append(sourceId, text, "system", level);
+      if (provider !== "local") this.logs.append(sourceId, `Collecting with ${this.describeProvider(provider as CrawlProvider)}`);
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits, collectLog) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts, collectLog);
       raw.sort((a, b) => a.path.localeCompare(b.path));
       const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
       const snapshotHash = sha256([...docHashes.map((x) => `${x.d.path}\0${x.rawSha}`), ...artifacts.map((a) => `artifact:${a.kind}\0${sha256(a.bytes)}`)].join("\n"));
@@ -535,6 +537,7 @@ export class Docify {
       if (!passageCount) throw new DocifyError("empty", "no passages produced from the source documents");
 
       await checkpoint("embed", `0/${passageCount}`);
+      this.logs.append(sourceId, `Embedding with ${embeddingIdentity(this.config)}`);
       const all = normalizedDocs.flatMap((d) => d.passages.map((p) => ({ ...p, title: d.path })));
       using insertVec = this.db.prepare("INSERT INTO vectors (passage_rowid, generation_id, embedding) VALUES (?, ?, ?)");
       const embedStart = performance.now();
@@ -621,8 +624,16 @@ export class Docify {
     return result;
   }
 
+  // Service origin only: the configured URL may carry a path or query worth keeping out of logs.
+  private describeProvider(provider: CrawlProvider): string {
+    const origin = (url: string) => { try { return new URL(url).origin; } catch { return "an invalid URL"; } };
+    if (provider === "crawl4ai") return `Crawl4AI at ${origin(this.config.crawl4aiUrl)}`;
+    if (provider === "browserless") return `Browserless at ${origin(this.config.browserlessUrl)}`;
+    return "the built-in crawler";
+  }
+
   // Remote providers never fall back to the built-in crawler.
-  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions, provider: CrawlProvider, runOptions: Crawl4aiSourceOptions | undefined, artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[]): Promise<RawDoc[]> {
+  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions, provider: CrawlProvider, runOptions: Crawl4aiSourceOptions | undefined, artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[], log: CollectLog): Promise<RawDoc[]> {
     try {
       if (provider === "browserless") {
         const fetcher = browserlessFetcher({
@@ -632,7 +643,7 @@ export class Docify {
           maxBytesPerPage: limits.maxBytesPerPage,
           signal: opts.signal,
         });
-        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { signal: opts.signal, markdownExports: false });
+        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { signal: opts.signal, markdownExports: false, log });
       }
       if (provider === "crawl4ai") {
         const fetcher = crawl4aiFetcher({
@@ -650,14 +661,14 @@ export class Docify {
             },
           } : undefined,
         }, runOptions);
-        const docs = await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false, pdfFetcher: opts.fetcher ?? fetch, onAcceptedPage: (url) => fetcher.acceptPage(url) });
+        const docs = await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false, pdfFetcher: opts.fetcher ?? fetch, onAcceptedPage: (url) => fetcher.acceptPage(url), log });
         if ((runOptions?.captureScreenshot && !artifacts.some(a => a.kind === "screenshot")) || (runOptions?.capturePdf && !artifacts.some(a => a.kind === "pdf"))) {
           throw new Error("Crawl4AI did not capture the start page");
         }
         return docs;
       }
       if (provider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(provider)}`);
-      return await crawl(locator, limits, opts.fetcher, { signal: opts.signal });
+      return await crawl(locator, limits, opts.fetcher, { signal: opts.signal, log });
     } catch (err) {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
       throw err;
