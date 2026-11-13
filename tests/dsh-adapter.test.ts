@@ -6,8 +6,8 @@ import { tempDir } from "./helpers.ts";
 const pluginRoot = join(import.meta.dir, "..", "integrations", "claude-code", "docify");
 const readJson = (path: string) => JSON.parse(readFileSync(join(pluginRoot, path), "utf8"));
 const RUNTIME = "claude-plugin-dsh";
-const RUNTIME_VERSION = "0.1.0";
-const RUNTIME_INTEGRITY = "sha512-oQXwpYcLwzxOOSeltN1E4vztrx4tFLkOA9ws0uo4Sw1RlojmL38djKJIiebhJkU78K9omu3YV/csnlM3+PFhIw==";
+const RUNTIME_VERSION = "0.2.0";
+const RUNTIME_INTEGRITY = "sha512-pzSobglwIh7NuG5Y5W331kVIg5NExU5wnzW3citMKXl57CMmVW255b5zPLDyVA/ERSgUjhrsugBgkEq5p+S1Zw==";
 
 // Runs in a separate node process: imports the adapter, applies it to a minimal DSH host and
 // prints where the runtime resolved from plus what the plugin registered.
