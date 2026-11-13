@@ -76,3 +76,31 @@ test("a crawled source prepares and cites url#anchor", async () => {
   expect(r.text).toContain("web@unknown");
   d.close();
 });
+
+// Logs must show what the crawler did with each page, not only the prepare phases.
+test("preparing a crawled source writes crawler progress and skip reasons to the application log", async () => {
+  const logHome = tempDir();
+  const d = newDocify(logHome);
+  try {
+    d.addSource({ library: "logged", version: null, kind: "url", locator: base, crawl: { maxDepth: 1, maxBytesPerPage: 10_000 } });
+    await d.prepare("logged@unknown", { graph: false });
+    const lines = d.logs.read(0, 1000).lines.filter((l) => l.source === "logged@unknown");
+    const find = (text: string) => lines.find((l) => l.text.includes(text));
+    expect(find("Collecting with the built-in crawler")?.level).toBe("info");
+    expect(find(`Crawl ${base} within`)?.level).toBe("info");
+    expect(find(`Fetched ${base}guide.html`)?.text).toMatch(/depth 1, 0 new links, \d+ ms\)$/);
+    expect(find(`Redirect ${base}redir-in.html -> ${base}moved.html (HTTP 301)`)?.level).toBe("info");
+    expect(find(`Skipped ${base}redir-out.html: redirects out of scope`)?.level).toBe("warn");
+    expect(find(`Skipped ${base}big.html: over the`)?.level).toBe("warn");
+    expect(find("Crawl finished:")?.level).toBe("info");
+    expect(find("Embedding with ")?.level).toBe("info");
+
+    d.addSource({ library: "capped", version: null, kind: "url", locator: base, crawl: { maxDepth: 1, maxPages: 2 } });
+    await d.prepare("capped@unknown", { graph: false });
+    const capped = d.logs.read(0, 1000).lines.find((l) => l.source === "capped@unknown" && l.text.startsWith("Stopped at the 2 page limit"));
+    expect(capped?.level).toBe("warn");
+  } finally {
+    d.close();
+    rmSync(logHome, { recursive: true, force: true });
+  }
+});

@@ -31,9 +31,14 @@ export const DEFAULT_LIMITS: CrawlLimits = {
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "graphify-out"]);
 
+// Progress and skip reasons for the application log. Without one, warnings go to stderr as before.
+export type CollectLog = (level: "info" | "warn", text: string) => void;
+const stderrWarnings: CollectLog = (level, text) => { if (level === "warn") console.error(`docify: ${text}`); };
+const kb = (n: number) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+
 // Symlinks are followed only while they resolve inside the registered root, so a link
 // cannot pull files from elsewhere into the store (the UI only vets the root itself).
-export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS): RawDoc[] {
+export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS, log: CollectLog = stderrWarnings): RawDoc[] {
   const abs = realpathSync(resolve(root));
   const st = statSync(abs);
   const files: string[] = [];
@@ -59,18 +64,22 @@ export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS)
     };
     walk(abs);
   }
-  if (skipped.length) console.error(`docify: skipped ${skipped.length} symlink(s) pointing outside ${abs}: ${skipped.slice(0, 3).join(", ")}`);
+  if (skipped.length) log("warn", `Skipped ${skipped.length} symlink(s) pointing outside ${abs}: ${skipped.slice(0, 3).join(", ")}`);
   let total = 0;
   const docs: RawDoc[] = [];
   for (const f of files) {
     if (docs.length >= limits.maxPages * 40) throw new Error(`more than ${limits.maxPages * 40} documents under ${abs}`);
     const bytes = new Uint8Array(readFileSync(f));
-    if (bytes.length > limits.maxBytesPerPage) continue;
+    if (bytes.length > limits.maxBytesPerPage) {
+      log("warn", `Skipped ${f}: ${kb(bytes.length)} is over the ${kb(limits.maxBytesPerPage)} page limit`);
+      continue;
+    }
     total += bytes.length;
     if (total > limits.maxTotalBytes) throw new Error(`source exceeds ${limits.maxTotalBytes} bytes`);
     docs.push({ path: st.isFile() ? relative(join(abs, ".."), f) : relative(abs, f), url: null, kind: kindFromPath(f)!, bytes });
   }
   if (!docs.length) throw new Error(`no Markdown or HTML files found under ${abs}`);
+  log("info", `Collected ${docs.length} files (${kb(total)}) from ${abs}`);
   return docs;
 }
 
@@ -84,6 +93,7 @@ export interface CrawlOptions {
   markdownExports?: boolean;
   pdfFetcher?: Fetcher;
   onAcceptedPage?: (url: string) => void;
+  log?: CollectLog;
 }
 
 // Breadth-first crawl limited to the start URL's origin and directory path.
@@ -92,6 +102,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
   const startUrl = new URL(start);
   if (!/^https?:$/.test(startUrl.protocol)) throw new Error(`only http(s) URLs are supported: ${start}`);
   const scopePath = startUrl.pathname.endsWith("/") ? startUrl.pathname : startUrl.pathname.replace(/[^/]*$/, "");
+  const log = options.log ?? stderrWarnings;
   const inScope = (u: URL) => u.origin === startUrl.origin && u.pathname.startsWith(scopePath);
   const canonical = (u: URL) => {
     const c = new URL(u);
@@ -111,9 +122,13 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
       if (!loc) break;
       const next = new URL(loc, current);
       if (!inScope(next)) {
+        log("warn", `Skipped ${current}: redirects out of scope to ${next}`);
+        await res.body?.cancel();
         res = null;
         break;
       }
+      await res.body?.cancel();
+      log("info", `Redirect ${current} -> ${next} (HTTP ${res.status})`);
       current = next;
       if (hop === limits.maxRedirects) throw new Error(`too many redirects from ${url}`);
     }
@@ -125,6 +140,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
   const collected = new Set<string>();
   const docs: RawDoc[] = [];
   let total = 0;
+  log("info", `Crawl ${startUrl} within ${startUrl.origin}${scopePath}: up to ${limits.maxPages} pages, depth ${limits.maxDepth}`);
   while (queue.length && docs.length < limits.maxPages) {
     const { url, depth, preferMarkdown } = queue.shift()!;
     if (collected.has(canonical(url))) continue;
@@ -135,7 +151,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
       try {
         fetched = await fetchInScope(markdownUrl);
       } catch (error) {
-        console.error(`docify: Markdown export probe failed for ${markdownUrl}; trying linked route: ${error instanceof Error ? error.message : error}`);
+        log("warn", `Markdown export probe failed for ${markdownUrl}; trying linked route: ${error instanceof Error ? error.message : error}`);
       }
       // A Markdown export can exist even when the linked HTML route is a soft 404.
       const exportType = fetched?.res.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
@@ -144,6 +160,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
         fetched = null;
       }
     }
+    const started = performance.now();
     fetched ??= await fetchInScope(url, options.pdfFetcher && /\.pdf$/i.test(url.pathname) ? options.pdfFetcher : fetcher);
     if (!fetched) continue;
     const { res, current } = fetched;
@@ -153,15 +170,24 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     }
     if (!res.ok) {
       if (depth === 0) throw new Error(`fetch ${current} failed: HTTP ${res.status}`);
+      await res.body?.cancel();
+      log("warn", `Skipped ${current}: HTTP ${res.status}`);
       continue;
     }
     const type = res.headers.get("content-type") ?? "";
     const isPdf = !!options.pdfFetcher && (/^application\/pdf(?:\s*;|\s*$)/i.test(type) || (/\.pdf$/i.test(current.pathname) && /^(?:application\/octet-stream)?(?:\s*;|\s*$)/i.test(type)));
     const isMarkdownIndex = /\/llms?\.txt$/i.test(current.pathname);
     const kind: DocKind | null = isPdf ? "markdown" : /text\/html|application\/xhtml/.test(type) ? "html" : /markdown/.test(type) || isMarkdownIndex ? "markdown" : kindFromPath(current.pathname);
-    if (!kind) continue;
+    if (!kind) {
+      await res.body?.cancel();
+      log("info", `Skipped ${current}: not a document (${type || "no content type"})`);
+      continue;
+    }
     const bytes = await readCapped(res, limits.maxBytesPerPage);
-    if (!bytes) continue;
+    if (!bytes) {
+      log("warn", `Skipped ${current}: over the ${kb(limits.maxBytesPerPage)} page limit`);
+      continue;
+    }
     total += bytes.length;
     if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded ${limits.maxTotalBytes} bytes`);
     const path = current.pathname.slice(scopePath.length) || "index.html";
@@ -176,6 +202,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     }
     docs.push({ path, url: canonical(current), kind, bytes: content, ...(isPdf ? { extracted: true } : {}) });
     options.onAcceptedPage?.(current.toString());
+    let queued = 0;
     // Ordinary Markdown pages also contain navigation, not just llms.txt indexes.
     if (!isPdf && depth < limits.maxDepth) {
       const text = new TextDecoder().decode(bytes);
@@ -199,10 +226,14 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
         const preferMarkdown = (kind === "html" || (kind === "markdown" && /\.md$/i.test(current.pathname)))
           && !link.pathname.endsWith("/") && !/\.[^/]+$/.test(link.pathname);
         queue.push({ url: link, depth: depth + 1, preferMarkdown });
+        queued++;
       }
     }
+    log("info", `Fetched ${current} (${docs.length}/${limits.maxPages}, ${isPdf ? "pdf" : kind}, ${kb(bytes.length)}, depth ${depth}, ${queued} new links, ${Math.round(performance.now() - started)} ms)`);
   }
+  if (queue.length) log("warn", `Stopped at the ${limits.maxPages} page limit; ${queue.length} queued links were not fetched`);
   if (!docs.length) throw new Error(`no documents fetched from ${start}`);
+  log("info", `Crawl finished: ${docs.length} pages, ${kb(total)}`);
   return docs;
 }
 
