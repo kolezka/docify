@@ -541,8 +541,14 @@ export class Docify {
       const all = normalizedDocs.flatMap((d) => d.passages.map((p) => ({ ...p, title: d.path })));
       using insertVec = this.db.prepare("INSERT INTO vectors (passage_rowid, generation_id, embedding) VALUES (?, ?, ?)");
       const embedStart = performance.now();
-      for (let i = 0; i < all.length; i += 64) {
-        const batch = all.slice(i, i + 64);
+      // The embedding input is the heading path plus the text, so a vector is reused only when both match
+      // and it came from a finished generation of the same provider, model and size.
+      const reused = this.db.transaction(() => this.reuseVectors(genId)).immediate();
+      const todo = all.filter((p) => !reused.has(p.rowid));
+      if (reused.size) this.logs.append(sourceId, `Reused ${reused.size} of ${all.length} embeddings from earlier generations`);
+      await checkpoint("embed", `${reused.size}/${all.length}`);
+      for (let i = 0; i < todo.length; i += 64) {
+        const batch = todo.slice(i, i + 64);
         const vecs = await embedTexts(
           this.config,
           batch.map((p) => [p.headingPath.join(" > "), p.text].filter(Boolean).join("\n")),
@@ -553,9 +559,10 @@ export class Docify {
           throw err;
         });
         this.db.transaction(() => vecs.forEach((v, j) => insertVec.run(batch[j]!.rowid, genId, new Uint8Array(v.buffer))))();
-        await checkpoint("embed", `${Math.min(i + 64, all.length)}/${all.length}`);
+        await checkpoint("embed", `${reused.size + Math.min(i + 64, todo.length)}/${all.length}`);
       }
       const embedMs = Math.round(performance.now() - embedStart);
+      const embedReused = reused.size;
 
       let graphStatus = "skipped";
       let graphStats: Record<string, unknown> = {};
@@ -583,7 +590,7 @@ export class Docify {
       if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
         throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
       }
-      const stats = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, artifacts: artifacts.map((a) => a.kind), ...graphStats };
+      const stats = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, embedReused, artifacts: artifacts.map((a) => a.kind), ...graphStats };
 
       await checkpoint("activate");
       this.db
@@ -735,6 +742,30 @@ export class Docify {
       graphMissing: docs.filter((d) => !covered.has(d.path)).map((d) => d.path),
       graphWarnings: result.incomplete,
     };
+  }
+
+  // Copies vectors for passages of genId whose text and heading path were already embedded by a finished
+  // generation (any source) with the current embedding identity. Returns the passage rowids now covered.
+  private reuseVectors(genId: number): Set<number> {
+    const dims = this.config.embeddingDims;
+    this.db.run(
+      `INSERT INTO vectors (passage_rowid, generation_id, embedding)
+       SELECT rowid, ?, e FROM (
+         SELECT p.rowid AS rowid, (
+           SELECT v.embedding FROM passages o
+           JOIN vectors v ON v.passage_rowid = o.rowid
+           JOIN generations g ON g.id = o.generation_id
+           WHERE o.content_sha256 = p.content_sha256 AND o.heading_path = p.heading_path
+             AND g.status IN ('active', 'superseded') AND g.embedding_model = ? AND g.embedding_dims = ?
+             AND length(v.embedding) = ?
+           LIMIT 1
+         ) AS e
+         FROM passages p WHERE p.generation_id = ?
+       ) WHERE e IS NOT NULL`,
+      [genId, embeddingIdentity(this.config), dims, dims * 4, genId],
+    );
+    const rows = this.db.query<{ r: number }, [number]>("SELECT passage_rowid AS r FROM vectors WHERE generation_id = ?").all(genId);
+    return new Set(rows.map((x) => x.r));
   }
 
   private deleteGenerationRows(genId: number) {
