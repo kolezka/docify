@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Docify, DocifyError } from "../core/docify.ts";
-import { MAX_QUERIES, open, outline, read, renderSources, scope, search, searchMany, sources } from "../core/search.ts";
+import { MAX_QUERIES, discoverSources, open, outline, read, renderSources, scope, search, searchMany, sources } from "../core/search.ts";
 import { VERSION } from "../version.ts";
 
 const pkg = { name: "docify", version: VERSION };
@@ -139,13 +139,17 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     "docs_sources",
     {
       title: "List documentation sources",
-      description: "List registered documentation sources with versions, preparation state and refresh failures.",
-      inputSchema: {},
+      description: "Find documentation collections by topic, e.g. query 'docs for Apple', or list all registered sources when query is omitted. Matches source identity and saved automatically generated summaries. Returns source ids to use in docs_search, docs_outline or docs_open. Discovery is local and read-only; it never generates summaries.",
+      inputSchema: { query: z.string().trim().min(1).max(500).optional().describe("Topic or collection to find, e.g. docs for Apple") },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => {
+    async (args) => {
       try {
-        return { content: [{ type: "text", text: renderSources(sources(docify)) }] };
+        const list = args.query === undefined ? sources(docify) : discoverSources(docify, args.query);
+        const text = args.query !== undefined && !list.length
+          ? "No matching documentation collections. Call docs_sources without query to list all registered sources. Summaries may not have been generated yet."
+          : renderSources(list);
+        return { content: [{ type: "text", text }] };
       } catch (err) {
         return fail(err);
       }
