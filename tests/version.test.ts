@@ -14,7 +14,10 @@ test("package.json, both plugin manifests and the version the plugins require al
   for (const v of versions) expect({ path: v.path, version: v.version }).toEqual({ path: v.path, version: VERSION });
   // A manifest or MCP config added later must be listed, or release would leave it behind.
   const manifests = ["integrations/**/{plugin.json,.mcp.json}", "integrations/**/dsh/package.json"].flatMap((pattern) => [...new Bun.Glob(pattern).scanSync({ cwd: repoRoot, dot: true })]);
-  expect(manifests.length).toBeGreaterThanOrEqual(5);
+  expect(manifests).toContain("integrations/claude-code/docify/.claude-plugin/plugin.json");
+  expect(manifests).toContain("integrations/codex/docify/.codex-plugin/plugin.json");
+  expect(manifests).toContain("integrations/codex/docify/.mcp.json");
+  expect(manifests).toContain("integrations/claude-code/docify/dsh/package.json");
   for (const path of manifests) expect(VERSION_FILES.map((f) => f.path)).toContain(path);
 });
 

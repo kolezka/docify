@@ -2,7 +2,7 @@
   "mcpServers": {
     "docify": {
       "command": "docify",
-      "args": ["mcp", "--require", "0.1.0"]
+      "args": ["mcp", "--require", "0.2.0"]
     }
   }
 }
