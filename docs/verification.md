@@ -174,6 +174,15 @@ Both compose files bind-mount a host directory instead of a named volume: `docke
 - Ollama dev service: reached `healthy` and wrote `models/`, `cache/` and its key into `./data/ollama`, which stayed after `down`. `git status` does not show `data/`.
 - Not verified: a Linux host (Docker Desktop maps bind-mount ownership, so the `chown 10001:10001` step was not exercised there), Coolify, and the named-volume migration commands in the guide.
 
+## 2026-11-13: DOCIFY_SOURCES_DIR required
+
+Coolify 4.7.5 deployed this compose file with `DOCIFY_SOURCES_DIR=/home/<user>/Development` set and still mounted `/data/coolify/applications/<id>/Development` at `/sources`. The same happened to `/data` at commit `323207e`: `DOCIFY_DATA_DIR=/data/docify` was set, the default was `./data/docify`, and the mount came from the application directory. After the default became `/data/docify`, the mount was `/data/docify`. Coolify used the default, not the variable. Observed on three deploys, not read in Coolify's code. The mount now has no default.
+
+- `docker compose -f docker-compose.prod.yml --env-file /dev/null config` without the variable: exit 1, `required variable DOCIFY_SOURCES_DIR is missing a value`.
+- With `--env-file .env.example`: exit 0, source `/Users/<user>/Development` (compose expands `~`), `read_only: true`.
+- With `DOCIFY_SOURCES_DIR=/tmp`: exit 0, source `/tmp`.
+- Not verified: that Coolify substitutes a `${VAR:?}` volume source. That needs a deploy.
+
 ### ~/Development mounted at /sources
 
 `docker-compose.prod.yml` mounts `${DOCIFY_SOURCES_DIR:-~/Development}` read-only at `/sources`.
