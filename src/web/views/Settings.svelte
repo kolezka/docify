@@ -709,7 +709,7 @@
           </Group>
           <Group title="Limits">
             {@render graphField(form.graph, "maxConcurrency", "Max concurrency", { number: true, min: "1", step: "1", width: "w-[140px]" })}
-            {@render graphField(form.graph, "timeoutSeconds", "Timeout", { number: true, min: "1", unit: "seconds", width: "w-[140px]" })}
+            {@render graphField(form.graph, "timeoutSeconds", "Idle timeout", { sub: "Stops Graphify after this long without output. Default: 900 seconds", number: true, min: "1", unit: "seconds", width: "w-[140px]" })}
           </Group>
         {/if}
       {:else if section === "storage"}

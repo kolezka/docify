@@ -123,7 +123,16 @@ export async function runGraphify(
     proc.kill();
     killTimer ??= setTimeout(() => proc.kill("SIGKILL"), 5000);
   };
-  const timeout = setTimeout(stop, (provider.timeoutSeconds ?? 900) * 1000);
+  // An inactivity limit, not a wall clock: a large corpus takes longer than any fixed limit while
+  // Graphify keeps reporting chunks, and a hung run still goes quiet and gets stopped.
+  const idleSeconds = provider.timeoutSeconds ?? 900;
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const armTimeout = () => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => { timedOut = true; stop(); }, idleSeconds * 1000);
+  };
+  armTimeout();
   const onAbort = stop;
   signal?.addEventListener("abort", onAbort);
   // Read while it runs (a full pipe would block Graphify), but once it exits give the pipes
@@ -134,6 +143,7 @@ export async function runGraphify(
     let full = "";
     let pending = "";
     const accept = (text: string, final = false) => {
+      if (text && !timedOut) armTimeout();
       full += text;
       pending += text;
       const lines = pending.split(/\r\n|[\r\n]/);
@@ -172,6 +182,9 @@ export async function runGraphify(
   const log = (out.text() + err.text()).trim();
   if (code !== 0) {
     const tail = log.split("\n").slice(-6).join("\n");
+    if (timedOut) {
+      throw new GraphProviderError(`graphify extract stopped after ${idleSeconds} s without output (graph timeoutSeconds). Finished chunks are cached, so the next prepare resumes; raise timeoutSeconds if the provider is slow. Last output: ${tail}`);
+    }
     const hint = /semantic shrink|Refusing to overwrite/.test(log) ? " The provider returned a partial graph and Graphify cached it; rerun prepare with --force to re-extract." : "";
     throw new GraphProviderError(`graphify extract exited ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}: ${tail}${hint}`);
   }
