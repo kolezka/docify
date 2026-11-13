@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS passages (
 );
 CREATE INDEX IF NOT EXISTS passages_doc ON passages(document_id, ord);
 CREATE INDEX IF NOT EXISTS passages_gen ON passages(generation_id);
+-- Prepare looks up earlier vectors by content, so unchanged passages are not embedded again.
+CREATE INDEX IF NOT EXISTS passages_content ON passages(content_sha256);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(
   heading, body, symbols, content='', contentless_delete=1, tokenize = "unicode61 tokenchars '_'"
