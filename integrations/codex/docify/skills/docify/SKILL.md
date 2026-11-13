@@ -13,7 +13,7 @@ Docify holds documentation that was downloaded and prepared on this machine. Its
 - A version-specific question ("in Bun 1.2", "does 1.4 still...").
 - An error message or warning that the docs may explain.
 
-Call `docs_sources` first if you do not know which libraries and versions are registered.
+Call `docs_sources` first if you do not know which libraries and versions are registered. To find a collection by topic, pass `query`, for example `{"query":"docs for Apple"}`. Discovery reuses saved collection summaries and returns source ids; pass the selected id in `docs_search.sources` or to `docs_outline`. A summary is a discovery hint, not cited evidence. If no collection matches, list all sources without `query`. Operators generate summaries explicitly with `docify summarize <source-id>` using the configured OpenAI-compatible graph provider; tools never generate them.
 
 ## How
 

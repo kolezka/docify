@@ -3,7 +3,8 @@ import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { Docify, DocifyError, type CrawlProvider } from "./core/docify.ts";
-import { open, outline, read, renderSources, scope, search, searchMany, sources, type Mode } from "./core/search.ts";
+import { summarizeSource } from "./core/summary.ts";
+import { discoverSources, open, outline, read, renderSources, scope, search, searchMany, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
 import { exportStore, importStore } from "./core/backup.ts";
 import { VERSION, requireVersion } from "./version.ts";
@@ -14,11 +15,12 @@ Preparation (may use the network or the configured graph provider):
   setup                         install the pinned Graphify runtime and download the embedding model
   add <library> <path|url> [--version V] [--id ID] [--crawler builtin|crawl4ai|browserless]
   crawler <source-id> <builtin|crawl4ai|browserless|default>
-  prepare <source-id> [--no-graph] [--force]
+  summarize <source-id> [--force] generate and save a collection summary using the configured OpenAI graph provider
+  prepare <source-id> [--no-graph] [--force] [--summary]
   remove <source-id>
 
 Queries (local and offline only):
-  sources                       list sources, versions and preparation state
+  sources [topic] [--json]       discover collections using saved summaries, or list all sources
   search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
   search --query Q [--query Q ...] [same options]
                                 up to 8 queries in one call, sharing --max-tokens
@@ -70,6 +72,7 @@ async function main(argv: string[]) {
       path: { type: "string" },
       json: { type: "boolean" },
       "no-graph": { type: "boolean" },
+      summary: { type: "boolean" },
       force: { type: "boolean" },
       "keep-config": { type: "boolean" },
       port: { type: "string" },
@@ -141,6 +144,14 @@ async function main(argv: string[]) {
             const shown = missing.slice(0, 5).join(", ") + (missing.length > 5 ? ` (+${missing.length - 5} more)` : "");
             console.error(`warning: graph is partial${missing.length ? `, no nodes for ${missing.length} document(s): ${shown}` : ""}. The next prepare retries them.`);
           }
+          if (values.summary) {
+            try {
+              console.log(JSON.stringify(await summarizeSource(docify, id, { signal: controller.signal }), null, 2));
+            } catch (err) {
+              console.error(`Preparation succeeded, but summary generation failed: ${err instanceof Error ? err.message : "unknown error"}. Retry with docify summarize ${id}.`);
+              process.exitCode = 1;
+            }
+          }
         } finally {
           clearInterval(timer);
         }
@@ -150,9 +161,23 @@ async function main(argv: string[]) {
         docify.removeSource(positionals[0] ?? "");
         console.log(`removed ${positionals[0]}`);
         break;
+      case "summarize": {
+        const id = positionals[0];
+        if (!id) throw new DocifyError("invalid_input", "usage: docify summarize <source-id> [--force]");
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        process.once("SIGINT", cancel);
+        try {
+          const summary = await summarizeSource(docify, id, { force: values.force, signal: controller.signal });
+          console.log(JSON.stringify(summary, null, 2));
+        } finally {
+          process.off("SIGINT", cancel);
+        }
+        break;
+      }
       case "sources": {
-        const list = sources(docify);
-        console.log(values.json ? JSON.stringify(list, null, 2) : renderSources(list));
+        const list = positionals.length ? discoverSources(docify, positionals.join(" ")) : sources(docify);
+        console.log(values.json ? JSON.stringify(list, null, 2) : positionals.length && !list.length ? "No matching documentation collections. Run docify sources to list all sources." : renderSources(list));
         break;
       }
       case "search": {

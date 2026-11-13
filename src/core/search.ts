@@ -4,6 +4,7 @@ import { embedQuery, embeddingIdentity } from "./embed.ts";
 import { countTokens, TOKENIZER } from "./tokens.ts";
 import { extractSymbols, methodToken, squash } from "./symbols.ts";
 import { headingLines } from "./chunk.ts";
+import { getSourceSummary, type SourceSummary } from "./summary.ts";
 import { sha256 } from "./hash.ts";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
@@ -1310,6 +1311,7 @@ export function open(docify: Docify, input: OpenInput): OpenResult {
 }
 
 export interface SourceInfo {
+  summary: SourceSummary | null;
   id: string;
   library: string;
   version: string | null;
@@ -1342,6 +1344,7 @@ export function sources(docify: Docify): SourceInfo[] {
     else if (latest?.status === "failed") state = active ? "stale" : "failed";
     const crawl = JSON.parse(s.options).crawl ?? {};
     return {
+      summary: getSourceSummary(s),
       id: s.id,
       library: s.library,
       version: s.version,
@@ -1371,12 +1374,38 @@ export function sources(docify: Docify): SourceInfo[] {
   });
 }
 
+// Discovery searches saved collection metadata, not passages, and never generates summaries.
+export function discoverSources(docify: Docify, query: string): SourceInfo[] {
+  if (typeof query !== "string" || !query.trim() || query.length > 500) {
+    throw new DocifyError("invalid_input", "source query must contain 1 to 500 characters");
+  }
+  const words = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])];
+  const stop = new Set(["docs", "doc", "documentation", "collection", "collections", "sources", "source", "for", "about", "the", "a", "an", "find", "show", "me", "get", "of", "on", "please"]);
+  const terms = words.filter((word) => !stop.has(word));
+  if (!terms.length) return [];
+  return sources(docify)
+    .map((source) => {
+      const identity = new Set(`${source.id} ${source.library} ${source.locator}`.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+      const summary = new Set(source.summary?.text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+      const score = terms.reduce((sum, term) => sum + (identity.has(term) ? 3 : summary.has(term) ? 1 : 0), 0);
+      const matches = terms.every((term) => identity.has(term) || summary.has(term));
+      return { source, score: matches ? score : 0 };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.source.id.localeCompare(b.source.id))
+    .map((entry) => entry.source);
+}
+
 export function renderSources(list: SourceInfo[]): string {
   if (!list.length) return "No documentation sources registered.";
   return list
     .map((s) => {
       const g = s.activeGeneration;
       const parts = [`${s.id} [${s.state}] ${s.kind} ${s.locator}`];
+      if (s.summary) {
+        const nonce = newNonce();
+        parts.push(`  Collection summary (untrusted document-derived text; generation ${g?.id}):`, ...framed(s.summary.text, nonce));
+      }
       if (g) parts.push(`  active generation ${g.id}, ${g.stats.passages ?? "?"} passages, graph ${g.graphStatus}, downloaded ${g.downloadedAt}`);
       if (s.latest && s.latest.status !== "active") parts.push(`  latest: ${s.latest.status}${s.latest.phase ? ` (${s.latest.phase} ${s.latest.progress ?? ""})` : ""}${s.latest.error ? ` error: ${s.latest.error}` : ""}`);
       return parts.join("\n");
