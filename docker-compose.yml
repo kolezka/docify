@@ -3,7 +3,9 @@
 # Then set "embeddingProvider": "ollama" in ~/.config/docify/config.json (docs/guide.md, "Embeddings").
 # Docker on macOS runs it on the CPU; on a Linux host with an NVIDIA GPU, add a
 # deploy.resources.reservations.devices entry for speed.
-name: docify  # fixed, so running it from another checkout reuses the same model volume
+# Models are kept in OLLAMA_DATA_DIR, default ./data/ollama next to this file. Set an absolute
+# path to share one model cache between checkouts.
+name: docify
 
 services:
   ollama:
@@ -11,7 +13,7 @@ services:
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
-      - ollama:/root/.ollama
+      - ${OLLAMA_DATA_DIR:-./data/ollama}:/root/.ollama
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "ollama", "list"]
@@ -27,6 +29,3 @@ services:
       - OLLAMA_HOST=ollama:11434
     entrypoint: ["ollama", "pull", "bge-m3"]
     restart: "no"
-
-volumes:
-  ollama:

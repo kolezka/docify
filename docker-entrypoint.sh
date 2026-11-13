@@ -12,6 +12,15 @@ unset_empty() {
 }
 unset_empty DOCIFY_WEB_TOKEN DOCIFY_ALLOWED_HOSTS DOCIFY_SOURCE_ROOTS LITELLM_BASE_URL LITELLM_API_KEY
 
+# A bind-mounted host directory keeps its host owner. Fail with a clear message instead of
+# a sqlite error deep in startup.
+data_dir="${DOCIFY_HOME:-/data}"
+if ! [ -w "$data_dir" ]; then
+  echo "docify: $data_dir is not writable by uid $(id -u). On the host run:" >&2
+  echo "  sudo chown -R $(id -u):$(id -g) <DOCIFY_DATA_DIR>" >&2
+  exit 1
+fi
+
 if [ "${DOCIFY_SETUP:-false}" = "true" ]; then
   bun /app/src/cli.ts setup
 fi
