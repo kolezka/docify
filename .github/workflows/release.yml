@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump for Docify, Claude Code, Codex and DSH
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docify-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Check release tooling
+        run: |
+          bun run typecheck
+          bun test tests/version.test.ts tests/release-workflow.test.ts
+      - name: Configure release author
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Bump, commit and tag
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          case "$BUMP" in
+            major|minor|patch) ;;
+            *) echo "Unsupported bump: $BUMP" >&2; exit 1 ;;
+          esac
+          bun scripts/release.ts "$BUMP"
+      - name: Verify and push release
+        run: |
+          bun test tests/version.test.ts tests/release-workflow.test.ts
+          version=$(bun -p '(await Bun.file("package.json").json()).version')
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v${version}"
+          printf 'Released v%s to main and pushed its tag.\n' "$version" >> "$GITHUB_STEP_SUMMARY"

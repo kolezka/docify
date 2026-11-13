@@ -253,6 +253,10 @@ The Codex plugin starts `docify mcp`, so `docify` must be on PATH. Its `--requir
 
 ## Versions and releases
 
+For a release on GitHub, open **Actions > Release > Run workflow**, select **main**, choose **patch**, **minor** or **major**, and run it. The workflow checks types and release tests, calls the shared release script, verifies the bumped versions, then atomically pushes the commit to `main` and the new annotated `vX.Y.Z` tag. Other branches are skipped; releases run one at a time. If `main` moves during the run, the push fails without publishing either ref. Branch protection must allow the workflow's `GITHUB_TOKEN` to push; the workflow does not bypass protection. It does not publish packages or create a GitHub Release.
+
+For a local release, use the same script and push yourself:
+
 Docify, both plugins and the DeepSeek Harness adapter share one version. `package.json` holds it; `docify --version`, the MCP server info and `/healthz` report it. `scripts/release.ts` is the only thing that should change it:
 
 ```bash
