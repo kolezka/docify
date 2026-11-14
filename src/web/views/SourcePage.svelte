@@ -23,7 +23,11 @@
 
   const s = $derived(sources.byId(nav.sourceId));
 
-  let busy = $state(false);
+  let actionBusy = $state(false);
+  // Summaries outlive a source switch, so they are tracked per source, not per page.
+  let summarizingIds = $state<string[]>([]);
+  const summarizing = $derived(!!nav.sourceId && summarizingIds.includes(nav.sourceId));
+  const busy = $derived(actionBusy || summarizing);
   let error = $state("");
   let menuOpen = $state(false);
   let confirmRemove = $state(false);
@@ -83,7 +87,7 @@
   const noGraphLabel = $derived(s?.state === "ready" ? "Update Without Graph" : "Prepare Without Graph");
 
   async function run(action: () => Promise<unknown>): Promise<boolean> {
-    busy = true;
+    actionBusy = true;
     error = "";
     let ok = false;
     try {
@@ -92,7 +96,7 @@
     } catch (err) {
       error = errorText(err);
     } finally {
-      busy = false;
+      actionBusy = false;
     }
     await sources.refresh();
     return ok;
@@ -101,6 +105,24 @@
   function prepare(graph: boolean) {
     menuOpen = false;
     run(() => api(`${path}/prepare`, { method: "POST", body: { graph } }));
+  }
+
+  async function generateSummary() {
+    const sourceId = s!.id;
+    const summaryPath = `${path}/summary`;
+    const force = !!s!.summary;
+    summarizingIds = [...summarizingIds, sourceId];
+    error = "";
+    try {
+      await api(summaryPath, { method: "POST", body: { force } });
+    } catch (err) {
+      // A cancel the user asked for is not an error, and neither is one for a page they left.
+      const cancelled = err instanceof ApiError && err.code === "cancelled";
+      if (!cancelled && nav.sourceId === sourceId) error = errorText(err);
+    } finally {
+      summarizingIds = summarizingIds.filter((id) => id !== sourceId);
+      await sources.refresh();
+    }
   }
 
   function cancel() {
@@ -138,7 +160,7 @@
 
   async function saveIgnore(event: SubmitEvent) {
     event.preventDefault();
-    busy = true;
+    actionBusy = true;
     error = "";
     ignoreError = null;
     let invalid: PatternField | null = null;
@@ -152,7 +174,7 @@
         ignoreError = { field: invalid, message: patternError(err.message) };
       } else error = errorText(err);
     } finally {
-      busy = false;
+      actionBusy = false;
     }
     if (invalid) {
       await tick();
@@ -310,6 +332,24 @@
           <span class="truncate font-mono text-[12px]" title={s.locator}>{s.locator}</span>
         {/if}
       </div>
+
+      <Group title="Collection summary" hint="A generated discovery hint, not cited evidence. Generation sends a documentation sample to the configured OpenAI-compatible graph provider.">
+        <div class="px-3.5 py-3">
+          {#if s.summary}
+            <p class="text-[13px] leading-5 break-words whitespace-pre-wrap">{s.summary.text}</p>
+            <p class="mt-2 text-[12px] text-label2" title={s.summary.generatedAt}>Generated {ago(s.summary.generatedAt)} · {s.summary.model} · generation #{s.summary.generation}</p>
+          {:else}
+            <p class="text-[13px] leading-5 text-label2">{g ? "No summary for this generation. Generate one to help agents discover what this collection covers." : "Prepare this source before generating a summary."}</p>
+          {/if}
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" class={button({ size: "xs" })} disabled={busy || preparing || !g} onclick={generateSummary}>{s.summary ? "Regenerate Summary" : "Generate Summary"}</button>
+            {#if summarizing}
+              <button type="button" class={button({ size: "xs" })} disabled={actionBusy} onclick={cancel}>Cancel</button>
+              <p class="text-[12px] text-label2" role="status">Generating summary…</p>
+            {/if}
+          </div>
+        </div>
+      </Group>
 
       {#if preparing}
         <section class="mt-6" aria-label="Preparation progress">
