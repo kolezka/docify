@@ -11,6 +11,7 @@ const ERROR_TEXT: Record<number, string> = {
   404: "Unknown source or passage",
   409: "Busy, already exists or nothing running",
   415: "JSON body required (raw bytes for /api/import)",
+  502: "The summary provider failed or returned an unusable summary",
   503: "A store import is running",
   500: "Internal error",
 };
@@ -120,6 +121,15 @@ export function openApiSpec() {
           responses: { "200": ok("Graph view"), ...errors(401, 404) },
         },
       },
+      "/api/sources/{id}/summary": {
+        post: {
+          summary: "Generate a collection summary",
+          description: "Explicit provider call using the configured OpenAI-compatible graph provider. Returns the saved generation-bound summary, reusing it unless force is true. Reads never generate summaries. Cancel via the source cancel endpoint.",
+          parameters: [idParam("Source id")],
+          requestBody: jsonBody({ type: "object", additionalProperties: false, properties: { force: { type: "boolean", default: false } } }),
+          responses: { "200": ok("Saved summary"), ...errors(400, 401, 404, 409, 415, 502) },
+        },
+      },
       "/api/sources/{id}/prepare": {
         post: {
           summary: "Start preparing a source",
@@ -137,7 +147,7 @@ export function openApiSpec() {
       },
       "/api/sources/{id}/cancel": {
         post: {
-          summary: "Cancel a running preparation",
+          summary: "Cancel a running preparation or summary",
           parameters: [idParam("Source id")],
           requestBody: jsonBody({ type: "object" }, false),
           responses: { "200": ok("Cancelled", { type: "object", properties: { cancelled: { type: "boolean" } } }), ...errors(401, 409, 415) },
