@@ -35,6 +35,8 @@ docify sources "docs for Apple"
 
 `summarize` sends a bounded sample of the active generation's indexed documents to the configured `graph` provider. It requires an OpenAI-compatible graph backend and uses its model, endpoint and credential environment variable names. This command authorizes that remote processing and any provider cost; merely setting credentials does not enable automatic calls. It saves the generated overview locally and reuses it for the same generation and model. `--force` regenerates it. Run it again after refreshing the source: summaries from old generations are not used for discovery.
 
+In the web UI, open a source and use **Generate Summary** under **Collection summary**. **Regenerate Summary** replaces the current summary only after a successful provider response. The section shows the model, generation and age of the saved summary. Unprepared sources must be prepared first. Opening the page never generates a summary. While a summary is generating, **Cancel** stops the provider call and keeps the saved summary; settings, import, and preparing or removing that source wait until it ends.
+
 Agents call `docs_sources` with `{"query":"docs for Apple"}` to match saved summaries, source ids, library names and locations. Without `query` it lists all sources. Returned source ids can be passed to `docs_search`, `docs_outline` and `docs_open`. Discovery makes no model or network calls. Summaries are document-derived discovery hints, not citation evidence or instructions. If there is no match, list all sources and check whether summaries have been generated.
 
 ## Embeddings
@@ -125,6 +127,23 @@ When an HTML or `.md` page links to an extensionless route, Docify tries its `.m
 By default, a crawl collects at most 50 documents (including the index), follows two link levels, and is limited to 5 MB per page and 50 MB total. This is a bounded crawl, not a guarantee that the whole site is indexed.
 
 Set the global page and depth limits under Settings > Web Crawling, or set `maxPages` and `maxDepth` in `config.json`. The allowed ranges are 1 to 100,000 pages and 0 to 1,000 link levels; depth 0 collects only the start page. Each URL source can override either limit on its source page. Leave a field blank to inherit the global setting. Changes apply on the next prepare and do not expand the allowed origin or path scope. The source API accepts a `crawl` object with `maxPages` and `maxDepth`; a PATCH value of `null` removes that field's override.
+
+### Ignore paths
+
+Each source can carry two lists of regular expressions. `ignore` keeps matching documents out of the source: a URL source does not fetch those pages, a local source does not read those files, and neither can be searched. `graphIgnore` keeps matching documents searchable but leaves them out of the semantic graph, which saves LLM time on pages such as changelogs or generated API listings.
+
+```bash
+docify add mylib https://example.com/docs/ --ignore '^changelog/' --ignore '^blog/' --graph-ignore '^api/reference/'
+docify ignore mylib@unknown                              # show both lists
+docify ignore mylib@unknown --ignore '^legal/'           # replace the ignore list
+docify ignore mylib@unknown --no-graph-ignore            # remove the graph list
+```
+
+Patterns are JavaScript regular expressions, case-sensitive and not anchored unless you write `^` or `$`. They are tested against the document path that Docify stores and cites: for a URL source the part of the URL path below the start URL's directory (`https://example.com/docs/changelog/v2.html` registered at `https://example.com/docs/` is `changelog/v2.html`, and the start directory itself is `index.html`), for a local source the path relative to the registered folder. A list holds at most 100 patterns of up to 500 characters; an invalid expression is rejected when it is saved.
+
+Each `--ignore` or `--graph-ignore` option given to `docify ignore` replaces that whole list. The web UI has the same two fields in the New Source sheet and under Ignored paths on every source page, one pattern per line. A pattern the server rejects is reported at its field and nothing is saved. The source page and the Graph tab count the pages left out of the graph apart from pages Graphify missed, and say so when every page matches and no graph was built. The source API accepts `ignore` and `graphIgnore` arrays on `POST /api/sources` and `PATCH /api/sources/{id}`; a PATCH value of `null` or `[]` removes a list. A rejected list answers 400 with `field` set to `ignore` or `graphIgnore`.
+
+Changes apply on the next prepare and are refused while the source is preparing. A link that redirects to an ignored path is skipped before the target is requested, and a start URL that matches `ignore` fails the prepare. Documents left out by `graphIgnore` do not count as missing from the graph, so they do not make it partial. If every document matches `graphIgnore`, no graph is built.
 
 ### Choose a crawler
 

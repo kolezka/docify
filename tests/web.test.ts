@@ -200,3 +200,50 @@ test("crawl limits round trip through settings and source APIs", async () => {
     expect((await call("/api/sources", "POST", { library: "bad", kind: "url", locator: "https://example.com", crawl })).status).toBe(400);
   }
 });
+
+test("ignore patterns round trip through the source APIs for URL and local sources", async () => {
+  // Source roots are read when the server starts.
+  const savedRoots = process.env.DOCIFY_SOURCE_ROOTS;
+  const roots = tempDir("docify-src-");
+  process.env.DOCIFY_SOURCE_ROOTS = roots;
+  cleanup.push(() => {
+    if (savedRoots === undefined) delete process.env.DOCIFY_SOURCE_ROOTS;
+    else process.env.DOCIFY_SOURCE_ROOTS = savedRoots;
+  });
+  const { call } = await setup();
+  const added = await call("/api/sources", "POST", { library: "web", kind: "url", locator: "https://example.com/docs/", ignore: ["^changelog/"], graphIgnore: ["^api/"] });
+  expect(added.status).toBe(201);
+  const id = added.data.id;
+  const read = async (sourceId = id) => (await call("/api/sources")).data.find((s: { id: string }) => s.id === sourceId);
+  expect(await read()).toMatchObject({ ignore: ["^changelog/"], graphIgnore: ["^api/"] });
+  expect((await call(`/api/sources/${id}`, "PATCH", { graphIgnore: ["^api/", "^blog/"] })).status).toBe(200);
+  expect(await read()).toMatchObject({ ignore: ["^changelog/"], graphIgnore: ["^api/", "^blog/"] });
+  // One request may change the crawler and the lists together.
+  expect((await call(`/api/sources/${id}`, "PATCH", { crawl: { maxPages: 3 }, ignore: null })).status).toBe(200);
+  expect(await read()).toMatchObject({ crawl: { maxPages: 3 }, ignore: [], graphIgnore: ["^api/", "^blog/"] });
+
+  for (const ignore of ["^a", {}, [3], [""], ["("]]) {
+    const patched = await call(`/api/sources/${id}`, "PATCH", { ignore });
+    expect(patched.status).toBe(400);
+    expect(patched.data.code).toBe("invalid_input");
+    // The form puts the message at the field the response names.
+    expect(patched.data.field).toBe("ignore");
+    const posted = await call("/api/sources", "POST", { library: "bad", kind: "url", locator: "https://example.com", graphIgnore: ignore });
+    expect(posted.status).toBe(400);
+    expect(posted.data.field).toBe("graphIgnore");
+  }
+  // Errors that are not about one input carry no field.
+  expect((await call(`/api/sources/${id}`, "PATCH", {})).data.field).toBeUndefined();
+  // A bad list must not leave the crawler half of the same request applied.
+  expect((await call(`/api/sources/${id}`, "PATCH", { crawl: { maxPages: 9 }, graphIgnore: ["("] })).status).toBe(400);
+  expect((await read()).crawl).toEqual({ maxPages: 3 });
+  expect((await call(`/api/sources/${id}`, "PATCH", {})).status).toBe(400);
+  expect((await call("/api/sources/missing", "PATCH", { ignore: [] })).status).toBe(404);
+
+  const dir = writeDocs(join(roots, "docs"), { "a.md": "# A\n\nText.\n" });
+  const local = await call("/api/sources", "POST", { library: "local", kind: "local", locator: dir, ignore: ["^drafts/"] });
+  expect(local.status).toBe(201);
+  expect(await read(local.data.id)).toMatchObject({ ignore: ["^drafts/"], graphIgnore: [] });
+  expect((await call(`/api/sources/${local.data.id}`, "PATCH", { graphIgnore: ["^notes/"] })).status).toBe(200);
+  expect(await read(local.data.id)).toMatchObject({ ignore: ["^drafts/"], graphIgnore: ["^notes/"] });
+});

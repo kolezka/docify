@@ -596,6 +596,11 @@
                 <StatusIcon tone="info" class="mt-0.5" />
                 <p class="min-w-0"><span class="font-mono text-label">{sourceId}</span> is not prepared yet. Prepare it to build its graph.</p>
               </div>
+            {:else if graph.graphStatus === "skipped" && graph.stats.ignoredDocuments}
+              <div class={notice({ tone: "info", class: "bg-fill2" })}>
+                <StatusIcon tone="info" class="mt-0.5" />
+                <p class="min-w-0">Every page of <span class="font-mono text-label">{sourceId}</span> matches its graph ignore patterns, so no graph was built. Change the patterns on the source page, then update it.</p>
+              </div>
             {:else}
               <div class={notice({ tone: "info", class: "bg-fill2" })}>
                 <StatusIcon tone="info" class="mt-0.5" />
@@ -718,6 +723,9 @@
       {#if graph?.generation}
         <Group title="Generation">
           <Row label="Number"><span class="font-mono text-label2 tabular-nums">{graph.generation}</span></Row>
+          {#if graph.stats.ignoredDocuments}
+            <Row label="Ignored pages" sub="Left out by the source's ignore patterns"><span class="font-mono text-label2 tabular-nums">{graph.stats.ignoredDocuments}</span></Row>
+          {/if}
           {#if graph.stats.model}<Row label="Model"><span class="min-w-0 truncate font-mono text-[12px] text-label2" title={graph.stats.model}>{graph.stats.model}</span></Row>{/if}
           {#if graph.stats.graphMs !== null}<Row label="Build time"><span class="text-label2 tabular-nums">{duration(graph.stats.graphMs)}</span></Row>{/if}
           {#if graph.stats.costEstimate}<Row label="Cost"><span class="font-mono text-label2">{graph.stats.costEstimate}</span></Row>{/if}

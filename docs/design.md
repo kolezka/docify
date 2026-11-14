@@ -31,6 +31,14 @@ These are design defaults, not choices the user previously made between offline,
   A selection change applies on the next prepare and is refused during preparation. Local sources
   do not use these providers. The selected collector is recorded with the generation and a change
   prevents the unchanged shortcut.
+  Amendment 2026-11-14: every source, local or URL, may carry two lists of regular expressions in
+  its options. `ignore` keeps matching document paths out of collection, so they never reach the
+  snapshot. `graphIgnore` leaves matching documents out of the Graphify run while they stay
+  indexed and searchable; they are not reported as missing from the graph. Patterns are tested
+  against the stored document path. They are set with `docify add --ignore/--graph-ignore`,
+  `docify ignore <source-id>`, the source API or the web UI, apply on the next prepare and are
+  refused during preparation. The `graphIgnore` list is recorded with the generation and a change
+  prevents the unchanged shortcut; a changed `ignore` list changes the snapshot itself.
 
   Crawl4AI renders one URL per `POST /crawl`, or `POST /crawl/stream` when the source's `stream` option is true; Browserless renders one URL per `POST /function`. Crawl4AI's stream is buffered with a response size cap and must contain exactly one result and a completion record. The source card and `PATCH /api/sources/:id` set per-source `crawl4ai` options: boolean `stream`, `scanFullPage`, `captureScreenshot` and `capturePdf`; `waitUntil` (`load`, `domcontentloaded`, `networkidle`, `commit`); `waitFor` (at most 1,000 characters); and `delayBeforeReturnHtml` (0 to 60 seconds). A supplied options object replaces the previous one. Unset rendering options defer to the service, except `stream` defaults to false. Changes apply on the next prepare.
 
