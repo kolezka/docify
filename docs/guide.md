@@ -87,7 +87,24 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 
 The **Logs** tab uses a log viewer vendored from `kolezka/svelte-log-viewer` (`src/web/lib/log-viewer/`) for timestamped preparation progress, errors, warnings and live Graphify stdout/stderr. It polls once per second, offers text and stream filters and follows new lines. CLI and web preparations share the latest 10,000 log lines in `<DOCIFY_HOME>/logs.sqlite`; each line is limited to 8,192 characters. Configured embedding and graph API-key values are redacted before storage. Failed reads are reported in the view without clearing lines already loaded. Only runs made with this logging-enabled build are recorded; older runs have no history.
 
-The **Graph** tab draws the active generation's Graphify graph in 3D with WebGL2: drag to orbit, scroll to zoom, click a node to see the page it came from, the passage that grounds it and what it links to. Faded nodes have no grounding passage. Pages Graphify left without nodes are listed in the inspector. A source prepared with **No graph** has nothing to show here. The browser needs WebGL2.
+The **Graph** tab draws the active generation's Graphify graph in 3D with WebGL2. Click a node to see the page it came from, the passage that grounds it and what it links to. Faded nodes have no grounding passage. Pages Graphify left without nodes are listed in the inspector. A source prepared with **No graph** has nothing to show here. The browser needs WebGL2.
+
+Moving around the graph:
+
+| Action | Pointer | Keyboard (canvas focused) |
+| --- | --- | --- |
+| Orbit | drag | arrow keys |
+| Pan | Shift-drag, right-drag, Shift-scroll, two-finger drag on touch | Shift with arrow keys |
+| Zoom toward the pointer | scroll, pinch | `+` and `-` |
+| Fly through the graph | | `W` `A` `S` `D`, `Q` down, `E` up |
+| Go to a node | double-click it; double-click empty space to move in | |
+| Fit, reset | buttons at the bottom right | `F`, `0` |
+
+The buttons at the bottom right also turn a slow rotation on and off. Camera moves are short animations that any input cancels. With the system setting for reduced motion the camera jumps instead and the rotation button is not shown.
+
+The search field (`/` focuses it) finds nodes by label, page, group, node id and grounding passage. It searches the graph already loaded in the browser, so it sends nothing to the server. Every word must match; quotes keep a phrase together. Filters narrow the result: `type:concept`, `page:buttons`, `group:"Setup steps"`, `is:grounded` or `is:ungrounded`, and `links:>5` for a minimum number of links. Matches get a ring in the graph and the rest fades. Up and Down step through the results and fly to each one, Return goes to the node and moves focus to the graph, Escape clears the field. **Show All in View** fits every match on screen.
+
+The legend shows or hides a node type. A row under **Largest groups** highlights that group and brings it into view.
 
 ## Prepare documentation
 
