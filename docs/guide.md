@@ -251,7 +251,7 @@ claude plugin install docify@docify-local
 
 The Claude Code plugin does not start Docify. It connects to a running Docify service over HTTP (see MCP over HTTP below), local or remote. Set these in the environment of the `claude` process, for example in your shell profile or under `env` in Claude Code's `settings.json`, then restart Claude Code:
 
-- `DOCIFY_MCP_TOKEN`: the token for this client, one of the tokens in the service's `DOCIFY_MCP_TOKENS` (the token only, not `name:token`).
+- `DOCIFY_MCP_TOKEN`: the token for this client. Either a personal key you made under Account in the service's web UI (when it has user accounts), or one of the tokens in the service's `DOCIFY_MCP_TOKENS` (the token only, not `name:token`).
 - `DOCIFY_MCP_URL`: the service's `/mcp` endpoint, such as `https://<domain>/mcp`. Defaults to `http://127.0.0.1:4747/mcp`.
 
 `claude mcp list` shows `plugin:docify:docify: <url> (HTTP) - ✔ Connected` when it works. A wrong token shows HTTP 401, and an unreachable service shows a connection error; in both cases the `docs_*` tools are not registered. Do not commit the token.
@@ -272,7 +272,7 @@ cd /path/to/ai-docify/integrations/claude-code/docify/dsh && bun install --froze
 
 To check what the adapter registers without DSH, run `bun x claude-plugin-dsh@0.2.0 inspect /path/to/ai-docify/integrations/claude-code/docify`; it lists the `docify` skill. Do not run that CLI's `sync` or `scaffold` on this adapter: they write a vendored copy of the runtime, which this adapter no longer uses. To move to a newer runtime, change the exact version in `dsh/package.json`, run `bun install` in `dsh/` and commit the updated `bun.lock`.
 
-Start a Docify service with `DOCIFY_MCP_TOKENS` configured as described below. Set `DOCIFY_MCP_TOKEN` in the DSH process environment to the token for this client (the token only, not `name:token`). Optionally set `DOCIFY_MCP_URL`; it defaults to `http://127.0.0.1:4747/mcp`. Restart DSH after changing its environment. Do not commit tokens. Configure the embedding credentials in the service environment, not the DSH client.
+Start a Docify service with user accounts or with `DOCIFY_MCP_TOKENS` configured as described below. Set `DOCIFY_MCP_TOKEN` in the DSH process environment to the token for this client: a personal key from the Account view, or a shared token (the token only, not `name:token`). Optionally set `DOCIFY_MCP_URL`; it defaults to `http://127.0.0.1:4747/mcp`. Restart DSH after changing its environment. Do not commit tokens. Configure the embedding credentials in the service environment, not the DSH client.
 
 Then install the bundle, which brings the `docify` skill and connects to that service:
 
@@ -392,22 +392,26 @@ By default the web UI has no accounts: it is open, or guarded by the one shared 
 3. Restart and open the UI. It shows "Sign In with GitHub".
 
 - **Administrators** are the logins in `DOCIFY_ADMINS` (comma separated; `id:<number>` names an account by its GitHub id). They are administrators from their first sign-in, and nobody becomes one by arriving first. A login is tied to the first GitHub account that signs in with it: if that person later renames their account they stay an administrator, and someone else who registers the freed login does not become one (the log says so). So sign in yourself right after setting the variable, before sharing the address. The log line for that first sign-in shows your GitHub id, in case you prefer to name it as `id:<number>`. They add, prepare and remove sources, change settings, read logs, export and import backups, and manage accounts under Users.
-- **Members** search, read passages and view sources and graphs. Anyone can sign up, but a new account is pending and sees nothing until an administrator approves it under Users. An administrator can also make a member an administrator, disable an account (its sessions end at once) or remove it.
+- **Members** search, read passages and view sources and graphs. Under Account each person makes their own MCP keys and sees their own recent searches (below). Anyone can sign up, but a new account is pending and sees nothing until an administrator approves it under Users. An administrator can also make a member an administrator, disable an account (its sessions and MCP keys end at once) or remove it.
 - An account named in `DOCIFY_ADMINS` cannot be demoted, disabled or removed in the UI; change the variable and restart. At that start, anyone who was an administrator only through the variable becomes a member and is signed out; the account stays active, so disable or remove it under Users if it should lose access altogether. An administrator made in the UI is not affected. Nobody can change their own account.
 
 Docify asks GitHub for no scope: it reads the public profile (id, login, name) and does not keep the GitHub token. A session is an `HttpOnly`, `SameSite=Lax` cookie valid for 30 days; the server stores only its SHA-256 hash. Signing in again ends the session that browser had, and a person keeps at most ten. When `DOCIFY_PUBLIC_URL` starts with `https://` the cookie is `Secure` and named `__Host-docify_session`, which stops a sibling subdomain from planting its own, and the page sends `Strict-Transport-Security`. With an `http://` address none of that applies and the start-up line says so; use that only inside a trusted network. Another site cannot use the cookie: writes need a JSON content type and an `Origin` equal to `DOCIFY_PUBLIC_URL`, and any `/api` request a browser marks as cross-site is refused, including a plain link to the backup export.
 
 What an administrator can do is close to what the operator can do: change settings, import a store, read the logs. Settings refuse to use Docify's own variables (`DOCIFY_GITHUB_CLIENT_SECRET`, `DOCIFY_MCP_TOKENS`, `DOCIFY_WEB_TOKEN`) as a credential, but an administrator can still point a credential setting at another variable of the server's environment and at a server of their choice. Make administrators only of people you would give the server's `.env`. Members see source names and passages, not local paths on the server or prepare errors.
 
-Accounts and sessions live in `accounts.sqlite` in the store directory, apart from `docify.sqlite`. A backup (`docify export`) does not contain them and an import does not replace them, so restoring a store never changes who can sign in. Deleting `accounts.sqlite` while the server is stopped removes every account; administrators come back at their next sign-in.
+Accounts, sessions, personal MCP keys and search history live in `accounts.sqlite` in the store directory, apart from `docify.sqlite`. A backup (`docify export`) does not contain them and an import does not replace them, so restoring a store never changes who can sign in. Deleting `accounts.sqlite` while the server is stopped removes every account; administrators come back at their next sign-in.
 
-Accounts cover the web UI and `/api`. MCP over HTTP keeps its own bearer tokens (below), and the CLI works on the store directly.
+**Personal MCP keys.** Every approved person can connect their own agent. Under Account, New Key… asks for a name (such as the computer it is for) and shows the key once, with the command for Claude Code. The server keeps only the key's SHA-256 hash, so a lost key cannot be shown again: revoke it and make a new one. A person has at most ten keys. A key works at `/mcp` like a shared token (below) and stops at once when it is revoked or its owner is disabled or removed; re-enabling the account does not bring old keys back. All keys of one person share that person's request limit. Through a member's key the source list shows no server paths or prepare errors, the same as in the UI.
+
+**Recent searches.** Account also lists the person's own searches, from the page and through their keys: the query, the scope, the result status and the number of passages, never the passages themselves. Only that person can read the list in the UI or through the API; administrators cannot. Whoever runs the server can, since it is a file there. The newest 200 per person are kept, and Clear History… deletes them. Searches made with a shared `DOCIFY_MCP_TOKENS` token belong to nobody and are not recorded.
+
+The CLI works on the store directly and is outside accounts.
 
 ### MCP over HTTP
 
-`docify serve` also answers MCP at `/mcp` (Streamable HTTP, stateless, JSON responses) when `DOCIFY_MCP_TOKENS` is set. Without that variable `/mcp` returns 404. The tools are the same read-only ones as on stdio.
+`docify serve` also answers MCP at `/mcp` (Streamable HTTP, stateless, JSON responses) when user accounts are on or `DOCIFY_MCP_TOKENS` is set. With neither, `/mcp` returns 404. The tools are the same read-only ones as on stdio.
 
-Give every agent its own token, so one can be revoked without touching the rest:
+With user accounts, people make their own keys in the web UI (Personal MCP keys above) and you need no variable. `DOCIFY_MCP_TOKENS` is for agents that belong to no person, and for a service without accounts. Give every such agent its own token, so one can be revoked without touching the rest:
 
 ```bash
 DOCIFY_MCP_TOKENS="claude:$(openssl rand -hex 32),openclaw-1:$(openssl rand -hex 32)"
@@ -419,7 +423,7 @@ Agents send `Authorization: Bearer <token>`. For Claude Code:
 claude mcp add --transport http docify https://<domain>/mcp --header "Authorization: Bearer <token>"
 ```
 
-Requests are checked in this order: Host and Origin, the per-IP limit, the token, the per-client limit. The per-IP limit runs before the token check, so guessing tokens is slow. Over a limit the server answers 429 with `Retry-After`. Request bodies over 1 MB get 413, and only POST is accepted.
+Requests are checked in this order: Host and Origin, the per-IP limit, the token or personal key, the per-client limit (per person for personal keys). The per-IP limit runs before the token check, so guessing tokens is slow. Over a limit the server answers 429 with `Retry-After`. Request bodies over 1 MB get 413, and only POST is accepted.
 
 - `DOCIFY_MCP_RATE`: per client, default `60/min`. `DOCIFY_MCP_IP_RATE`: per IP, default `120/min`. Units are `s`, `min` and `h`.
 - `DOCIFY_TRUST_PROXY=1` takes the client IP from the last `X-Forwarded-For` entry. `docker-compose.prod.yml` sets it because Traefik is in front. Without a proxy in front, leave it unset, otherwise a client can choose its own IP.
@@ -469,12 +473,12 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `DOCIFY_PUBLIC_URL` | Public address of the UI (scheme and host); builds the GitHub callback URL and makes the session cookie `Secure` with https |
 | `DOCIFY_ALLOWED_HOSTS` | Optional Host values the web server answers for, comma separated; `*` accepts any |
 | `DOCIFY_SOURCE_ROOTS` | Directories the web UI may add local sources from, separated by `:` (default: home) |
-| `DOCIFY_MCP_TOKENS` | `name:token` pairs, comma separated; enables MCP over HTTP at `/mcp` |
+| `DOCIFY_MCP_TOKENS` | `name:token` pairs, comma separated; shared tokens for MCP over HTTP at `/mcp`. Not needed with user accounts, where people make personal keys |
 | `DOCIFY_MCP_RATE`, `DOCIFY_MCP_IP_RATE` | MCP limits per client and per IP (default `60/min`, `120/min`) |
 | `DOCIFY_TRUST_PROXY` | `1` takes the client IP from `X-Forwarded-For`; only behind a proxy |
 | `LITELLM_BASE_URL`, `LITELLM_API_KEY` | Graph provider and `openai` embeddings, by default |
 | `DOCIFY_MCP_URL` | DSH client endpoint; defaults to `http://127.0.0.1:4747/mcp` |
-| `DOCIFY_MCP_TOKEN` | DSH client bearer token, matching one token in the service's `DOCIFY_MCP_TOKENS` |
+| `DOCIFY_MCP_TOKEN` | Client bearer token: a personal key from the Account view, or one token in the service's `DOCIFY_MCP_TOKENS` |
 
 `.env.example` lists them with their defaults. Copy it to `.env` for commands run from the checkout root (`bun src/cli.ts`, `bun test`, `make serve`); Bun reads `.env` only from the current directory, so a linked `docify` elsewhere, and the MCP server need the variables in their own environment.
 

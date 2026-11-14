@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { parseAdmins } from "../src/core/accounts.ts";
-import { accountsFromEnv, startServer } from "../src/web/server.ts";
+import { accountsFromEnv, startServer, type StartServerOptions } from "../src/web/server.ts";
 import { newDocify, tempDir } from "./helpers.ts";
 
 const cleanup: (() => void)[] = [];
@@ -27,7 +27,7 @@ const fakeGitHub = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return PEOPLE[token] ? Response.json(PEOPLE[token]) : new Response("{}", { status: 401 });
 }) as typeof fetch;
 
-async function setup(opts: { publicUrl?: string; admins?: string; allowedHosts?: string[] } = {}) {
+async function setup(opts: { publicUrl?: string; admins?: string; allowedHosts?: string[]; mcpClients?: StartServerOptions["mcpClients"]; mcpClientRate?: StartServerOptions["mcpClientRate"] } = {}) {
   const d = newDocify(tempDir());
   const server = await startServer(0, {
     docify: d,
@@ -35,6 +35,10 @@ async function setup(opts: { publicUrl?: string; admins?: string; allowedHosts?:
     // Pins are written under the project; without this they land in the repository.
     project: tempDir(),
     allowedHosts: opts.allowedHosts,
+    // Never from .env: these tests decide themselves whether shared MCP tokens exist.
+    mcpClients: opts.mcpClients ?? [],
+    mcpClientRate: opts.mcpClientRate ?? { limit: 1000, windowMs: 60_000 },
+    mcpIpRate: { limit: 1000, windowMs: 60_000 },
     accounts: { github: { clientId: "client-id", clientSecret: "s3cret-for-tests", fetch: fakeGitHub }, admins: parseAdmins(opts.admins ?? "boss"), publicUrl: opts.publicUrl },
   });
   cleanup.push(() => {
@@ -62,7 +66,25 @@ async function setup(opts: { publicUrl?: string; admins?: string; allowedHosts?:
     const back = await call(`/auth/github/callback?code=${code}&state=${state}`, cookiePair(start.res, "docify_oauth_state"));
     return { cookie: cookiePair(back.res, "docify_session"), location: back.res.headers.get("location"), res: back.res };
   };
-  return { base, call, signIn, cookiePair, server, d };
+  // One JSON-RPC call to /mcp, the way an agent's client sends it.
+  const mcp = async (token: string | null, method = "tools/list", params: unknown = {}) => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    const data = (await res.json().catch(() => null)) as any;
+    return { status: res.status, res, data, text: String(data?.result?.content?.[0]?.text ?? "") };
+  };
+  // The administrator and an approved member, both signed in.
+  const people = async () => {
+    const admin = (await signIn("code-boss")).cookie;
+    const alice = (await signIn("code-alice")).cookie;
+    const id = (await call("/api/users", admin)).data.users[0].id;
+    await call(`/api/users/${id}`, admin, "PATCH", { status: "active" });
+    return { admin, alice, aliceId: id as number };
+  };
+  return { base, call, signIn, cookiePair, server, d, mcp, people };
 }
 
 test("sign-in starts at GitHub with a state that is also set as a cookie", async () => {
@@ -405,4 +427,139 @@ test("with a public address a write must come from exactly that origin", async (
   expect((await write("https://docs.example.com")).status).toBe(200);
   const page = await call("/");
   expect(page.res.headers.get("strict-transport-security")).toContain("max-age=");
+});
+
+// Use inside a company: each person makes their own MCP key and sees their own searches.
+test("a member makes a personal MCP key, sees it once, and /mcp accepts it until it is revoked", async () => {
+  const { call, mcp, people } = await setup();
+  const { alice } = await people();
+  expect((await call("/api/me/keys", alice)).data).toEqual({ keys: [], max: 10 });
+
+  const made = await call("/api/me/keys", alice, "POST", { name: "laptop" });
+  expect(made.status).toBe(201);
+  const token: string = made.data.token;
+  expect(token).toMatch(/^dcf_[A-Za-z0-9_-]{43}$/);
+  expect(made.data.key).toMatchObject({ name: "laptop", prefix: token.slice(0, 8), lastUsedAt: null });
+  expect((await call("/api/me/keys", alice, "POST", { name: "laptop" })).status).toBe(409);
+  expect((await call("/api/me/keys", alice, "POST", {})).status).toBe(400);
+
+  // No shared tokens are configured: /mcp exists because accounts are on.
+  expect((await mcp(null)).status).toBe(401);
+  expect((await mcp("dcf_" + "x".repeat(43))).status).toBe(401);
+  const listed = await mcp(token);
+  expect(listed.status).toBe(200);
+  expect(listed.data.result.tools.map((t: any) => t.name)).toContain("docs_search");
+
+  // The list never shows the key again, only how it starts and when it was used.
+  const keys = (await call("/api/me/keys", alice)).data.keys;
+  expect(keys.length).toBe(1);
+  expect(keys[0].lastUsedAt).not.toBeNull();
+  expect(JSON.stringify(keys)).not.toContain(token.slice(8));
+
+  expect((await call(`/api/me/keys/${keys[0].id}`, alice, "DELETE", {})).data).toEqual({ ok: true });
+  expect((await mcp(token)).status).toBe(401);
+  expect((await call("/api/me/keys", alice)).data.keys).toEqual([]);
+});
+
+test("keys belong to their owner: nobody else lists or revokes them, and a waiting account gets none", async () => {
+  const { base, call, signIn, mcp, people } = await setup();
+  const { admin, alice, aliceId } = await people();
+  const made = (await call("/api/me/keys", alice, "POST", { name: "laptop" })).data;
+
+  expect((await call("/api/me/keys", admin)).data.keys).toEqual([]);
+  expect((await call(`/api/me/keys/${made.key.id}`, admin, "DELETE", {})).status).toBe(404);
+  expect((await call("/api/me/keys/abc", alice, "DELETE", {})).status).toBe(404);
+  expect((await mcp(made.token)).status).toBe(200);
+
+  expect((await call("/api/me/keys")).status).toBe(401);
+  expect((await call("/api/me/keys", "", "POST", { name: "x" })).status).toBe(401);
+  const waiting = (await signIn("code-mallory")).cookie;
+  expect((await call("/api/me/keys", waiting, "POST", { name: "x" })).status).toBe(403);
+  // The session cookie travels on its own; a page elsewhere cannot mint a key with it.
+  const foreign = await fetch(`${base}/api/me/keys`, { method: "POST", headers: { cookie: alice, "content-type": "application/json", origin: "https://evil.example" }, body: JSON.stringify({ name: "evil" }) });
+  expect(foreign.status).toBe(403);
+
+  // Disabling the person ends the key as well as the session.
+  await call(`/api/users/${aliceId}`, admin, "PATCH", { status: "disabled" });
+  expect((await mcp(made.token)).status).toBe(401);
+});
+
+test("searches from the page and through a personal key land in that person's history only", async () => {
+  const shared = "s".repeat(32);
+  const { call, mcp, people } = await setup({ mcpClients: [{ name: "ci", token: shared }] });
+  const { admin, alice } = await people();
+  const { token } = (await call("/api/me/keys", alice, "POST", { name: "laptop" })).data;
+  expect((await call("/api/me/queries", alice)).data).toEqual({ queries: [], kept: 200 });
+
+  expect((await call("/api/search", alice, "POST", { query: "how to serve", sources: ["bun@1.4.3"] })).status).toBe(200);
+  expect((await mcp(token, "tools/call", { name: "docs_search", arguments: { query: "websocket upgrade", library: "bun" } })).data.result.isError).toBeFalsy();
+  expect((await mcp(token, "tools/call", { name: "docs_search", arguments: { queries: ["first of two", "second of two"] } })).data.result.isError).toBeFalsy();
+  // Reading and listing are not searches, and a shared token belongs to no person.
+  await mcp(token, "tools/call", { name: "docs_sources", arguments: {} });
+  expect((await mcp(shared, "tools/call", { name: "docs_search", arguments: { query: "from the shared token" } })).status).toBe(200);
+
+  const mine = (await call("/api/me/queries", alice)).data.queries;
+  expect(mine.map((q: any) => [q.query, q.via, q.keyName, q.scope])).toEqual([
+    ["second of two", "mcp", "laptop", null],
+    ["first of two", "mcp", "laptop", null],
+    ["websocket upgrade", "mcp", "laptop", "bun"],
+    ["how to serve", "web", null, "bun@1.4.3"],
+  ]);
+  for (const q of mine) {
+    expect(typeof q.status).toBe("string");
+    expect(typeof q.hits).toBe("number");
+    expect(Date.parse(q.at)).toBeGreaterThan(0);
+  }
+  // An administrator has their own history and no way into anyone else's.
+  expect((await call("/api/me/queries", admin)).data.queries).toEqual([]);
+  expect((await call("/api/me/queries?limit=2", alice)).data.queries.length).toBe(2);
+  expect((await call("/api/me/queries?limit=0", alice)).status).toBe(400);
+
+  expect((await call("/api/me/queries", alice, "DELETE", {})).data).toEqual({ ok: true, removed: 4 });
+  expect((await call("/api/me/queries", alice)).data.queries).toEqual([]);
+});
+
+test("through a member's key the source list carries no server paths", async () => {
+  const { call, mcp, people, d } = await setup();
+  const docs = tempDir();
+  await Bun.write(`${docs}/a.md`, "# A\n\ntext\n");
+  d.addSource({ library: "lib", version: "1", kind: "local", locator: docs });
+  const { admin, alice } = await people();
+  const memberKey = (await call("/api/me/keys", alice, "POST", { name: "laptop" })).data.token;
+  const adminKey = (await call("/api/me/keys", admin, "POST", { name: "laptop" })).data.token;
+
+  const seen = await mcp(memberKey, "tools/call", { name: "docs_sources", arguments: {} });
+  expect(seen.text).toContain("lib@1");
+  expect(seen.text).not.toContain(docs);
+  expect((await mcp(adminKey, "tools/call", { name: "docs_sources", arguments: {} })).text).toContain(docs);
+});
+
+test("personal keys share one request limit per person", async () => {
+  const { call, mcp, people } = await setup({ mcpClientRate: { limit: 2, windowMs: 60_000 } });
+  const { admin, alice } = await people();
+  const one = (await call("/api/me/keys", alice, "POST", { name: "one" })).data.token;
+  const two = (await call("/api/me/keys", alice, "POST", { name: "two" })).data.token;
+  const other = (await call("/api/me/keys", admin, "POST", { name: "one" })).data.token;
+  expect((await mcp(one)).status).toBe(200);
+  expect((await mcp(two)).status).toBe(200);
+  // A second key is not a second allowance.
+  expect((await mcp(one)).status).toBe(429);
+  expect((await mcp(other)).status).toBe(200);
+});
+
+test("without accounts there are no personal keys or history", async () => {
+  const d = newDocify(tempDir());
+  const server = await startServer(0, { docify: d, quiet: true, token: "a".repeat(32), mcpClients: [] });
+  cleanup.push(() => {
+    server.stop(true);
+    d.close();
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const headers = { "x-docify-token": "a".repeat(32) };
+  for (const path of ["/api/me/keys", "/api/me/queries"]) {
+    const r = await fetch(base + path, { headers });
+    expect([path, r.status, (await r.json()).code]).toEqual([path, 404, "accounts_off"]);
+  }
+  const rpc = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer dcf_${"x".repeat(43)}`, "content-type": "application/json" }, body: "{}" });
+  expect(rpc.status).toBe(404);
 });

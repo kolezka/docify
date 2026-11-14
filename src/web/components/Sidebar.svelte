@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Logs, Network, Plus, Search, Settings, Users } from "@lucide/svelte";
+  import { CircleUser, Logs, Network, Plus, Search, Settings, Users } from "@lucide/svelte";
   import StatusDot from "./StatusDot.svelte";
   import ThemeSwitch from "./ThemeSwitch.svelte";
   import type { SourceInfo } from "../lib/api.ts";
@@ -16,9 +16,12 @@
     { view: "logs", label: "Logs", icon: Logs, key: "⌥3" },
     { view: "settings", label: "Settings", icon: Settings, key: "⌥4" },
     { view: "users", label: "Users", icon: Users, key: "⌥5" },
+    { view: "account", label: "Account", icon: CircleUser, key: "⌥6" },
   ] as const;
-  // Members get Search and Graph; Users exists only on a server with accounts.
-  const items = $derived(ALL_ITEMS.filter((it) => (session.admin || !ADMIN_VIEWS.includes(it.view)) && (it.view !== "users" || session.accounts)));
+  // Members get Search, Graph and their own Account; Users and Account exist only on a server with accounts.
+  const items = $derived(
+    ALL_ITEMS.filter((it) => (session.admin || !ADMIN_VIEWS.includes(it.view)) && (it.view !== "users" || session.accounts) && (it.view !== "account" || !!session.user)),
+  );
 
   let signOutError = $state("");
   const signOut = () => session.signOut().catch((err) => (signOutError = err instanceof Error ? err.message : String(err)));

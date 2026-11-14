@@ -240,3 +240,101 @@ test("an accounts file from before the named-admin fix still opens", () => {
   expect(store.signIn(boss).user.role).toBe("admin");
   expect(store.signIn(alice).user.status).toBe("active");
 });
+
+// Personal MCP keys and the query history, added for use inside a company.
+test("a person creates an MCP key; the file keeps only its hash and the key finds its owner", () => {
+  const { store, home } = open();
+  const user = store.signIn(boss).user;
+  const { key, token } = store.createKey(user.id, "  laptop\u0007 ");
+  expect(token).toMatch(/^dcf_[A-Za-z0-9_-]{43}$/);
+  expect(key).toMatchObject({ name: "laptop", prefix: token.slice(0, 8), last_used_at: null });
+  expect(store.listKeys(user.id).map((k) => k.name)).toEqual(["laptop"]);
+  expect(JSON.stringify(store.listKeys(user.id))).not.toContain(token.slice(8));
+
+  const found = store.userForKey(token);
+  expect([found?.user.login, found?.key.name]).toEqual(["Boss", "laptop"]);
+  expect(store.listKeys(user.id)[0]!.last_used_at).not.toBeNull();
+  expect(store.userForKey(token.slice(0, -1) + "x")).toBeNull();
+  expect(store.userForKey("x".repeat(47))).toBeNull();
+
+  const raw = new Database(join(home, ACCOUNTS_FILE), { readonly: true });
+  const dump = JSON.stringify(raw.query("SELECT * FROM mcp_keys").all());
+  raw.close();
+  expect(dump).not.toContain(token);
+  expect(dump).not.toContain(token.slice(8));
+});
+
+test("a key needs a name, names are unique per person, and ten keys is the limit", () => {
+  const { store } = open();
+  const a = store.signIn(boss).user;
+  const b = store.signIn({ id: 7, login: "other", name: null }).user;
+  store.updateUser(b.id, { status: "active" }, a.id);
+  expect(() => store.createKey(a.id, "")).toThrow("name");
+  expect(() => store.createKey(a.id, 5)).toThrow("name");
+  expect(() => store.createKey(a.id, "x".repeat(61))).toThrow("60");
+  store.createKey(a.id, "laptop");
+  expect(() => store.createKey(a.id, "Laptop")).toThrow("already");
+  // Another person may use the same name.
+  expect(store.createKey(b.id, "laptop").key.name).toBe("laptop");
+  for (let i = 2; i <= 10; i++) store.createKey(a.id, `key ${i}`);
+  expect(() => store.createKey(a.id, "one too many")).toThrow("10");
+  expect(store.listKeys(a.id).length).toBe(10);
+});
+
+test("a key ends when it is revoked or its owner is disabled or removed; a waiting account gets none", () => {
+  const { store } = open();
+  const admin = store.signIn(boss).user;
+  const member = store.signIn(alice).user;
+  expect(() => store.createKey(member.id, "early")).toThrow("approved");
+  store.updateUser(member.id, { status: "active" }, admin.id);
+
+  const first = store.createKey(member.id, "first");
+  const second = store.createKey(member.id, "second");
+  // Only the owner can revoke a key.
+  expect(() => store.revokeKey(admin.id, first.key.id)).toThrow("unknown key");
+  store.revokeKey(member.id, first.key.id);
+  expect(store.userForKey(first.token)).toBeNull();
+  expect(store.userForKey(second.token)?.user.login).toBe("alice");
+
+  store.updateUser(member.id, { status: "disabled" }, admin.id);
+  expect(store.userForKey(second.token)).toBeNull();
+  // Enabling the account again does not bring old keys back.
+  store.updateUser(member.id, { status: "active" }, admin.id);
+  expect(store.userForKey(second.token)).toBeNull();
+  expect(store.listKeys(member.id)).toEqual([]);
+
+  const third = store.createKey(member.id, "third");
+  store.removeUser(member.id, admin.id);
+  expect(store.userForKey(third.token)).toBeNull();
+});
+
+test("queries are kept per person, newest first, and the oldest fall off", () => {
+  let now = Date.parse("2026-11-14T12:00:00Z");
+  const { store } = open("boss", () => now);
+  const a = store.signIn(boss).user;
+  const b = store.signIn({ id: 7, login: "other", name: null }).user;
+  store.recordQuery(a.id, { via: "web", query: "first", status: "ok", hits: 3, scope: "bun@1.4.3" });
+  now += 1000;
+  store.recordQuery(a.id, { via: "mcp", keyName: "laptop", query: "q".repeat(600), status: "no_match", hits: 0 });
+  store.recordQuery(b.id, { via: "web", query: "private", status: "ok", hits: 1 });
+
+  const mine = store.listQueries(a.id);
+  expect(mine.map((q) => [q.via, q.key_name, q.status, q.hits, q.scope])).toEqual([["mcp", "laptop", "no_match", 0, null], ["web", null, "ok", 3, "bun@1.4.3"]]);
+  expect(mine[0]!.query.length).toBe(500);
+  expect(mine[1]).toMatchObject({ query: "first", at: "2026-11-14T12:00:00.000Z" });
+  expect(store.listQueries(b.id).map((q) => q.query)).toEqual(["private"]);
+
+  for (let i = 0; i < 205; i++) store.recordQuery(a.id, { via: "web", query: `q${i}`, status: "ok", hits: 1 });
+  const all = store.listQueries(a.id, 1000);
+  expect(all.length).toBe(200);
+  expect(all[0]!.query).toBe("q204");
+  expect(store.listQueries(a.id).length).toBe(50);
+
+  expect(store.clearQueries(a.id)).toBe(200);
+  expect(store.listQueries(a.id)).toEqual([]);
+  expect(store.listQueries(b.id).length).toBe(1);
+  // History goes with the account.
+  store.removeUser(b.id, a.id);
+  const again = store.signIn({ id: 7, login: "other", name: null }).user;
+  expect(store.listQueries(again.id)).toEqual([]);
+});

@@ -5,7 +5,7 @@ import { basename } from "node:path";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Docify, DocifyError, validateIgnorePatterns } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
-import { read, search, sources, type Mode } from "../core/search.ts";
+import { read, search, sources, type Mode, type SourceInfo } from "../core/search.ts";
 import { graphView } from "../core/graph-view.ts";
 import { summarizeSource } from "../core/summary.ts";
 import { exportStore, importStore } from "../core/backup.ts";
@@ -17,8 +17,9 @@ import { RateLimiter, parseRate, rateLimit, type RateLimit } from "../http/rate-
 import { chain } from "../http/guard.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { OAuthError, githubAuthorizeUrl, githubProfile, type GitHubOAuthConfig } from "../http/github-oauth.ts";
-import { AccountStore, SESSION_TTL_MS, parseAdmins, type AdminList, type UserRow } from "../core/accounts.ts";
+import { AccountStore, MAX_KEYS_PER_USER, MAX_QUERIES_PER_USER, SESSION_TTL_MS, parseAdmins, type AdminList, type KeyRow, type QueryRecord, type UserRow } from "../core/accounts.ts";
 import { mcpHttpHandler } from "../mcp/http.ts";
+import { scopeText } from "../mcp/tools.ts";
 import { DOCS_INIT, DOCS_PAGE, openApiSpec } from "./openapi.ts";
 import { VERSION } from "../version.ts";
 
@@ -31,6 +32,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   summary_failed: 502,
   invalid_summary: 502,
   user_unknown: 404,
+  key_unknown: 404,
   accounts_off: 404,
   conflict: 409,
 };
@@ -112,7 +114,8 @@ export interface StartServerOptions {
   host?: string;
   allowedHosts?: string[];
   project?: string;
-  // MCP over HTTP at /mcp; without clients the route does not exist. Defaults come from env.
+  // MCP over HTTP at /mcp. The route exists with clients named here or with accounts, whose
+  // people make their own keys. Defaults come from env.
   mcpClients?: BearerClient[];
   mcpClientRate?: RateLimit;
   mcpIpRate?: RateLimit;
@@ -283,6 +286,22 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     if (!/^\d{1,15}$/.test(req.params.id ?? "")) throw new DocifyError("user_unknown", "unknown user");
     return Number(req.params.id);
   };
+  // The signed-in person, for the routes about their own keys and history.
+  const me = (req: Request) => {
+    const accountStore = requireStore();
+    const user = actors.get(req);
+    if (!user) throw new DocifyError("accounts_off", "accounts are not enabled on this server");
+    return { accountStore, user };
+  };
+  const keyView = (k: KeyRow) => ({ id: k.id, name: k.name, prefix: k.prefix, createdAt: k.created_at, lastUsedAt: k.last_used_at });
+  // History is a convenience. A failed write is logged and must not fail the search it describes.
+  const remember = (user: UserRow, record: QueryRecord) => {
+    try {
+      store?.recordQuery(user.id, record);
+    } catch (err) {
+      docify.logs.append("accounts", `could not record a query of ${user.login}: ${err instanceof Error ? err.message : err}`, "system", "warn");
+    }
+  };
 
   const body = async (req: Request) => {
     try {
@@ -300,20 +319,43 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
   // A member may see what there is to search, not where it lives on the server or why a prepare failed.
   const isMember = (req: Request) => actors.get(req)?.role === "member";
-  const memberSources = () =>
-    sources(docify).map((s) => ({ ...s, locator: s.kind === "local" ? basename(s.locator) : s.locator, latest: s.latest && { ...s.latest, error: null } }));
+  const memberView = (list: SourceInfo[]): SourceInfo[] =>
+    list.map((s) => ({ ...s, locator: s.kind === "local" ? basename(s.locator) : s.locator, latest: s.latest && { ...s.latest, error: null } }));
+  const memberSources = () => memberView(sources(docify));
 
   // The IP limit runs before auth so guessing tokens is slow; the client limit runs after it.
   const mcp = mcpSettings(opts);
-  const mcpPipeline = mcp.clients.length
+  // Who sent an MCP request with a personal key. A shared token from DOCIFY_MCP_TOKENS has no person.
+  const keyHolders = new WeakMap<Request, { user: UserRow; key: KeyRow }>();
+  // All keys of one person share a client name, so a second key is not a second request allowance.
+  // A shared client's name cannot contain a colon, so the two kinds never collide.
+  const personalKey = (token: string, req: Request) => {
+    const holder = store?.userForKey(token);
+    if (!holder) return null;
+    keyHolders.set(req, holder);
+    return `user:${holder.user.id}`;
+  };
+  const mcpPipeline = mcp.clients.length || store
     ? chain(
         [
           hostGuard(allowedHosts, allowAnyHost),
           rateLimit(new RateLimiter(mcp.ipRate, opts.now), (ctx) => `ip:${ctx.ip}`),
-          bearerAuth(mcp.clients),
+          bearerAuth(mcp.clients, personalKey),
           rateLimit(new RateLimiter(mcp.clientRate, opts.now), (ctx) => ctx.client && `client:${ctx.client}`),
         ],
-        mcpHttpHandler(docify, { project, maxBodyBytes: MCP_MAX_BODY_BYTES }),
+        mcpHttpHandler(docify, {
+          project,
+          maxBodyBytes: MCP_MAX_BODY_BYTES,
+          hooks: (req) => {
+            const holder = keyHolders.get(req);
+            if (!holder) return undefined;
+            return {
+              onSearch: (entry) => remember(holder.user, { via: "mcp", keyName: holder.key.name, ...entry }),
+              // The same rule as on the page: a member sees no server paths and no prepare errors.
+              sources: holder.user.role === "member" ? memberView : undefined,
+            };
+          },
+        }),
       )
     : null;
   const mcpRoute = async (req: Request, srv: { requestIP(req: Request): { address: string } | null }) => {
@@ -418,6 +460,45 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           const user = accountStore.removeUser(userId(req), actor?.id ?? null);
           docify.logs.append("accounts", `${actor?.login ?? "?"} removed ${user.login}`);
           return json({ ok: true });
+        }),
+      },
+      // A person's own MCP keys and search history. Nobody else's are reachable, administrators included.
+      "/api/me/keys": {
+        GET: member((req) => {
+          const { accountStore, user } = me(req);
+          return json({ keys: accountStore.listKeys(user.id).map(keyView), max: MAX_KEYS_PER_USER });
+        }),
+        POST: member(async (req) => {
+          const { accountStore, user } = me(req);
+          const { key, token } = accountStore.createKey(user.id, (await body(req)).name);
+          docify.logs.append("accounts", `${user.login} created the MCP key "${key.name}"`);
+          // The only answer that ever carries the key.
+          return json({ key: keyView(key), token }, 201);
+        }),
+      },
+      "/api/me/keys/:id": {
+        DELETE: member((req) => {
+          const { accountStore, user } = me(req);
+          if (!/^\d{1,15}$/.test(req.params.id ?? "")) throw new DocifyError("key_unknown", "unknown key");
+          const key = accountStore.revokeKey(user.id, Number(req.params.id));
+          docify.logs.append("accounts", `${user.login} revoked the MCP key "${key.name}"`);
+          return json({ ok: true });
+        }),
+      },
+      "/api/me/queries": {
+        GET: member((req) => {
+          const { accountStore, user } = me(req);
+          const raw = new URL(req.url).searchParams.get("limit");
+          if (raw !== null && (!/^\d{1,4}$/.test(raw) || Number(raw) < 1 || Number(raw) > MAX_QUERIES_PER_USER)) throw new DocifyError("invalid_input", "invalid limit");
+          const queries = accountStore.listQueries(user.id, raw === null ? undefined : Number(raw));
+          return json({
+            queries: queries.map((q) => ({ id: q.id, at: q.at, via: q.via, keyName: q.key_name, query: q.query, scope: q.scope, status: q.status, hits: q.hits })),
+            kept: MAX_QUERIES_PER_USER,
+          });
+        }),
+        DELETE: member((req) => {
+          const { accountStore, user } = me(req);
+          return json({ ok: true, removed: accountStore.clearQueries(user.id) });
         }),
       },
       "/api/docs": { GET: docs(() => DOCS_PAGE, "text/html; charset=utf-8", { ...PAGE_HEADERS, "cache-control": "no-store" }) },
@@ -578,18 +659,22 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           const query = str(b.query);
           if (!query) throw new DocifyError("invalid_input", "query is required");
           const modes = ["combined", "lexical", "vector", "graph"];
-          return json(
-            await search(docify, {
-              query,
-              library: str(b.library),
-              version: str(b.version),
-              sources: Array.isArray(b.sources) ? b.sources.filter((s): s is string => typeof s === "string") : undefined,
-              mode: modes.includes(String(b.mode)) ? (b.mode as Mode) : "combined",
-              maxTokens: typeof b.maxTokens === "number" ? b.maxTokens : undefined,
-              graphWeight: typeof b.graphWeight === "number" ? b.graphWeight : undefined,
-              project,
-            }),
-          );
+          const filter = {
+            library: str(b.library),
+            version: str(b.version),
+            sources: Array.isArray(b.sources) ? b.sources.filter((s): s is string => typeof s === "string") : undefined,
+          };
+          const result = await search(docify, {
+            query,
+            ...filter,
+            mode: modes.includes(String(b.mode)) ? (b.mode as Mode) : "combined",
+            maxTokens: typeof b.maxTokens === "number" ? b.maxTokens : undefined,
+            graphWeight: typeof b.graphWeight === "number" ? b.graphWeight : undefined,
+            project,
+          });
+          const actor = actors.get(req);
+          if (actor) remember(actor, { via: "web", query, scope: scopeText(filter), status: result.status, hits: result.hits.length });
+          return json(result);
         }),
       },
       "/api/read/:id": { GET: member((req) => json(read(docify, req.params.id!))) },
@@ -688,7 +773,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     else if (token === null) console.log(`Docify UI on ${url}; no access token is set (DOCIFY_WEB_TOKEN), so anyone who can reach this port can use it.${warning}`);
     else console.log(`Docify UI on ${url}#token=${token}${warning}`);
     if (mcpPipeline) {
-      const names = mcp.clients.map((c) => c.name).join(", ");
+      const names = [...mcp.clients.map((c) => c.name), ...(store ? ["personal keys made in the web UI"] : [])].join(", ");
       console.log(`MCP over HTTP on /mcp for ${names}; ${mcp.clientRate.limit} requests per ${mcp.clientRate.windowMs / 1000} s per client, ${mcp.ipRate.limit} per ${mcp.ipRate.windowMs / 1000} s per IP.`);
     }
   }

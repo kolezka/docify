@@ -8,7 +8,7 @@ const ERROR_TEXT: Record<number, string> = {
   400: "Invalid input",
   401: "Missing or wrong access token, or not signed in",
   403: "Forbidden host, origin or path; with accounts, an account that is not approved or not an administrator",
-  404: "Unknown source, passage or user",
+  404: "Unknown source, passage, user or key",
   409: "Busy, already exists, nothing running, or a change the account rules refuse",
   415: "JSON body required (raw bytes for /api/import)",
   502: "The summary provider failed or returned an unusable summary",
@@ -27,7 +27,7 @@ export function openApiSpec() {
       title: "Docify web API",
       version: "1",
       description:
-        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. When GitHub sign-in is on (`DOCIFY_GITHUB_CLIENT_ID`), the token is not used: calls carry the `docify_session` cookie set by `/auth/github` (named `__Host-docify_session` when the public address is https), members may search, read and list, and everything else needs an administrator. A request a browser marks as cross-site is refused. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
+        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. When GitHub sign-in is on (`DOCIFY_GITHUB_CLIENT_ID`), the token is not used: calls carry the `docify_session` cookie set by `/auth/github` (named `__Host-docify_session` when the public address is https), members may search, read, list and manage their own MCP keys and search history under `/api/me`, and everything else needs an administrator. A request a browser marks as cross-site is refused. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
     },
     servers: [{ url: "/" }],
     security: [{ docifyToken: [] }, { docifySession: [] }],
@@ -50,6 +50,29 @@ export function openApiSpec() {
             lastLoginAt: { type: ["string", "null"] },
             named: { type: "boolean", description: "Named in DOCIFY_ADMINS; cannot be demoted, disabled or removed here" },
             self: { type: "boolean", description: "The account making the call" },
+          },
+        },
+        Key: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            name: { type: "string" },
+            prefix: { type: "string", description: "The first 8 characters of the key, to tell keys apart" },
+            createdAt: { type: "string" },
+            lastUsedAt: { type: ["string", "null"], description: "Updated at most once a minute" },
+          },
+        },
+        Query: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            at: { type: "string" },
+            via: { type: "string", enum: ["web", "mcp"] },
+            keyName: { type: ["string", "null"], description: "The personal key used, for `mcp`" },
+            query: { type: "string" },
+            scope: { type: ["string", "null"], description: "Sources or library the search was limited to" },
+            status: { type: "string" },
+            hits: { type: "integer" },
           },
         },
         Error: {
@@ -91,6 +114,39 @@ export function openApiSpec() {
           responses: { "200": ok("Signed out", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(403, 415) },
         },
       },
+      "/api/me/keys": {
+        get: {
+          summary: "List your MCP keys",
+          description: "Any approved account. Only the caller's own keys; the key itself is never returned here. 404 when GitHub sign-in is off.",
+          responses: { "200": ok("Keys", { type: "object", properties: { keys: { type: "array", items: { $ref: "#/components/schemas/Key" } }, max: { type: "integer" } } }), ...errors(401, 403, 404) },
+        },
+        post: {
+          summary: "Make an MCP key",
+          description: "Any approved account. `token` is the key for `/mcp` (`Authorization: Bearer <token>`); this is the only response that carries it, the server keeps its SHA-256 hash. Names are unique per person, at most ten keys.",
+          requestBody: jsonBody({ type: "object", required: ["name"], properties: { name: { type: "string", maxLength: 60 } } }),
+          responses: { "201": ok("The new key", { type: "object", properties: { key: { $ref: "#/components/schemas/Key" }, token: { type: "string" } } }), ...errors(400, 401, 403, 404, 409, 415) },
+        },
+      },
+      "/api/me/keys/{id}": {
+        delete: {
+          summary: "Revoke one of your MCP keys",
+          description: "The key stops working at once. Another person's key answers 404.",
+          parameters: [idParam("Key id")],
+          responses: { "200": ok("Revoked", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(401, 403, 404) },
+        },
+      },
+      "/api/me/queries": {
+        get: {
+          summary: "Your recent searches",
+          description: "Any approved account. The caller's own searches from the page and through their keys, newest first: the query and its outcome, not the passages. The newest `kept` are stored.",
+          parameters: [{ name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } }],
+          responses: { "200": ok("Searches", { type: "object", properties: { queries: { type: "array", items: { $ref: "#/components/schemas/Query" } }, kept: { type: "integer" } } }), ...errors(400, 401, 403, 404) },
+        },
+        delete: {
+          summary: "Clear your search history",
+          responses: { "200": ok("Cleared", { type: "object", properties: { ok: { type: "boolean" }, removed: { type: "integer" } } }), ...errors(401, 403, 404) },
+        },
+      },
       "/api/users": {
         get: {
           summary: "List accounts",
@@ -101,7 +157,7 @@ export function openApiSpec() {
       "/api/users/{id}": {
         patch: {
           summary: "Approve, disable or change the role of an account",
-          description: "Administrators only. `status: active` approves a pending account or re-enables a disabled one; `disabled` also ends the person's sessions. Your own account and accounts named in DOCIFY_ADMINS are refused with 409.",
+          description: "Administrators only. `status: active` approves a pending account or re-enables a disabled one; `disabled` also ends the person's sessions and MCP keys. Your own account and accounts named in DOCIFY_ADMINS are refused with 409.",
           parameters: [idParam("Account id")],
           requestBody: jsonBody({ type: "object", properties: { role: { type: "string", enum: ["admin", "member"] }, status: { type: "string", enum: ["active", "disabled"] } } }),
           responses: { "200": ok("The account", { $ref: "#/components/schemas/User" }), ...errors(400, 401, 403, 404, 409, 415) },

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import ThemeSwitch from "./components/ThemeSwitch.svelte";
+  import Account from "./views/Account.svelte";
   import AddSourceSheet from "./views/AddSourceSheet.svelte";
   import Graph from "./views/Graph.svelte";
   import Logs from "./views/Logs.svelte";
@@ -30,7 +31,7 @@
     if (value === "sign-out") void session.signOut().catch(session.refresh);
     else if (value === "new-source") nav.addingSource = true;
     else if (value.startsWith("source:")) nav.openSource(value.slice(7));
-    else nav.go(value as "search" | "graph" | "logs" | "settings" | "users");
+    else nav.go(value as "search" | "graph" | "logs" | "settings" | "users" | "account");
   }
 </script>
 
@@ -54,6 +55,7 @@
           <option value="settings">Settings</option>
           {#if session.accounts}<option value="users">Users</option>{/if}
         {/if}
+        {#if session.user}<option value="account">Account</option>{/if}
         {#each sources.list ?? [] as s (s.id)}<option value={`source:${s.id}`}>{s.id}</option>{/each}
         {#if session.admin}<option value="new-source">New source…</option>{/if}
         <!-- The sidebar footer is hidden here, so this is the way out and the sign of who is signed in. -->
@@ -75,6 +77,8 @@
       <main class="flex min-h-0 flex-1 flex-col"><Settings /></main>
     {:else if nav.shown === "users"}
       <main class="flex min-h-0 flex-1 flex-col"><Users /></main>
+    {:else if nav.shown === "account"}
+      <main class="flex min-h-0 flex-1 flex-col"><Account /></main>
     {/if}
   </div>
 </div>

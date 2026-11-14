@@ -19,7 +19,15 @@ These are design defaults, not choices the user previously made between offline,
   sources, settings, logs, backups and accounts, members search and read, and a new sign-up
   waits for an administrator's approval. Accounts and sessions are kept in `accounts.sqlite`,
   outside `docify.sqlite`, so backups never carry them and imports never replace them. The CLI
-  and MCP are unchanged; signing in is the only step that calls GitHub, and queries still do not.
+  is unchanged; signing in is the only step that calls GitHub, and queries still do not.
+  Second amendment, same day: Docify is meant for use inside a company. Each approved person
+  makes personal MCP keys in the web UI (only the hash is stored) and `/mcp` accepts them next
+  to the shared `DOCIFY_MCP_TOKENS`. With accounts on, a search made by a signed-in person or
+  through a personal key is noted in `accounts.sqlite` (query, scope, status, number of
+  passages; the newest 200 per person, readable only by that person). That note is the one
+  write a query causes. It never touches `docify.sqlite`, snapshots or `config.json`, a failed
+  note never fails the search, and without accounts, on stdio and in the CLI queries write
+  nothing, as before.
 - Queries run entirely locally and offline once sources, models, and indices are prepared.
   Amendment 2026-11-04: the optional Ollama embedding provider embeds each query on its server.
   With the bundled `docker-compose.yml` that server is on `127.0.0.1`, so queries stay local.

@@ -2,7 +2,7 @@ import { session } from "./session.svelte.ts";
 import { matchShortcut } from "./shortcuts.ts";
 
 // Which view the window shows. "source" shows one source's page; "new-source" opens the add sheet over it.
-export type View = "search" | "graph" | "logs" | "settings" | "users" | "source";
+export type View = "search" | "graph" | "logs" | "settings" | "users" | "account" | "source";
 
 // Logs, settings and users are for administrators. The server refuses the calls anyway;
 // this keeps a member from landing on a view that can only show an error.
@@ -13,7 +13,7 @@ const KEY = "docify-nav";
 function load(): { view: View; sourceId: string | null } {
   try {
     const raw = JSON.parse(sessionStorage.getItem(KEY) ?? "null");
-    if (raw && ["search", "graph", "logs", "settings", "users", "source"].includes(raw.view)) {
+    if (raw && ["search", "graph", "logs", "settings", "users", "account", "source"].includes(raw.view)) {
       return { view: raw.view, sourceId: typeof raw.sourceId === "string" ? raw.sourceId : null };
     }
   } catch {
@@ -37,6 +37,8 @@ class Nav {
   get shown(): View {
     if (ADMIN_VIEWS.includes(this.view) && !session.admin) return "search";
     if (this.view === "users" && !session.accounts) return "search";
+    // Keys and history belong to a person; a server without accounts has none.
+    if (this.view === "account" && !session.user) return "search";
     return this.view;
   }
 
@@ -69,6 +71,7 @@ export const shortcuts: { code: string; label: string; run: () => void }[] = [
   { code: "Digit3", label: "⌥3", run: () => nav.go("logs") },
   { code: "Digit4", label: "⌥4", run: () => nav.go("settings") },
   { code: "Digit5", label: "⌥5", run: () => nav.go("users") },
+  { code: "Digit6", label: "⌥6", run: () => nav.go("account") },
   { code: "KeyN", label: "⌥N", run: () => session.admin && (nav.addingSource = true) },
 ];
 
