@@ -6,6 +6,7 @@
   import Toolbar from "../components/Toolbar.svelte";
   import { api, errorText, type Mode, type ReadResult, type SearchHit, type SearchResult } from "../lib/api.ts";
   import { nav } from "../lib/nav.svelte.ts";
+  import { session } from "../lib/session.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
   import { button, capsule, capsuleButton, cn, footnote, input, notice, panel, popup, searchStatusLabel, searchTone } from "../lib/ui.ts";
 
@@ -244,8 +245,10 @@
         <pre class="min-h-0 flex-1 overflow-y-auto bg-code p-4 font-mono text-[12px] leading-[18px] break-words whitespace-pre-wrap text-label">{result.text}</pre>
       {:else if noPrepared}
         <div class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-          <p class="max-w-sm text-[13px] text-label2">No source is prepared yet. Add a documentation source and prepare it to search it here.</p>
-          <button type="button" class={button({ intent: "primary", size: "md" })} onclick={() => (nav.addingSource = true)}>Add Source</button>
+          <p class="max-w-sm text-[13px] text-label2">
+            {session.admin ? "No source is prepared yet. Add a documentation source and prepare it to search it here." : "No source is prepared yet. An administrator adds and prepares them."}
+          </p>
+          {#if session.admin}<button type="button" class={button({ intent: "primary", size: "md" })} onclick={() => (nav.addingSource = true)}>Add Source</button>{/if}
         </div>
       {:else}
         <div class="flex flex-1 items-center justify-center p-8 text-center">

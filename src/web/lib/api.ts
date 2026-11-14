@@ -48,6 +48,8 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   const data = await res.json().catch(() => null);
+  // With accounts on, a 401 means the session ended; session.svelte.ts listens and shows the sign-in screen.
+  if (res.status === 401) dispatchEvent(new Event("docify-unauthorized"));
   if (!res.ok) throw new ApiError(data?.code ?? String(res.status), data?.error ?? res.statusText, data?.field ?? null);
   return data as T;
 }

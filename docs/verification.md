@@ -194,3 +194,22 @@ The mount went back to a default, now absolute: `${DOCIFY_SOURCES_DIR:-/srv/doci
 - `docify add docify /sources/docify` and `prepare docify@unknown --no-graph`: generation 1 activated with 19 documents and 225 passages.
 - `docify search "how are generations activated" --source docify@unknown --max-tokens 300`: status `weak_match`, top hit `CLAUDE.md > Architecture`, lines 36-46.
 - Not verified: a Linux host, where the files must be readable by uid 10001.
+
+## 2026-11-14: user accounts, GitHub sign-in, administration panel
+
+Branch `feat/user-accounts` on `main` at `5d0cd58`, macOS, Bun 1.4.4.
+
+- `bun test`: 331 pass, 0 fail, 57 files. `bun run typecheck`: exit 0. `sh -n docker-entrypoint.sh`: exit 0.
+- `tests/accounts.test.ts` (11) covers the account store: pending sign-up, administrators named by login or `id:<number>`, sessions stored only as a hash and expiring, approve, role, disable, remove, the self and named-administrator protections, and that `exportStore` holds no accounts and `importStore` leaves them in place.
+- `tests/accounts-web.test.ts` (15) drives the server with a stand-in for GitHub passed as `github.fetch`: the authorize redirect and state cookie, the callback refusing a wrong, missing or foreign state, a bad code and a cancelled sign-in, 401 without a session, a pending account reaching nothing, 13 administrator routes each refusing a member with 403, disabling ending the session at once, a cross-site write refused (403 for a foreign Origin, 415 for `text/plain`), the 31st sign-in attempt answered 429, and a server without accounts behaving as before.
+- Found during the browser check and fixed: `Users.svelte` had a helper named `state`, which made Svelte compile every `$state(...)` in the file as a store read (`let busy = $state()(false)`). The bundle built and the tests passed, but the view threw when it mounted and stayed empty. `tests/web-components.test.ts` compiles every component and fails on the `store_rune_conflict` warning; with the old name it reported `views/Users.svelte:16` to `:19`, with the fix it passes.
+
+Browser check (headless Chrome via agent-browser) against a scratch store on `127.0.0.1:4790`, with a local stand-in for GitHub on `127.0.0.1:4791` reached through the `authorizeUrl`, `tokenUrl` and `userUrl` options:
+
+- Signed out: the page shows only "Sign In with GitHub". Signing in as the named administrator lands on the app with Logs, Settings and Users in the sidebar, and Users shows the number of waiting accounts.
+- Users: two sign-ups appeared under "Waiting for approval". Approve moved one to Accounts with a role menu, Disable and Remove. Remove asked "Remove bob?" with Cancel and Remove, and afterwards that browser's `/api/session` returned no user. Disable made the member's next `/api/sources` call answer 401; Enable restored the row.
+- A pending account saw "Waiting for Approval" with Sign Out and Check Again. An approved member saw Search and Graph only, no New source button, and `/api/config` answered 403.
+- At 420 px wide two defects were found and fixed: there was no way to sign out (the sidebar is hidden there; the view picker now ends with "Sign Out (login)"), and an account row squeezed the name into a one-word column (the controls now wrap below the name as a group). After the fix the page had no horizontal overflow and picking Sign Out returned to the sign-in page.
+- No page errors were reported in any step.
+
+Not verified: sign-in against the real GitHub (no OAuth app was created, and GitHub's documentation could not be fetched in this session, so the endpoints and parameters come from prior knowledge); a deployment behind a TLS proxy, including the `Secure` cookie in a browser (only the header is tested); `docker build` and the compose file with the new variables; colour contrast, which was judged by eye from screenshots.

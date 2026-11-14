@@ -437,6 +437,9 @@ export function describeConfig(config: DocifyConfig, env: Env = process.env): Co
     ["DOCIFY_GRAPHIFY_BIN", "Graphify executable, unless config.json sets graphifyBin"],
     ["DOCIFY_EMBED_URL", "Ollama URL, unless config.json sets embeddingUrl"],
     ["DOCIFY_PROJECT", "project whose .docify.json pins apply in CLI search and MCP"],
+    ["DOCIFY_GITHUB_CLIENT_ID", "GitHub OAuth app; with the secret it turns on user accounts"],
+    ["DOCIFY_ADMINS", "GitHub logins of the administrators"],
+    ["DOCIFY_PUBLIC_URL", "public address, for the GitHub callback and the Secure cookie"],
   ];
   const credentials = new Map<string, string[]>();
   const addCredential = (name: string | undefined, purpose: string) => {
@@ -448,6 +451,7 @@ export function describeConfig(config: DocifyConfig, env: Env = process.env): Co
   addCredential(config.graph?.apiKeyEnv, "graph API key");
   addCredential(config.crawl4aiApiKeyEnv, "Crawl4AI token");
   addCredential(config.browserlessApiKeyEnv, "Browserless token");
+  addCredential("DOCIFY_GITHUB_CLIENT_SECRET", "GitHub sign-in client secret");
   return {
     values: pick(config),
     defaults: pick(defaultConfig(config.home, env)),

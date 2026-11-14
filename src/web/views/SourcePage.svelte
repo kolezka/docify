@@ -11,6 +11,7 @@
   import { api, downloadArtifact, errorText, type SourceInfo } from "../lib/api.ts";
   import { ago, fraction } from "../lib/format.ts";
   import { nav } from "../lib/nav.svelte.ts";
+  import { session } from "../lib/session.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
   import { button, capsule, capsuleButton, cn, footnote, input, notice, popup, sourceStateLabel, sourceTone } from "../lib/ui.ts";
 
@@ -193,20 +194,21 @@
         {#if sources.list === null}
           Loading sources…
         {:else if nav.sourceId && sources.list.length}
-          This source is no longer in the store. Pick another one in the sidebar, or add a new one.
+          This source is no longer in the store. Pick another one in the sidebar{session.admin ? ", or add a new one" : ""}.
         {:else if sources.list.length}
-          Pick a source in the sidebar to see its index, crawler settings and actions.
+          Pick a source in the sidebar to see its index{session.admin ? ", crawler settings and actions" : ""}.
         {:else}
-          No sources yet. Add a website or a local folder, and Docify keeps a copy of its documentation for agents.
+          {session.admin ? "No sources yet. Add a website or a local folder, and Docify keeps a copy of its documentation for agents." : "No sources yet. An administrator adds them."}
         {/if}
       </p>
-      <button type="button" class={button({ intent: "primary", size: "md", class: "mt-4" })} onclick={() => (nav.addingSource = true)}>Add Source</button>
+      {#if session.admin}<button type="button" class={button({ intent: "primary", size: "md", class: "mt-4" })} onclick={() => (nav.addingSource = true)}>Add Source</button>{/if}
     </div>
   </div>
 {:else}
   <Toolbar>
     <span class="flex-1"></span>
-    <span class={capsule({ class: "relative" })} bind:this={menuRoot}>
+    <!-- Members read a source; preparing, crawler settings and removal are for administrators. -->
+    <span class={capsule({ class: cn("relative", !session.admin && "hidden") })} bind:this={menuRoot}>
       {#if preparing}
         <button type="button" class={capsuleButton()} disabled={busy} onclick={cancel}><X size={14} />Cancel</button>
       {:else}
@@ -363,7 +365,7 @@
         </Group>
       {/if}
 
-      {#if s.kind === "url"}
+      {#if s.kind === "url" && session.admin}
         <Group title="Crawl limits" hint="Leave a field blank to use the global setting. Changes apply on the next update.">
           {#if editingLimits}
             <form onsubmit={saveLimits}>
@@ -454,6 +456,7 @@
         </Group>
       {/if}
 
+      {#if session.admin}
       <Group
         class="mt-7"
         hint={preparing
@@ -467,6 +470,7 @@
           onclick={() => (confirmRemove = true)}>Remove Source…</button
         >
       </Group>
+      {/if}
     </div>
   </div>
 

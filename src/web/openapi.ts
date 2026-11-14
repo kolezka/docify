@@ -6,10 +6,10 @@ const errors = (...codes: number[]) =>
   Object.fromEntries(codes.map((code) => [String(code), { description: ERROR_TEXT[code], content: { "application/json": { schema: error } } }]));
 const ERROR_TEXT: Record<number, string> = {
   400: "Invalid input",
-  401: "Missing or wrong access token",
-  403: "Forbidden host, origin or path",
-  404: "Unknown source or passage",
-  409: "Busy, already exists or nothing running",
+  401: "Missing or wrong access token, or not signed in",
+  403: "Forbidden host, origin or path; with accounts, an account that is not approved or not an administrator",
+  404: "Unknown source, passage or user",
+  409: "Busy, already exists, nothing running, or a change the account rules refuse",
   415: "JSON body required (raw bytes for /api/import)",
   503: "A store import is running",
   500: "Internal error",
@@ -25,13 +25,31 @@ export function openApiSpec() {
       title: "Docify web API",
       version: "1",
       description:
-        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
+        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. When GitHub sign-in is on (`DOCIFY_GITHUB_CLIENT_ID`), the token is not used: calls carry the `docify_session` cookie set by `/auth/github`, members may search, read and list, and everything else needs an administrator. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
     },
     servers: [{ url: "/" }],
-    security: [{ docifyToken: [] }],
+    security: [{ docifyToken: [] }, { docifySession: [] }],
     components: {
-      securitySchemes: { docifyToken: { type: "apiKey", in: "header", name: "X-Docify-Token" } },
+      securitySchemes: {
+        docifyToken: { type: "apiKey", in: "header", name: "X-Docify-Token" },
+        docifySession: { type: "apiKey", in: "cookie", name: "docify_session" },
+      },
       schemas: {
+        User: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            login: { type: "string", description: "GitHub login" },
+            name: { type: ["string", "null"] },
+            role: { type: "string", enum: ["admin", "member"] },
+            status: { type: "string", enum: ["pending", "active", "disabled"] },
+            createdAt: { type: "string" },
+            approvedAt: { type: ["string", "null"] },
+            lastLoginAt: { type: ["string", "null"] },
+            named: { type: "boolean", description: "Named in DOCIFY_ADMINS; cannot be demoted, disabled or removed here" },
+            self: { type: "boolean", description: "The account making the call" },
+          },
+        },
         Error: {
           type: "object",
           required: ["error", "code"],
@@ -48,6 +66,51 @@ export function openApiSpec() {
       },
     },
     paths: {
+      "/api/session": {
+        get: {
+          summary: "Who is signed in",
+          description: "Needs no token or session. `accounts` says whether GitHub sign-in is on; `user` is null when nobody is signed in.",
+          security: [],
+          responses: {
+            "200": ok("Session", {
+              type: "object",
+              properties: {
+                accounts: { type: "boolean" },
+                user: { type: ["object", "null"], properties: { id: { type: "integer" }, login: { type: "string" }, name: { type: ["string", "null"] }, role: { type: "string", enum: ["admin", "member"] }, status: { type: "string", enum: ["pending", "active", "disabled"] } } },
+              },
+            }),
+            ...errors(403),
+          },
+        },
+        delete: {
+          summary: "Sign out",
+          security: [],
+          requestBody: jsonBody({ type: "object" }, false),
+          responses: { "200": ok("Signed out", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(403, 415) },
+        },
+      },
+      "/api/users": {
+        get: {
+          summary: "List accounts",
+          description: "Administrators only. Accounts waiting for approval come first. 404 when GitHub sign-in is off.",
+          responses: { "200": ok("Accounts", { type: "object", properties: { users: { type: "array", items: { $ref: "#/components/schemas/User" } } } }), ...errors(401, 403, 404) },
+        },
+      },
+      "/api/users/{id}": {
+        patch: {
+          summary: "Approve, disable or change the role of an account",
+          description: "Administrators only. `status: active` approves a pending account or re-enables a disabled one; `disabled` also ends the person's sessions. Your own account and accounts named in DOCIFY_ADMINS are refused with 409.",
+          parameters: [idParam("Account id")],
+          requestBody: jsonBody({ type: "object", properties: { role: { type: "string", enum: ["admin", "member"] }, status: { type: "string", enum: ["active", "disabled"] } } }),
+          responses: { "200": ok("The account", { $ref: "#/components/schemas/User" }), ...errors(400, 401, 403, 404, 409, 415) },
+        },
+        delete: {
+          summary: "Remove an account",
+          description: "Administrators only. The person can sign up again and then waits for approval.",
+          parameters: [idParam("Account id")],
+          responses: { "200": ok("Removed", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(401, 403, 404, 409) },
+        },
+      },
       "/api/logs": {
         get: {
           summary: "Read application logs",

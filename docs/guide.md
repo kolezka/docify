@@ -347,6 +347,24 @@ Drop `--no-graph` when LiteLLM is configured (`LITELLM_BASE_URL`, `LITELLM_API_K
 
 If the domain changes, update `DOCIFY_ALLOWED_HOSTS` and redeploy.
 
+### User accounts (GitHub sign-in)
+
+By default the web UI has no accounts: it is open, or guarded by the one shared `DOCIFY_WEB_TOKEN`. To give each person their own account, turn on GitHub sign-in. The store stays shared; accounts decide who may use it and who may change it.
+
+1. On GitHub, open Settings, Developer settings, OAuth Apps, New OAuth App. Set the homepage URL to the public address of the UI and the authorization callback URL to `<public address>/auth/github/callback`.
+2. Set `DOCIFY_GITHUB_CLIENT_ID` and `DOCIFY_GITHUB_CLIENT_SECRET` from that app, `DOCIFY_ADMINS` to your GitHub login, and `DOCIFY_PUBLIC_URL` to the public address (`https://docify.example.com`, scheme and host only). Remove `DOCIFY_WEB_TOKEN`: the server refuses to start with both.
+3. Restart and open the UI. It shows "Sign In with GitHub".
+
+- **Administrators** are the logins in `DOCIFY_ADMINS` (comma separated; `id:<number>` names an account by its GitHub id, which survives a rename). They are administrators from their first sign-in, and nobody becomes one by arriving first. They add, prepare and remove sources, change settings, read logs, export and import backups, and manage accounts under Users.
+- **Members** search, read passages and view sources and graphs. Anyone can sign up, but a new account is pending and sees nothing until an administrator approves it under Users. An administrator can also make a member an administrator, disable an account (its sessions end at once) or remove it.
+- An account named in `DOCIFY_ADMINS` cannot be demoted, disabled or removed in the UI; change the variable and restart. Nobody can change their own account.
+
+Docify asks GitHub for no scope: it reads the public profile (id, login, name) and does not keep the GitHub token. A session is an `HttpOnly`, `SameSite=Lax` cookie valid for 30 days; the server stores only its SHA-256 hash. The cookie is `Secure` when `DOCIFY_PUBLIC_URL` starts with `https://`, so set it on any real deployment. Writes also need a JSON content type and an allowed `Origin`, which stops another site from using the cookie.
+
+Accounts and sessions live in `accounts.sqlite` in the store directory, apart from `docify.sqlite`. A backup (`docify export`) does not contain them and an import does not replace them, so restoring a store never changes who can sign in. Deleting `accounts.sqlite` while the server is stopped removes every account; administrators come back at their next sign-in.
+
+Accounts cover the web UI and `/api`. MCP over HTTP keeps its own bearer tokens (below), and the CLI works on the store directly.
+
 ### MCP over HTTP
 
 `docify serve` also answers MCP at `/mcp` (Streamable HTTP, stateless, JSON responses) when `DOCIFY_MCP_TOKENS` is set. Without that variable `/mcp` returns 404. The tools are the same read-only ones as on stdio.
@@ -408,6 +426,9 @@ The tests use no network and no LLM, but most need the bge-small model from `doc
 | `DOCIFY_PROJECT` | Project directory whose `.docify.json` pins apply (CLI search and MCP) |
 | `DOCIFY_HOST`, `DOCIFY_PORT` | Web bind address and port (`serve` also takes `--host`/`--port`) |
 | `DOCIFY_WEB_TOKEN` | Optional web token (16+ characters); without it the web UI and `/api` need no token |
+| `DOCIFY_GITHUB_CLIENT_ID`, `DOCIFY_GITHUB_CLIENT_SECRET` | GitHub OAuth app; set both to turn on user accounts with GitHub sign-in (not together with `DOCIFY_WEB_TOKEN`) |
+| `DOCIFY_ADMINS` | GitHub logins or `id:<number>` of the administrators, comma separated; required with accounts |
+| `DOCIFY_PUBLIC_URL` | Public address of the UI (scheme and host); builds the GitHub callback URL and makes the session cookie `Secure` with https |
 | `DOCIFY_ALLOWED_HOSTS` | Optional Host values the web server answers for, comma separated; `*` accepts any |
 | `DOCIFY_SOURCE_ROOTS` | Directories the web UI may add local sources from, separated by `:` (default: home) |
 | `DOCIFY_MCP_TOKENS` | `name:token` pairs, comma separated; enables MCP over HTTP at `/mcp` |

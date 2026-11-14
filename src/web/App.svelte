@@ -7,26 +7,40 @@
   import Logs from "./views/Logs.svelte";
   import Search from "./views/Search.svelte";
   import Settings from "./views/Settings.svelte";
+  import SignIn from "./views/SignIn.svelte";
   import SourcePage from "./views/SourcePage.svelte";
+  import Users from "./views/Users.svelte";
   import { handleShortcut, nav } from "./lib/nav.svelte.ts";
+  import { session } from "./lib/session.svelte.ts";
   import { sources } from "./lib/sources.svelte.ts";
+  import { users } from "./lib/users.svelte.ts";
   import { popup } from "./lib/ui.ts";
 
-  onMount(() => {
+  onMount(session.refresh);
+  // Data is asked for only once this person may see it, and again after an approval or a new sign-in.
+  $effect(() => {
+    if (!session.ready) return;
     sources.refresh();
+    if (session.accounts && session.admin) users.refresh();
   });
 
   // Narrow windows hide the sidebar; this picker stands in for it.
-  const compactValue = $derived(nav.view === "source" && nav.sourceId ? `source:${nav.sourceId}` : nav.view);
+  const compactValue = $derived(nav.shown === "source" && nav.sourceId ? `source:${nav.sourceId}` : nav.shown);
   function pickCompact(value: string) {
-    if (value === "new-source") nav.addingSource = true;
+    if (value === "sign-out") void session.signOut().catch(session.refresh);
+    else if (value === "new-source") nav.addingSource = true;
     else if (value.startsWith("source:")) nav.openSource(value.slice(7));
-    else nav.go(value as "search" | "graph" | "logs" | "settings");
+    else nav.go(value as "search" | "graph" | "logs" | "settings" | "users");
   }
 </script>
 
 <svelte:window onkeydown={handleShortcut} />
 
+{#if !session.loaded}
+  <div class="h-dvh" aria-busy="true"></div>
+{:else if !session.ready}
+  <SignIn />
+{:else}
 <div class="flex h-dvh overflow-hidden">
   <Sidebar />
   <div class="flex min-w-0 flex-1 flex-col">
@@ -35,27 +49,35 @@
       <select class={popup({ class: "ml-auto" })} aria-label="View" value={compactValue} onchange={(e) => pickCompact(e.currentTarget.value)}>
         <option value="search">Search</option>
         <option value="graph">Graph</option>
-        <option value="logs">Logs</option>
-        <option value="settings">Settings</option>
+        {#if session.admin}
+          <option value="logs">Logs</option>
+          <option value="settings">Settings</option>
+          {#if session.accounts}<option value="users">Users</option>{/if}
+        {/if}
         {#each sources.list ?? [] as s (s.id)}<option value={`source:${s.id}`}>{s.id}</option>{/each}
-        <option value="new-source">New source…</option>
+        {#if session.admin}<option value="new-source">New source…</option>{/if}
+        <!-- The sidebar footer is hidden here, so this is the way out and the sign of who is signed in. -->
+        {#if session.user}<option value="sign-out">Sign Out ({session.user.login})</option>{/if}
       </select>
       <ThemeSwitch />
     </div>
     <!-- Search stays mounted so its results survive a visit to another view. -->
-    <main class="flex min-h-0 flex-1 flex-col" class:hidden={nav.view !== "search"}>
+    <main class="flex min-h-0 flex-1 flex-col" class:hidden={nav.shown !== "search"}>
       <Search />
     </main>
-    {#if nav.view === "source"}
+    {#if nav.shown === "source"}
       <main class="flex min-h-0 flex-1 flex-col"><SourcePage /></main>
-    {:else if nav.view === "graph"}
+    {:else if nav.shown === "graph"}
       <main class="flex min-h-0 flex-1 flex-col"><Graph /></main>
-    {:else if nav.view === "logs"}
+    {:else if nav.shown === "logs"}
       <main class="flex min-h-0 flex-1 flex-col"><Logs /></main>
-    {:else if nav.view === "settings"}
+    {:else if nav.shown === "settings"}
       <main class="flex min-h-0 flex-1 flex-col"><Settings /></main>
+    {:else if nav.shown === "users"}
+      <main class="flex min-h-0 flex-1 flex-col"><Users /></main>
     {/if}
   </div>
 </div>
 
-<AddSourceSheet />
+{#if session.admin}<AddSourceSheet />{/if}
+{/if}
