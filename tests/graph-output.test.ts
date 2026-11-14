@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runGraphify } from "../src/core/graph.ts";
+import { runGraphify, runtimeEnv } from "../src/core/graph.ts";
 import { newDocify, tempDir } from "./helpers.ts";
 
 function fixture(exit = 0) {
@@ -14,6 +14,7 @@ import { join } from "node:path";
 const args = process.argv.slice(2);
 const work = args[args.indexOf("--out") + 1];
 writeFileSync(join(work, "argv.json"), JSON.stringify(args));
+writeFileSync(join(work, "env.json"), JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("GRAPHIFY_")))));
 process.stdout.write("graph fixture started\\n");
 process.stderr.write("WARNING: fixture stderr\\n");
 const bytes = new TextEncoder().encode("Zażółć\\rnext\\nfinal tail");
@@ -65,6 +66,49 @@ test("Graphify receives configured extraction options and retains owned argument
     expect(argv).toContain("--force");
     expect(argv[argv.indexOf("--out") + 1]).toBe(join(d.config.home, "graphify", "options"));
   } finally { d.close(); }
+});
+
+const graphifyEnv = (d: ReturnType<typeof newDocify>, sourceId: string) =>
+  JSON.parse(readFileSync(join(d.config.home, "graphify", sourceId, "env.json"), "utf8")) as Record<string, string>;
+
+test("Graphify receives the request settings as its own environment variables", async () => {
+  const { d, release } = fixture();
+  Object.assign(d.config.graph!, { maxOutputTokens: 32000, temperature: 0.2, maxRetries: 0, maxRetryDepth: 0, disableThinking: true });
+  writeFileSync(release, "go");
+  try {
+    await runGraphify(d.config, "tuned", []);
+    expect(graphifyEnv(d, "tuned")).toEqual({
+      GRAPHIFY_MAX_OUTPUT_TOKENS: "32000",
+      GRAPHIFY_LLM_TEMPERATURE: "0.2",
+      GRAPHIFY_MAX_RETRIES: "0",
+      GRAPHIFY_MAX_RETRY_DEPTH: "0",
+      GRAPHIFY_DISABLE_THINKING: "1",
+    });
+  } finally { d.close(); }
+});
+
+test("unset request settings stay out of Graphify's environment, and so do the server's own", async () => {
+  const { d, release } = fixture();
+  Object.assign(d.config.graph!, { maxOutputTokens: null, temperature: null, disableThinking: false });
+  writeFileSync(release, "go");
+  const before = process.env.GRAPHIFY_MAX_RETRIES;
+  process.env.GRAPHIFY_MAX_RETRIES = "99";
+  try {
+    await runGraphify(d.config, "plain", []);
+    expect(graphifyEnv(d, "plain")).toEqual({});
+  } finally {
+    if (before === undefined) delete process.env.GRAPHIFY_MAX_RETRIES;
+    else process.env.GRAPHIFY_MAX_RETRIES = before;
+    d.close();
+  }
+});
+
+test("a zero temperature or retry count is sent, not treated as unset", () => {
+  expect(runtimeEnv({ backend: "openai", model: "m", temperature: 0, maxRetries: 0, maxRetryDepth: 0 })).toEqual({
+    GRAPHIFY_LLM_TEMPERATURE: "0",
+    GRAPHIFY_MAX_RETRIES: "0",
+    GRAPHIFY_MAX_RETRY_DEPTH: "0",
+  });
 });
 
 test("Graphify preserves streamed output and failure diagnostics on nonzero exit", async () => {

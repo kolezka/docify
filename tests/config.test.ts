@@ -53,6 +53,12 @@ test("wrong types and out-of-range values are errors, never coerced or dropped",
   rejects(() => validateConfigPatch({ graph: { tokenBudget: 0 } }), "graph.tokenBudget", /between/);
   rejects(() => validateConfigPatch({ graph: { apiTimeoutSeconds: -1 } }), "graph.apiTimeoutSeconds", /between/);
   rejects(() => validateConfigPatch({ graph: { maxWorkers: 1.5 } }), "graph.maxWorkers", /whole number/);
+  rejects(() => validateConfigPatch({ graph: { maxOutputTokens: 0 } }), "graph.maxOutputTokens", /between/);
+  rejects(() => validateConfigPatch({ graph: { temperature: 2.5 } }), "graph.temperature", /between 0 and 2/);
+  rejects(() => validateConfigPatch({ graph: { temperature: "none" } }), "graph.temperature", /must be a number/);
+  rejects(() => validateConfigPatch({ graph: { maxRetries: -1 } }), "graph.maxRetries", /between 0 and 100/);
+  rejects(() => validateConfigPatch({ graph: { maxRetryDepth: 11 } }), "graph.maxRetryDepth", /between 0 and 10/);
+  rejects(() => validateConfigPatch({ graph: { disableThinking: "yes" } }), "graph.disableThinking", /true or false/);
   expect(validateConfigPatch({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434/", graph: null })).toEqual({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434", graph: null });
 });
 
@@ -83,6 +89,14 @@ test("graph extraction settings round-trip and workers can return to automatic",
   expect(loadConfig(home).graph).toMatchObject({ mode: "deep", tokenBudget: 12345, apiTimeoutSeconds: 30, maxWorkers: 2 });
   saveConfig(home, { graph: { maxWorkers: null } }, {});
   expect(loadConfig(home).graph?.maxWorkers).toBeNull();
+});
+
+test("graph request settings round-trip, keep zero and can return to the Graphify default", () => {
+  const home = tempDir();
+  saveConfig(home, { graph: { maxOutputTokens: 32000, temperature: 0, maxRetries: 0, maxRetryDepth: 0, disableThinking: true } }, {});
+  expect(loadConfig(home).graph).toMatchObject({ maxOutputTokens: 32000, temperature: 0, maxRetries: 0, maxRetryDepth: 0, disableThinking: true });
+  saveConfig(home, { graph: { maxOutputTokens: null, temperature: null, disableThinking: false } }, {});
+  expect(loadConfig(home).graph).toMatchObject({ maxOutputTokens: null, temperature: null, maxRetries: 0, disableThinking: false });
 });
 
 test("cross-field rules use the merged values", () => {
