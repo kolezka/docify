@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { delimiter, join, resolve, sep } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
-import { Docify, DocifyError } from "../core/docify.ts";
+import { Docify, DocifyError, validateIgnorePatterns } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
 import { graphView } from "../core/graph-view.ts";
@@ -217,6 +217,8 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           const library = str(b.library);
           if (!locator || !library) throw new DocifyError("invalid_input", "library and locator are required");
           const provider = b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, false)!;
+          const ignore = b.ignore === undefined ? undefined : validateIgnorePatterns(b.ignore, "ignore");
+          const graphIgnore = b.graphIgnore === undefined ? undefined : validateIgnorePatterns(b.graphIgnore, "graphIgnore");
           if (kind === "local") {
             if (provider !== undefined || b.crawl !== undefined) throw new DocifyError("invalid_input", "crawler settings are only valid for URL sources");
             // The UI may only register paths inside DOCIFY_SOURCE_ROOTS.
@@ -229,21 +231,28 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
             if (!withinSourceRoots(real, sourceRoots)) {
               throw new DocifyError("invalid_input", `local sources must be inside DOCIFY_SOURCE_ROOTS (${sourceRoots.join(delimiter)})`);
             }
-            return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator: real }), 201);
+            return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator: real, ignore, graphIgnore }), 201);
           }
           if (b.crawl !== undefined) {
             const crawl = b.crawl;
             if (!crawl || typeof crawl !== "object" || Array.isArray(crawl) || Object.keys(crawl).some((key) => key !== "maxPages" && key !== "maxDepth")) throw new DocifyError("invalid_input", "crawl must contain only maxPages and maxDepth");
           }
-          return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator, crawlProvider: provider, crawl: b.crawl as never }), 201);
+          return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator, crawlProvider: provider, crawl: b.crawl as never, ignore, graphIgnore }), 201);
         }),
       },
       "/api/sources/:id": {
         PATCH: api(async (req) => {
           const b = await body(req);
-          if (b.crawlProvider === undefined && b.crawl4ai === undefined && b.crawl === undefined) throw new DocifyError("invalid_input", "crawler settings are required");
-          const provider = b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, true);
-          docify.updateSourceCrawler(decodeURIComponent(req.params.id!), provider, b.crawl4ai, b.crawl);
+          const crawler = b.crawlProvider !== undefined || b.crawl4ai !== undefined || b.crawl !== undefined;
+          const ignoring = b.ignore !== undefined || b.graphIgnore !== undefined;
+          if (!crawler && !ignoring) throw new DocifyError("invalid_input", "crawler settings or ignore patterns are required");
+          const id = decodeURIComponent(req.params.id!);
+          // Checked before anything is written, so a bad pattern cannot leave half of the request applied.
+          for (const name of ["ignore", "graphIgnore"] as const) {
+            if (b[name] !== undefined && b[name] !== null) validateIgnorePatterns(b[name], name);
+          }
+          if (crawler) docify.updateSourceCrawler(id, b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, true), b.crawl4ai, b.crawl);
+          if (ignoring) docify.updateSourceIgnore(id, { ignore: b.ignore, graphIgnore: b.graphIgnore });
           return json({ ok: true });
         }),
         DELETE: api((req) => {

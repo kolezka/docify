@@ -6,7 +6,7 @@
   import { api, ApiError, errorText, type ConfigDescription } from "../lib/api.ts";
   import { nav } from "../lib/nav.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
-  import { button, footnote, input, notice, panel, popup, row } from "../lib/ui.ts";
+  import { button, footnote, input, notice, panel, patternLines, popup, row, textArea } from "../lib/ui.ts";
 
   type Kind = "url" | "local";
   const CRAWLER_LABELS: Record<string, string> = { builtin: "Built-in", crawl4ai: "Crawl4AI", browserless: "Browserless" };
@@ -20,6 +20,8 @@
   let libraryEdited = $state(false);
   let versionEdited = $state(false);
   let crawlProvider = $state("");
+  let ignoreText = $state("");
+  let graphIgnoreText = $state("");
   let prepareAfter = $state(true);
   let buildGraph = $state(true);
   let submitting = $state(false);
@@ -88,7 +90,7 @@
   const errorFor = (field: FieldName) => (fieldError?.field === field ? fieldError.message : null);
 
   function reset() {
-    locator = library = version = crawlProvider = "";
+    locator = library = version = crawlProvider = ignoreText = graphIgnoreText = "";
     libraryEdited = versionEdited = false;
     prepareAfter = buildGraph = true;
   }
@@ -102,12 +104,16 @@
     // What happens after adding is fixed at submit time; edits made while the request runs must not change it.
     const graph = buildGraph;
     const shouldPrepare = prepareAfter;
+    const ignore = patternLines(ignoreText);
+    const graphIgnore = patternLines(graphIgnoreText);
     const body = {
       library: libraryValue.trim(),
       version: versionValue.trim(),
       locator: locator.trim(),
       kind,
       ...(kind === "url" && crawlProvider ? { crawlProvider } : {}),
+      ...(ignore.length ? { ignore } : {}),
+      ...(graphIgnore.length ? { graphIgnore } : {}),
     };
     let id: string;
     try {
@@ -242,6 +248,18 @@
         </div>
       {/if}
     </div>
+
+    <div class={panel({ class: "mt-3.5" })}>
+      <div class={row({ class: "flex-col items-stretch gap-1.5" })}>
+        <label for="add-ignore" class="text-[13px] text-label">Do not collect</label>
+        <textarea id="add-ignore" class={textArea()} rows="2" spellcheck="false" autocomplete="off" placeholder="One pattern per line" bind:value={ignoreText} disabled={submitting}></textarea>
+      </div>
+      <div class={row({ class: "flex-col items-stretch gap-1.5" })}>
+        <label for="add-graph-ignore" class="text-[13px] text-label">Leave out of the graph</label>
+        <textarea id="add-graph-ignore" class={textArea()} rows="2" spellcheck="false" autocomplete="off" placeholder="One pattern per line" bind:value={graphIgnoreText} disabled={submitting}></textarea>
+      </div>
+    </div>
+    <p class="mx-3.5 mt-1.5 text-[11px] leading-[14px] text-label2">Optional. Regular expressions matched against the document path, such as ^changelog/.</p>
 
     <div class={panel({ class: "mt-3.5" })}>
       <div class={row()}>

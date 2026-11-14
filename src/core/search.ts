@@ -1322,6 +1322,9 @@ export interface SourceInfo {
   crawlProvider: string | null;
   effectiveCrawlProvider: string | null;
   crawl4ai?: import("./docify.ts").Crawl4aiSourceOptions;
+  // Regular expressions over document paths: not collected, and collected but left out of the graph.
+  ignore: string[];
+  graphIgnore: string[];
   state: "ready" | "stale" | "preparing" | "failed" | "not_indexed";
   activeGeneration: null | {
     id: number;
@@ -1355,6 +1358,8 @@ export function sources(docify: Docify): SourceInfo[] {
       crawlProvider: s.kind === "url" ? (JSON.parse(s.options).crawlProvider ?? null) : null,
       effectiveCrawlProvider: s.kind === "url" ? (JSON.parse(s.options).crawlProvider ?? docify.config.crawlProvider) : null,
       crawl4ai: s.kind === "url" ? (JSON.parse(s.options).crawl4ai ?? {}) : undefined,
+      ignore: JSON.parse(s.options).ignore ?? [],
+      graphIgnore: JSON.parse(s.options).graphIgnore ?? [],
       state,
       activeGeneration: active
         ? {
@@ -1406,6 +1411,8 @@ export function renderSources(list: SourceInfo[]): string {
         const nonce = newNonce();
         parts.push(`  Collection summary (untrusted document-derived text; generation ${g?.id}):`, ...framed(s.summary.text, nonce));
       }
+      if (s.ignore.length) parts.push(`  ignored paths: ${s.ignore.join("  ")}`);
+      if (s.graphIgnore.length) parts.push(`  left out of the graph: ${s.graphIgnore.join("  ")}`);
       if (g) parts.push(`  active generation ${g.id}, ${g.stats.passages ?? "?"} passages, graph ${g.graphStatus}, downloaded ${g.downloadedAt}`);
       if (s.latest && s.latest.status !== "active") parts.push(`  latest: ${s.latest.status}${s.latest.phase ? ` (${s.latest.phase} ${s.latest.progress ?? ""})` : ""}${s.latest.error ? ` error: ${s.latest.error}` : ""}`);
       return parts.join("\n");

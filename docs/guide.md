@@ -109,6 +109,23 @@ By default, a crawl collects at most 50 documents (including the index), follows
 
 Set the global page and depth limits under Settings > Web Crawling, or set `maxPages` and `maxDepth` in `config.json`. The allowed ranges are 1 to 100,000 pages and 0 to 1,000 link levels; depth 0 collects only the start page. Each URL source can override either limit on its source page. Leave a field blank to inherit the global setting. Changes apply on the next prepare and do not expand the allowed origin or path scope. The source API accepts a `crawl` object with `maxPages` and `maxDepth`; a PATCH value of `null` removes that field's override.
 
+### Ignore paths
+
+Each source can carry two lists of regular expressions. `ignore` keeps matching documents out of the source: a URL source does not fetch those pages, a local source does not read those files, and neither can be searched. `graphIgnore` keeps matching documents searchable but leaves them out of the semantic graph, which saves LLM time on pages such as changelogs or generated API listings.
+
+```bash
+docify add mylib https://example.com/docs/ --ignore '^changelog/' --ignore '^blog/' --graph-ignore '^api/reference/'
+docify ignore mylib@unknown                              # show both lists
+docify ignore mylib@unknown --ignore '^legal/'           # replace the ignore list
+docify ignore mylib@unknown --no-graph-ignore            # remove the graph list
+```
+
+Patterns are JavaScript regular expressions, case-sensitive and not anchored unless you write `^` or `$`. They are tested against the document path that Docify stores and cites: for a URL source the part of the URL path below the start URL's directory (`https://example.com/docs/changelog/v2.html` registered at `https://example.com/docs/` is `changelog/v2.html`, and the start directory itself is `index.html`), for a local source the path relative to the registered folder. A list holds at most 100 patterns of up to 500 characters; an invalid expression is rejected when it is saved.
+
+Each `--ignore` or `--graph-ignore` option given to `docify ignore` replaces that whole list. The web UI has the same two fields in the New Source sheet and under Ignored paths on every source page, one pattern per line. The source API accepts `ignore` and `graphIgnore` arrays on `POST /api/sources` and `PATCH /api/sources/{id}`; a PATCH value of `null` or `[]` removes a list.
+
+Changes apply on the next prepare and are refused while the source is preparing. A link that redirects to an ignored path is skipped before the target is requested, and a start URL that matches `ignore` fails the prepare. Documents left out by `graphIgnore` do not count as missing from the graph, so they do not make it partial. If every document matches `graphIgnore`, no graph is built.
+
 ### Choose a crawler
 
 URL sources can use `builtin`, `crawl4ai` or `browserless`. Select one when registering a source, or change it later:

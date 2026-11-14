@@ -12,7 +12,7 @@
   import { ago, fraction } from "../lib/format.ts";
   import { nav } from "../lib/nav.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
-  import { button, capsule, capsuleButton, cn, footnote, input, notice, popup, sourceStateLabel, sourceTone } from "../lib/ui.ts";
+  import { button, capsule, capsuleButton, cn, footnote, input, notice, patternLines, popup, sourceStateLabel, sourceTone, textArea } from "../lib/ui.ts";
 
   type Crawl4aiSettings = NonNullable<SourceInfo["crawl4ai"]>;
 
@@ -39,6 +39,9 @@
   let editingLimits = $state(false);
   let maxPages = $state("");
   let maxDepth = $state("");
+  let editingIgnore = $state(false);
+  let ignoreText = $state("");
+  let graphIgnoreText = $state("");
 
   // Page state belongs to one source; start fresh when another one is shown.
   $effect.pre(() => {
@@ -50,6 +53,7 @@
       showAllMissing = false;
       editingCrawl4ai = false;
       editingLimits = false;
+      editingIgnore = false;
     });
   });
 
@@ -122,6 +126,20 @@
     });
   }
 
+  function editIgnore() {
+    ignoreText = (s?.ignore ?? []).join("\n");
+    graphIgnoreText = (s?.graphIgnore ?? []).join("\n");
+    editingIgnore = true;
+  }
+
+  function saveIgnore(event: SubmitEvent) {
+    event.preventDefault();
+    run(async () => {
+      await api(path, { method: "PATCH", body: { ignore: patternLines(ignoreText), graphIgnore: patternLines(graphIgnoreText) } });
+      editingIgnore = false;
+    });
+  }
+
   function editCrawl4ai() {
     stream = crawl4ai.stream === undefined ? "" : String(crawl4ai.stream);
     waitUntil = crawl4ai.waitUntil ?? "";
@@ -172,6 +190,18 @@
 </script>
 
 <svelte:window onclick={closeMenuOutside} onkeydown={(e) => e.key === "Escape" && (menuOpen = false)} />
+
+{#snippet patterns(label: string, list: string[])}
+  <Row {label} class="items-start">
+    {#if list.length}
+      <ul class="flex max-w-[60%] min-w-0 flex-col items-end gap-0.5 pt-px">
+        {#each list as pattern (pattern)}<li class="max-w-full truncate font-mono text-[12px] leading-[18px] text-label2" title={pattern}>{pattern}</li>{/each}
+      </ul>
+    {:else}
+      <span class="text-[13px] text-label2">None</span>
+    {/if}
+  </Row>
+{/snippet}
 
 {#snippet onOff(id: string, label: string, value: string, set: (v: string) => void)}
   <Row {label} for={id} class="pl-9">
@@ -362,6 +392,31 @@
           {/if}
         </Group>
       {/if}
+
+      <Group title="Ignored paths" hint="Regular expressions matched against the document path, such as ^changelog/. Changes apply on the next update.">
+        {#if editingIgnore}
+          <form onsubmit={saveIgnore}>
+            <Row class="flex-col items-stretch gap-1.5">
+              <label for="source-ignore" class="text-[13px] text-label">Do not collect</label>
+              <textarea id="source-ignore" class={textArea()} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-describedby="source-ignore-note" bind:value={ignoreText} disabled={busy || preparing}></textarea>
+              <span id="source-ignore-note" class={footnote}>Matching {s.kind === "url" ? "pages are not fetched" : "files are not read"} and cannot be searched.</span>
+            </Row>
+            <Row class="flex-col items-stretch gap-1.5">
+              <label for="source-graph-ignore" class="text-[13px] text-label">Leave out of the graph</label>
+              <textarea id="source-graph-ignore" class={textArea()} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-describedby="source-graph-ignore-note" bind:value={graphIgnoreText} disabled={busy || preparing}></textarea>
+              <span id="source-graph-ignore-note" class={footnote}>Matching documents stay searchable but get no graph nodes.</span>
+            </Row>
+            <Row class="justify-end">
+              <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingIgnore = false)}>Cancel</button>
+              <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy || preparing}>Save</button>
+            </Row>
+          </form>
+        {:else}
+          {@render patterns("Do not collect", s.ignore)}
+          {@render patterns("Leave out of the graph", s.graphIgnore)}
+          <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy || preparing} onclick={editIgnore}>Edit patterns</button></Row>
+        {/if}
+      </Group>
 
       {#if s.kind === "url"}
         <Group title="Crawl limits" hint="Leave a field blank to use the global setting. Changes apply on the next update.">

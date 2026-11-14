@@ -194,3 +194,14 @@ The mount went back to a default, now absolute: `${DOCIFY_SOURCES_DIR:-/srv/doci
 - `docify add docify /sources/docify` and `prepare docify@unknown --no-graph`: generation 1 activated with 19 documents and 225 passages.
 - `docify search "how are generations activated" --source docify@unknown --max-tokens 300`: status `weak_match`, top hit `CLAUDE.md > Architecture`, lines 36-46.
 - Not verified: a Linux host, where the files must be readable by uid 10001.
+
+## 2026-11-14: per-source ignore patterns
+
+Branch `feat/ignore-paths` on `5d0cd58`, macOS, Bun 1.4.4. The model cache in the default store held only an interrupted download (`onnx/model.onnx.tmp.*`, no `model.onnx`), so the suite ran with `DOCIFY_MODELS_DIR` pointing at a fresh copy of the model. Without it `main` and the branch fail the same 30 tests with `ModelFileNotFoundError`.
+
+- `bun test`: 313 pass, 0 fail in 55 files. `main` with the same model: 304 pass, 0 fail in 54 files. `bun run typecheck`: exit 0.
+- `tests/ignore-paths.test.ts` against a local server that records every request: with `ignore: ["^changelog/"]` no `/docs/changelog/` path was requested, including the target of a 301 from `moved.html`. The first version checked the pattern after the redirect was followed and did fetch that page; the test caught it.
+- Same file: `graphIgnore` documents were not passed to the graph runner, got no nodes, were found by lexical search, and the generation had `graph_status = ok` with an empty `graphMissing`. A second prepare was `unchanged`; changing or removing the list activated a new generation. A list matching every document gave `graph_status = skipped` and the runner was not called.
+- Each guard was switched off in turn (link filter, redirect check, local file filter, start URL check, runner input, `importGraph` input, the unchanged comparison, the skip when every document matches, PATCH validation). All nine made a test fail; the sources were restored and compared by SHA-256.
+- Web UI in Chromium through `docify serve` on a scratch store: the source page showed both lists, saving `(` showed `invalid_input: graphIgnore: Invalid regular expression: missing )` and left the stored lists as they were, a valid edit was stored, a local source has the same group, and New Source stored both lists. In a 720 px high window the sheet body scrolled (690 px of content in 552 px) and Add Source stayed visible.
+- Not verified: a prepare against a real website or a real Graphify run with these lists (tests use a local server and `fakeGraph`), the Crawl4AI and Browserless collectors (they share `crawl()`, but no test ran them with `ignore`), and the macOS app.
