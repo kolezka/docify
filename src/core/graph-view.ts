@@ -33,6 +33,8 @@ export interface GraphView {
     edges: number;
     grounded: number;
     missingDocuments: string[];
+    // Documents kept out of the graph by the source's graphIgnore patterns; they are not missing.
+    ignoredDocuments: number;
     model: string | null;
     graphMs: number | null;
     costEstimate: string | null;
@@ -61,6 +63,7 @@ export function graphView(docify: Docify, sourceId: string): GraphView {
         edges: 0,
         grounded: 0,
         missingDocuments: Array.isArray(stats.graphMissing) ? (stats.graphMissing as string[]) : [],
+        ignoredDocuments: typeof stats.graphIgnored === "number" ? stats.graphIgnored : 0,
         model: typeof stats.graphModel === "string" ? stats.graphModel : null,
         graphMs: typeof stats.graphMs === "number" ? stats.graphMs : null,
         costEstimate: typeof stats.graphCostEstimate === "string" ? stats.graphCostEstimate : null,

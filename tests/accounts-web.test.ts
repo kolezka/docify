@@ -174,6 +174,8 @@ test("a member can search and read, and cannot manage sources, settings, backups
   const refused: [string, string, unknown?][] = [
     ["/api/sources", "POST", { library: "x", locator: "/tmp" }],
     ["/api/sources/x@1", "PATCH", { crawlProvider: null }],
+    ["/api/sources/x@1", "PATCH", { ignore: ["^changelog/"] }],
+    ["/api/sources/x@1/summary", "POST", {}],
     ["/api/sources/x@1", "DELETE", {}],
     ["/api/sources/x@1/prepare", "POST", {}],
     ["/api/sources/x@1/cancel", "POST", {}],

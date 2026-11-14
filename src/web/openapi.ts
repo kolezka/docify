@@ -11,11 +11,13 @@ const ERROR_TEXT: Record<number, string> = {
   404: "Unknown source, passage or user",
   409: "Busy, already exists, nothing running, or a change the account rules refuse",
   415: "JSON body required (raw bytes for /api/import)",
+  502: "The summary provider failed or returned an unusable summary",
   503: "A store import is running",
   500: "Internal error",
 };
 const ok = (description: string, schema: object = { type: "object" }) => ({ description, content: { "application/json": { schema } } });
 const jsonBody = (schema: object, required = true) => ({ required, content: { "application/json": { schema } } });
+const patternList = { type: "array", maxItems: 100, items: { type: "string", minLength: 1, maxLength: 500 } };
 const idParam = (description: string) => ({ name: "id", in: "path", required: true, description, schema: { type: "string" } });
 
 export function openApiSpec() {
@@ -122,7 +124,7 @@ export function openApiSpec() {
         },
       },
       "/api/sources": {
-        get: { summary: "List sources", description: "Each source includes crawlProvider (null when inherited) and effectiveCrawlProvider.", responses: { "200": ok("Sources with their generations and status"), ...errors(401) } },
+        get: { summary: "List sources", description: "Each source includes crawlProvider (null when inherited), effectiveCrawlProvider and its ignore and graphIgnore pattern lists.", responses: { "200": ok("Sources with their generations and status"), ...errors(401) } },
         post: {
           summary: "Add a source",
           description: "Local paths must be inside `DOCIFY_SOURCE_ROOTS` (default: the home directory).",
@@ -135,6 +137,8 @@ export function openApiSpec() {
               locator: { type: "string", description: "Directory path or start URL" },
               version: { type: ["string", "null"] },
               crawlProvider: { type: "string", enum: ["builtin", "crawl4ai", "browserless"], description: "URL sources only; omit to inherit the global crawler" },
+              ignore: { ...patternList, description: "Regular expressions over the document path inside the source. Matching files or pages are not collected." },
+              graphIgnore: { ...patternList, description: "Regular expressions over the document path. Matching documents stay searchable but are left out of the graph." },
             },
           }),
           responses: { "201": ok("The new source"), ...errors(400, 401, 403, 409, 415) },
@@ -142,7 +146,8 @@ export function openApiSpec() {
       },
       "/api/sources/{id}": {
         patch: {
-          summary: "Change a URL source crawler",
+          summary: "Change a source's crawler or ignore patterns",
+          description: "Crawler settings apply to URL sources only; ignore patterns apply to every source. Changes take effect at the next prepare.",
           parameters: [idParam("Source id")],
           requestBody: jsonBody({ type: "object", properties: {
             crawlProvider: { type: ["string", "null"], enum: ["builtin", "crawl4ai", "browserless", null], description: "null inherits the global crawler" },
@@ -150,8 +155,10 @@ export function openApiSpec() {
               stream: { type: "boolean" }, waitUntil: { type: "string", enum: ["load", "domcontentloaded", "networkidle", "commit"] },
               waitFor: { type: "string", maxLength: 1000 }, delayBeforeReturnHtml: { type: "number", minimum: 0, maximum: 60 }, scanFullPage: { type: "boolean" }, captureScreenshot: { type: "boolean" }, capturePdf: { type: "boolean" },
             } },
+            ignore: { ...patternList, type: ["array", "null"], description: "Replaces the list of paths that are not collected; null or an empty list removes it" },
+            graphIgnore: { ...patternList, type: ["array", "null"], description: "Replaces the list of paths left out of the graph; null or an empty list removes it" },
           } }),
-          responses: { "200": ok("Crawler updated"), ...errors(400, 401, 404, 409, 415) },
+          responses: { "200": ok("Source updated"), ...errors(400, 401, 404, 409, 415) },
         },
         delete: {
           summary: "Remove a source",
@@ -178,9 +185,18 @@ export function openApiSpec() {
         get: {
           summary: "Graph of the active generation",
           description:
-            "Nodes with their page and best grounding passage, one edge per connected node pair (indexes into `nodes`), and hyperedge groups. `nodes` is empty when the source is not prepared or was prepared without a graph; `graphStatus` says which.",
+            "Nodes with their page and best grounding passage, one edge per connected node pair (indexes into `nodes`), and hyperedge groups. `nodes` is empty when the source is not prepared or was prepared without a graph; `graphStatus` says which. `stats.ignoredDocuments` counts the documents the source's graphIgnore patterns kept out; they are not in `stats.missingDocuments`.",
           parameters: [idParam("Source id")],
           responses: { "200": ok("Graph view"), ...errors(401, 404) },
+        },
+      },
+      "/api/sources/{id}/summary": {
+        post: {
+          summary: "Generate a collection summary",
+          description: "Explicit provider call using the configured OpenAI-compatible graph provider. Returns the saved generation-bound summary, reusing it unless force is true. Reads never generate summaries. Cancel via the source cancel endpoint.",
+          parameters: [idParam("Source id")],
+          requestBody: jsonBody({ type: "object", additionalProperties: false, properties: { force: { type: "boolean", default: false } } }),
+          responses: { "200": ok("Saved summary"), ...errors(400, 401, 404, 409, 415, 502) },
         },
       },
       "/api/sources/{id}/prepare": {
@@ -200,7 +216,7 @@ export function openApiSpec() {
       },
       "/api/sources/{id}/cancel": {
         post: {
-          summary: "Cancel a running preparation",
+          summary: "Cancel a running preparation or summary",
           parameters: [idParam("Source id")],
           requestBody: jsonBody({ type: "object" }, false),
           responses: { "200": ok("Cancelled", { type: "object", properties: { cancelled: { type: "boolean" } } }), ...errors(401, 409, 415) },
