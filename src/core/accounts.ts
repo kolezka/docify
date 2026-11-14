@@ -14,6 +14,9 @@ export const MAX_SESSIONS_PER_USER = 10;
 export const MCP_KEY_PREFIX = "dcf_";
 export const MAX_KEYS_PER_USER = 10;
 export const MAX_QUERIES_PER_USER = 200;
+// Each organization on the access list costs one GitHub request per sign-in.
+export const MAX_ORG_RULES = 10;
+export const MAX_ACCESS_RULES = 500;
 const QUERY_MAX_CHARS = 500;
 const KEY_NAME_MAX_CHARS = 60;
 // last_used_at is for people, not for audit: one write a minute per key is enough.
@@ -32,6 +35,24 @@ export interface UserRow {
   created_at: string;
   approved_at: string | null;
   last_login_at: string | null;
+  // The access rule that let this person in; null when an administrator approved them by hand.
+  rule_id: number | null;
+}
+
+export type RuleKind = "org" | "login" | "email";
+// What happens to someone no rule names: they wait for approval, or they get no account at all.
+export type Outsiders = "pending" | "refuse";
+
+export interface AccessRule {
+  id: number;
+  kind: RuleKind;
+  value: string;
+  created_at: string;
+  created_by: string | null;
+  // How many accounts this rule let in.
+  people: number;
+  // A login rule is tied to the first GitHub account that used it.
+  bound: boolean;
 }
 
 // A key as its owner sees it. The key itself is shown once, when it is made.
@@ -67,6 +88,12 @@ export interface GitHubIdentity {
   id: number;
   login: string;
   name: string | null;
+  // Asked from GitHub only when a rule needs them, used for this sign-in and not stored.
+  orgs?: string[];
+  emails?: string[];
+  // What GitHub gave no answer about. Someone a rule already let in keeps their place then.
+  unknownOrgs?: string[];
+  emailsUnknown?: boolean;
 }
 
 export interface AdminList {
@@ -75,6 +102,8 @@ export interface AdminList {
 }
 
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const RULE_KINDS: Record<RuleKind, string> = { org: "GitHub organization", login: "GitHub login", email: "email address" };
 
 // "alice, bob, id:583231". A login is easy to type, but GitHub frees it on a rename, so the
 // store ties each named login to the first GitHub id that signs in with it (named_logins).
@@ -102,7 +131,19 @@ CREATE TABLE IF NOT EXISTS users (
   approved_at TEXT,
   last_login_at TEXT,
   -- 1 while the admin role comes from DOCIFY_ADMINS, so leaving the variable takes it away.
-  by_env INTEGER NOT NULL DEFAULT 0
+  by_env INTEGER NOT NULL DEFAULT 0,
+  rule_id INTEGER
+);
+-- Who gets in without waiting: members of a GitHub organization, a GitHub login, a verified email address.
+CREATE TABLE IF NOT EXISTS access_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK (kind IN ('org', 'login', 'email')),
+  value TEXT NOT NULL,
+  -- For a login: the GitHub account it means, set by the first sign-in with it.
+  github_id INTEGER,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  UNIQUE (kind, value)
 );
 -- Which GitHub account a login in DOCIFY_ADMINS means: the first one that signed in with it.
 CREATE TABLE IF NOT EXISTS named_logins (login TEXT PRIMARY KEY, github_id INTEGER NOT NULL);
@@ -146,7 +187,10 @@ export interface UserPatch {
   status?: "active" | "disabled";
 }
 
-const USER_COLUMNS = "id, github_id, login, name, role, status, created_at, approved_at, last_login_at";
+const USER_COLUMNS = "id, github_id, login, name, role, status, created_at, approved_at, last_login_at, rule_id";
+const RULE_COLUMNS =
+  "r.id, r.kind, r.value, r.created_at, r.created_by, (SELECT COUNT(*) FROM users u WHERE u.rule_id = r.id) AS people, r.github_id IS NOT NULL AS bound";
+type RuleRecord = Omit<AccessRule, "bound"> & { bound: number };
 const KEY_COLUMNS = "id, name, prefix, created_at, last_used_at";
 
 export class AccountStore {
@@ -177,6 +221,7 @@ export class AccountStore {
     // A file made before by_env existed keeps its old users table; CREATE TABLE IF NOT EXISTS skips it.
     const columns = this.db.query<{ name: string }, []>("PRAGMA table_info(users)").all();
     if (!columns.some((column) => column.name === "by_env")) this.db.run("ALTER TABLE users ADD COLUMN by_env INTEGER NOT NULL DEFAULT 0");
+    if (!columns.some((column) => column.name === "rule_id")) this.db.run("ALTER TABLE users ADD COLUMN rule_id INTEGER");
     for (const suffix of ["-wal", "-shm"]) if (existsSync(file + suffix)) chmodSync(file + suffix, 0o600);
     this.db.run("DELETE FROM sessions WHERE expires_at <= ?", [this.iso()]);
     this.reconcile();
@@ -224,10 +269,44 @@ export class AccountStore {
     return this.db.query<UserRow, []>(`SELECT ${USER_COLUMNS} FROM users ORDER BY status = 'pending' DESC, login COLLATE NOCASE`).all();
   }
 
-  // First sign-in creates the account. It waits as pending unless DOCIFY_ADMINS names it.
+  // The first rule on the access list that names this person. A login rule is tied to the first
+  // GitHub account that signs in with it, because GitHub hands a freed login to whoever asks.
+  private matchRule(profile: GitHubIdentity): AccessRule | null {
+    const login = profile.login.toLowerCase();
+    const orgs = new Set((profile.orgs ?? []).map((org) => org.toLowerCase()));
+    const emails = new Set((profile.emails ?? []).map((email) => email.toLowerCase()));
+    const rules = this.db.query<AccessRule & { github_id: number | null }, []>("SELECT id, kind, value, github_id, created_at, created_by FROM access_rules ORDER BY id").all();
+    for (const rule of rules) {
+      let matches = false;
+      if (rule.kind === "org") matches = orgs.has(rule.value);
+      else if (rule.kind === "email") matches = emails.has(rule.value);
+      else if (rule.github_id === profile.id) matches = true;
+      else if (rule.github_id === null && rule.value === login) {
+        this.db.run("UPDATE access_rules SET github_id = ? WHERE id = ?", [profile.id, rule.id]);
+        matches = true;
+      }
+      if (matches) return this.getRule(rule.id);
+    }
+    return null;
+  }
+
+  // Back to waiting: no session, no keys, no administrator role.
+  private suspend(userId: number) {
+    this.db.run("UPDATE users SET status = 'pending', role = 'member', by_env = 0, rule_id = NULL WHERE id = ?", [userId]);
+    this.db.run("DELETE FROM sessions WHERE user_id = ?", [userId]);
+    this.db.run("DELETE FROM mcp_keys WHERE user_id = ?", [userId]);
+  }
+
+  // First sign-in creates the account. DOCIFY_ADMINS makes it an administrator, a rule on the access
+  // list lets it in as a member, and otherwise it waits as pending or, with outsiders refused, is not made.
   // A disabled account gets no session. `previous` is the session the browser already had; it ends.
   // `loginTaken` reports a named login that already belongs to another GitHub account.
-  signIn(profile: GitHubIdentity, previous?: string | null): { user: UserRow; session: string | null; created: boolean; loginTaken: boolean } {
+  // `admitted` is the rule that let the person in at this sign-in; `suspended` says a rule let them
+  // in before and none does now, so they wait again.
+  signIn(
+    profile: GitHubIdentity,
+    previous?: string | null,
+  ): { user: UserRow; session: string | null; created: boolean; loginTaken: boolean; admitted: AccessRule | null; suspended: boolean } {
     const now = this.iso();
     const login = profile.login.toLowerCase();
     return this.db.transaction(() => {
@@ -239,26 +318,117 @@ export class AccountStore {
       }
       const named = this.isNamedAdmin({ github_id: profile.id });
       const byGitHub = () => this.db.query<UserRow, [number]>(`SELECT ${USER_COLUMNS} FROM users WHERE github_id = ?`).get(profile.id);
-      const created = !byGitHub();
-      if (created) {
+      const before = byGitHub();
+      const created = !before;
+      const rule = named ? null : this.matchRule(profile);
+      let admitted: AccessRule | null = null;
+      let suspended = false;
+      if (!before) {
+        if (!named && !rule && this.outsiders === "refuse") throw new DocifyError("not_invited", `${profile.login} is not on the access list of this server`);
+        const open = named || !!rule;
         this.db.run(
-          "INSERT INTO users (github_id, login, name, role, status, created_at, approved_at, last_login_at, by_env) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [profile.id, profile.login, profile.name, named ? "admin" : "member", named ? "active" : "pending", now, named ? now : null, now, named ? 1 : 0],
+          "INSERT INTO users (github_id, login, name, role, status, created_at, approved_at, last_login_at, by_env, rule_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [profile.id, profile.login, profile.name, named ? "admin" : "member", open ? "active" : "pending", now, open ? now : null, now, named ? 1 : 0, rule?.id ?? null],
         );
+        admitted = rule;
       } else {
         this.db.run("UPDATE users SET login = ?, name = ?, last_login_at = ? WHERE github_id = ?", [profile.login, profile.name, now, profile.id]);
-        if (named) this.db.run("UPDATE users SET role = 'admin', status = 'active', by_env = 1, approved_at = COALESCE(approved_at, ?) WHERE github_id = ?", [now, profile.id]);
+        if (named) {
+          this.db.run("UPDATE users SET role = 'admin', status = 'active', by_env = 1, approved_at = COALESCE(approved_at, ?) WHERE github_id = ?", [now, profile.id]);
+        } else if (before.status === "pending" && rule) {
+          this.db.run("UPDATE users SET status = 'active', approved_at = COALESCE(approved_at, ?), rule_id = ? WHERE id = ?", [now, rule.id, before.id]);
+          admitted = rule;
+        } else if (before.status === "active" && before.rule_id !== null) {
+          // Let in by a rule: it has to hold at every sign-in, so leaving the organization ends access.
+          const held = this.getRule(before.rule_id);
+          const unanswered = (held?.kind === "org" && !!profile.unknownOrgs?.includes(held.value)) || (held?.kind === "email" && !!profile.emailsUnknown);
+          if (rule) this.db.run("UPDATE users SET rule_id = ? WHERE id = ?", [rule.id, before.id]);
+          else if (!unanswered) {
+            this.suspend(before.id);
+            suspended = true;
+          }
+        }
       }
       this.db.run("DELETE FROM sessions WHERE expires_at <= ?", [now]);
       if (previous) this.db.run("DELETE FROM sessions WHERE token_hash = ?", [hashToken(previous)]);
       const user = byGitHub()!;
-      if (user.status === "disabled") return { user, session: null, created, loginTaken };
+      if (user.status === "disabled") return { user, session: null, created, loginTaken, admitted, suspended };
       const session = randomBytes(32).toString("base64url");
       // Only the hash is stored, so a copy of this file holds no usable session.
       this.db.run("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)", [hashToken(session), user.id, now, this.iso(SESSION_TTL_MS)]);
       // Sign-ins cannot pile sessions up without limit; the oldest go first.
       this.db.run("DELETE FROM sessions WHERE user_id = ? AND rowid NOT IN (SELECT rowid FROM sessions WHERE user_id = ? ORDER BY rowid DESC LIMIT ?)", [user.id, user.id, MAX_SESSIONS_PER_USER]);
-      return { user, session, created, loginTaken };
+      return { user, session, created, loginTaken, admitted, suspended };
+    })();
+  }
+
+  get outsiders(): Outsiders {
+    return this.db.query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'outsiders'").get()?.value === "refuse" ? "refuse" : "pending";
+  }
+
+  setOutsiders(value: unknown): Outsiders {
+    if (value !== "pending" && value !== "refuse") throw new DocifyError("invalid_input", "outsiders must be pending or refuse", "outsiders");
+    this.db.run("INSERT INTO meta (key, value) VALUES ('outsiders', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [value]);
+    return value;
+  }
+
+  getRule(id: number): AccessRule | null {
+    const row = this.db.query<RuleRecord, [number]>(`SELECT ${RULE_COLUMNS} FROM access_rules r WHERE r.id = ?`).get(id);
+    return row && { ...row, bound: !!row.bound };
+  }
+
+  listRules(): AccessRule[] {
+    return this.db
+      .query<RuleRecord, []>(`SELECT ${RULE_COLUMNS} FROM access_rules r ORDER BY r.id`)
+      .all()
+      .map((row) => ({ ...row, bound: !!row.bound }));
+  }
+
+  // What a sign-in has to ask GitHub for, beyond the public profile.
+  accessNeeds(): { orgs: string[]; emails: boolean } {
+    const rules = this.db.query<{ kind: RuleKind; value: string }, []>("SELECT kind, value FROM access_rules WHERE kind IN ('org', 'email') ORDER BY id").all();
+    return { orgs: rules.filter((rule) => rule.kind === "org").map((rule) => rule.value), emails: rules.some((rule) => rule.kind === "email") };
+  }
+
+  // Values are kept in lower case: GitHub logins, organization names and the addresses we compare are case-insensitive.
+  addRule(kind: unknown, value: unknown, createdBy: string | null): AccessRule {
+    if (kind !== "org" && kind !== "login" && kind !== "email") throw new DocifyError("invalid_input", "kind must be org, login or email", "kind");
+    const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+    const valid = kind === "email" ? text.length <= 254 && EMAIL_RE.test(text) : LOGIN_RE.test(text);
+    if (!valid) {
+      const example = kind === "email" ? "an address such as name@example.com" : `a ${RULE_KINDS[kind]} such as ${kind === "org" ? "acme" : "octocat"}: letters, digits and hyphens`;
+      throw new DocifyError("invalid_input", `enter ${example}`, "value");
+    }
+    return this.db.transaction(() => {
+      const rules = this.listRules();
+      if (rules.some((rule) => rule.kind === kind && rule.value === text)) throw new DocifyError("exists", `the access list already has ${text}`, "value");
+      if (rules.length >= MAX_ACCESS_RULES) throw new DocifyError("conflict", `the access list holds at most ${MAX_ACCESS_RULES} entries`);
+      if (kind === "org" && rules.filter((rule) => rule.kind === "org").length >= MAX_ORG_RULES) {
+        throw new DocifyError("conflict", `the access list holds at most ${MAX_ORG_RULES} organizations`);
+      }
+      const { lastInsertRowid } = this.db.run("INSERT INTO access_rules (kind, value, created_at, created_by) VALUES (?, ?, ?, ?)", [kind, text, this.iso(), createdBy]);
+      return this.getRule(Number(lastInsertRowid))!;
+    })();
+  }
+
+  // The people this rule let in wait again and lose their sessions and keys. At their next sign-in
+  // another rule may let them back in. Accounts approved by hand and named administrators stay.
+  removeRule(id: number, actorId: number | null): { rule: AccessRule; suspended: string[] } {
+    return this.db.transaction(() => {
+      const rule = this.getRule(id);
+      if (!rule) throw new DocifyError("rule_unknown", "unknown access rule");
+      const actor = actorId === null ? null : this.getUser(actorId);
+      if (actor?.rule_id === id && !this.isNamedAdmin(actor)) throw new DocifyError("conflict", "this entry lets you in; another administrator has to remove it");
+      const suspended: string[] = [];
+      for (const user of this.db.query<UserRow, [number]>(`SELECT ${USER_COLUMNS} FROM users WHERE rule_id = ?`).all(id)) {
+        if (this.isNamedAdmin(user)) this.db.run("UPDATE users SET rule_id = NULL WHERE id = ?", [user.id]);
+        else {
+          this.suspend(user.id);
+          suspended.push(user.login);
+        }
+      }
+      this.db.run("DELETE FROM access_rules WHERE id = ?", [id]);
+      return { rule, suspended };
     })();
   }
 

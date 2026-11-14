@@ -8,7 +8,7 @@ const ERROR_TEXT: Record<number, string> = {
   400: "Invalid input",
   401: "Missing or wrong access token, or not signed in",
   403: "Forbidden host, origin or path; with accounts, an account that is not approved or not an administrator",
-  404: "Unknown source, passage, user or key",
+  404: "Unknown source, passage, user, key or access-list entry",
   409: "Busy, already exists, nothing running, or a change the account rules refuse",
   415: "JSON body required (raw bytes for /api/import)",
   502: "The summary provider failed or returned an unusable summary",
@@ -27,7 +27,7 @@ export function openApiSpec() {
       title: "Docify web API",
       version: "1",
       description:
-        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. When GitHub sign-in is on (`DOCIFY_GITHUB_CLIENT_ID`), the token is not used: calls carry the `docify_session` cookie set by `/auth/github` (named `__Host-docify_session` when the public address is https), members may search, read, list and manage their own MCP keys and search history under `/api/me`, and everything else needs an administrator. A request a browser marks as cross-site is refused. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
+        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. When GitHub sign-in is on (`DOCIFY_GITHUB_CLIENT_ID`), the token is not used: calls carry the `docify_session` cookie set by `/auth/github` (named `__Host-docify_session` when the public address is https), members may search, read, list and manage their own MCP keys and search history under `/api/me`, and everything else needs an administrator. Administrators keep an access list under `/api/access`: GitHub organizations, logins and email addresses whose owners get in at sign-in without waiting. A request a browser marks as cross-site is refused. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
     },
     servers: [{ url: "/" }],
     security: [{ docifyToken: [] }, { docifySession: [] }],
@@ -50,6 +50,23 @@ export function openApiSpec() {
             lastLoginAt: { type: ["string", "null"] },
             named: { type: "boolean", description: "Named in DOCIFY_ADMINS; cannot be demoted, disabled or removed here" },
             self: { type: "boolean", description: "The account making the call" },
+            rule: {
+              type: ["object", "null"],
+              description: "The access-list entry that let this person in; null when an administrator approved them",
+              properties: { kind: { type: "string", enum: ["org", "login", "email"] }, value: { type: "string" } },
+            },
+          },
+        },
+        AccessRule: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            kind: { type: "string", enum: ["org", "login", "email"], description: "A GitHub organization, a GitHub login, or an email address verified at GitHub" },
+            value: { type: "string", description: "Stored in lower case" },
+            createdAt: { type: "string" },
+            createdBy: { type: ["string", "null"], description: "Login of the administrator who added it" },
+            people: { type: "integer", description: "Accounts this entry let in" },
+            bound: { type: "boolean", description: "For a login entry: a GitHub account has signed in with it, and the entry now belongs to that account" },
           },
         },
         Key: {
@@ -94,7 +111,7 @@ export function openApiSpec() {
       "/api/session": {
         get: {
           summary: "Who is signed in",
-          description: "Needs no token or session. `accounts` says whether GitHub sign-in is on; `user` is null when nobody is signed in.",
+          description: "Needs no token or session. `accounts` says whether GitHub sign-in is on; `user` is null when nobody is signed in. With accounts on, `asks` says what sign-in will ask GitHub for beyond the public profile, which depends on the access list.",
           security: [],
           responses: {
             "200": ok("Session", {
@@ -102,6 +119,7 @@ export function openApiSpec() {
               properties: {
                 accounts: { type: "boolean" },
                 user: { type: ["object", "null"], properties: { id: { type: "integer" }, login: { type: "string" }, name: { type: ["string", "null"] }, role: { type: "string", enum: ["admin", "member"] }, status: { type: "string", enum: ["pending", "active", "disabled"] } } },
+                asks: { type: "object", properties: { orgs: { type: "boolean" }, emails: { type: "boolean" } } },
               },
             }),
             ...errors(403),
@@ -164,9 +182,49 @@ export function openApiSpec() {
         },
         delete: {
           summary: "Remove an account",
-          description: "Administrators only. The person can sign up again and then waits for approval.",
+          description: "Administrators only. If the person signs in again, the access list decides whether they get in, wait or are refused.",
           parameters: [idParam("Account id")],
           responses: { "200": ok("Removed", { type: "object", properties: { ok: { type: "boolean" } } }), ...errors(401, 403, 404, 409) },
+        },
+      },
+      "/api/access": {
+        get: {
+          summary: "The access list",
+          description: "Administrators only. `rules` are the entries; `outsiders` says what happens to a person who matches none: `pending` (waits for approval) or `refuse` (gets no account). 404 when GitHub sign-in is off.",
+          responses: {
+            "200": ok("Access list", {
+              type: "object",
+              properties: {
+                outsiders: { type: "string", enum: ["pending", "refuse"] },
+                rules: { type: "array", items: { $ref: "#/components/schemas/AccessRule" } },
+                maxOrgs: { type: "integer" },
+                maxRules: { type: "integer" },
+              },
+            }),
+            ...errors(401, 403, 404),
+          },
+        },
+        put: {
+          summary: "Set what happens to people outside the access list",
+          description: "Administrators only. Accounts that already exist are not changed.",
+          requestBody: jsonBody({ type: "object", required: ["outsiders"], properties: { outsiders: { type: "string", enum: ["pending", "refuse"] } } }),
+          responses: { "200": ok("The setting", { type: "object", properties: { outsiders: { type: "string", enum: ["pending", "refuse"] } } }), ...errors(400, 401, 403, 404, 415) },
+        },
+      },
+      "/api/access/rules": {
+        post: {
+          summary: "Add an entry to the access list",
+          description: "Administrators only. A person who matches gets in as a member at their next sign-in. An organization or email entry makes sign-in ask GitHub for the `read:org` or `user:email` scope. A refused value is reported with `field: value`.",
+          requestBody: jsonBody({ type: "object", required: ["kind", "value"], properties: { kind: { type: "string", enum: ["org", "login", "email"] }, value: { type: "string", maxLength: 254 } } }),
+          responses: { "201": ok("The new entry", { $ref: "#/components/schemas/AccessRule" }), ...errors(400, 401, 403, 404, 409, 415) },
+        },
+      },
+      "/api/access/rules/{id}": {
+        delete: {
+          summary: "Remove an entry from the access list",
+          description: "Administrators only. The people it let in are signed out, lose their MCP keys and wait for approval; `suspended` lists their logins. Accounts approved by hand stay. An entry that lets the caller in is refused with 409.",
+          parameters: [idParam("Entry id")],
+          responses: { "200": ok("Removed", { type: "object", properties: { ok: { type: "boolean" }, suspended: { type: "array", items: { type: "string" } } } }), ...errors(401, 403, 404, 409) },
         },
       },
       "/api/logs": {

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { ACCOUNTS_FILE, AccountStore, SESSION_TTL_MS, parseAdmins } from "../src/core/accounts.ts";
+import { ACCOUNTS_FILE, AccountStore, MAX_ORG_RULES, SESSION_TTL_MS, parseAdmins } from "../src/core/accounts.ts";
 import { exportStore, importStore } from "../src/core/backup.ts";
 import { newDocify, tempDir } from "./helpers.ts";
 
@@ -337,4 +337,142 @@ test("queries are kept per person, newest first, and the oldest fall off", () =>
   store.removeUser(b.id, a.id);
   const again = store.signIn({ id: 7, login: "other", name: null }).user;
   expect(store.listQueries(again.id)).toEqual([]);
+});
+
+// The access list: an administrator says who gets in without waiting, and what happens to everyone else.
+const carol = { id: 303, login: "carol", name: null };
+const erin = { id: 505, login: "erin", name: null };
+
+test("the access list lets a person in at sign-in: by organization, by login, by verified email", () => {
+  const { store } = open();
+  expect(store.accessNeeds()).toEqual({ orgs: [], emails: false });
+  expect(store.addRule("org", "Acme", "boss")).toMatchObject({ kind: "org", value: "acme", created_by: "boss", people: 0, bound: false });
+  store.addRule("login", "Alice", "boss");
+  store.addRule("email", "Dave@Example.com", "boss");
+  expect(store.accessNeeds()).toEqual({ orgs: ["acme"], emails: true });
+
+  const first = store.signIn({ ...carol, orgs: ["Acme"] });
+  expect(first.user).toMatchObject({ role: "member", status: "active" });
+  expect(first.user.approved_at).not.toBeNull();
+  expect(first.admitted).toMatchObject({ kind: "org", value: "acme" });
+  expect(store.signIn(alice).user.status).toBe("active");
+  expect(store.signIn({ id: 404, login: "dave", name: null, emails: ["dave@example.com"] }).user.status).toBe("active");
+  // Nothing matches: the person waits, as before.
+  const stranger = store.signIn({ ...erin, orgs: ["other"], emails: ["erin@example.com"] });
+  expect(stranger.user.status).toBe("pending");
+  expect(stranger.admitted).toBeNull();
+  expect(store.listRules().map((r) => [r.kind, r.value, r.people])).toEqual([["org", "acme", 1], ["login", "alice", 1], ["email", "dave@example.com", 1]]);
+  // An account that was already waiting gets in at its next sign-in once a rule names it.
+  store.addRule("login", "erin", "boss");
+  expect(store.signIn(erin).user.status).toBe("active");
+});
+
+test("a login on the access list belongs to the first GitHub account that used it", () => {
+  const { store } = open();
+  store.addRule("login", "alice", "boss");
+  expect(store.signIn(alice).user.status).toBe("active");
+  expect(store.listRules()[0]!.bound).toBe(true);
+  // GitHub frees a login on a rename; whoever takes it over is a stranger.
+  expect(store.signIn({ id: 999, login: "alice", name: null }).user.status).toBe("pending");
+  // The first account keeps its place under its new login.
+  expect(store.signIn({ ...alice, login: "alicia" }).user).toMatchObject({ login: "alicia", status: "active" });
+});
+
+test("a rule needs a valid value, is not added twice, and organizations are capped", () => {
+  const { store } = open();
+  const bad: [unknown, unknown][] = [["team", "x"], ["org", ""], ["org", "not valid!"], ["login", "a b"], ["email", "nobody"], ["email", "a@b"], ["email", 5], ["org", null]];
+  for (const [kind, value] of bad) expect(() => store.addRule(kind, value, null)).toThrow();
+  store.addRule("email", " Someone@Example.com ", null);
+  expect(() => store.addRule("email", "someone@example.com", null)).toThrow("already");
+  for (let i = 0; i < MAX_ORG_RULES; i++) store.addRule("org", `org-${i}`, null);
+  expect(() => store.addRule("org", "one-more", null)).toThrow("at most");
+  expect(() => store.removeRule(9999, null)).toThrow("unknown");
+});
+
+test("removing a rule suspends the people it let in; people approved by hand stay", () => {
+  const { store } = open();
+  const admin = store.signIn(boss).user;
+  const rule = store.addRule("org", "acme", "boss");
+  const member = store.signIn({ ...carol, orgs: ["acme"] });
+  const { token } = store.createKey(member.user.id, "laptop");
+  const byHand = store.signIn(alice).user;
+  store.updateUser(byHand.id, { status: "active" }, admin.id);
+  // Someone the rule let in, later made an administrator, cannot pull it out from under themselves.
+  store.updateUser(member.user.id, { role: "admin" }, admin.id);
+  expect(() => store.removeRule(rule.id, member.user.id)).toThrow("lets you in");
+
+  expect(store.removeRule(rule.id, admin.id).suspended).toEqual(["carol"]);
+  expect(store.getUser(member.user.id)).toMatchObject({ status: "pending", role: "member", rule_id: null });
+  expect(store.userForSession(member.session)).toBeNull();
+  expect(store.userForKey(token)).toBeNull();
+  expect(store.listKeys(member.user.id)).toEqual([]);
+  expect(store.getUser(byHand.id)!.status).toBe("active");
+  expect(store.listRules()).toEqual([]);
+});
+
+test("a person let in by a rule who no longer matches waits again at the next sign-in", () => {
+  const { store } = open();
+  store.addRule("org", "acme", "boss");
+  const first = store.signIn({ ...carol, orgs: ["acme"] });
+  const { token } = store.createKey(first.user.id, "laptop");
+  // She left the organization.
+  const later = store.signIn({ ...carol, orgs: [] });
+  expect(later.user.status).toBe("pending");
+  expect(later.suspended).toBe(true);
+  expect(store.userForSession(first.session)).toBeNull();
+  expect(store.userForKey(token)).toBeNull();
+  expect(store.signIn({ ...carol, orgs: ["acme"] }).user.status).toBe("active");
+});
+
+test("a disabled account stays disabled even when a rule matches", () => {
+  const { store } = open();
+  const admin = store.signIn(boss).user;
+  store.addRule("login", "alice", "boss");
+  const user = store.signIn(alice).user;
+  store.updateUser(user.id, { status: "disabled" }, admin.id);
+  const again = store.signIn(alice);
+  expect(again.user.status).toBe("disabled");
+  expect(again.session).toBeNull();
+});
+
+test("with outsiders refused a stranger gets no account; the list, administrators and existing accounts still work", () => {
+  const { store, home } = open();
+  const waiting = store.signIn(alice).user;
+  expect(store.outsiders).toBe("pending");
+  expect(store.setOutsiders("refuse")).toBe("refuse");
+  expect(() => store.setOutsiders("maybe")).toThrow();
+  let code = "";
+  try {
+    store.signIn(erin);
+  } catch (err) {
+    code = (err as { code?: string }).code ?? "";
+  }
+  expect(code).toBe("not_invited");
+  expect(store.listUsers().map((u) => u.login)).toEqual(["alice"]);
+  expect(store.signIn(boss).user.role).toBe("admin");
+  expect(store.signIn(alice).user).toMatchObject({ id: waiting.id, status: "pending" });
+  store.addRule("login", "erin", null);
+  expect(store.signIn(erin).user.status).toBe("active");
+  // The setting and the list are in the file, not in memory.
+  const reopened = open("boss", undefined, home).store;
+  expect(reopened.outsiders).toBe("refuse");
+  expect(reopened.listRules().map((r) => r.value)).toEqual(["erin"]);
+});
+
+test("an accounts file from before the access list still opens", () => {
+  const home = tempDir();
+  // The users table as the personal-keys build created it: no rule_id column, no access_rules table.
+  const old = new Database(join(home, ACCOUNTS_FILE), { create: true });
+  old.run("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  old.run("INSERT INTO meta (key, value) VALUES ('schema_version', '1')");
+  old.run(
+    "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, github_id INTEGER NOT NULL UNIQUE, login TEXT NOT NULL, name TEXT, role TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, last_login_at TEXT, by_env INTEGER NOT NULL DEFAULT 0)",
+  );
+  old.run("INSERT INTO users (github_id, login, role, status, created_at) VALUES (101, 'alice', 'member', 'pending', '2026-11-14T00:00:00.000Z')");
+  old.close();
+
+  const { store } = open("boss", undefined, home);
+  store.addRule("login", "alice", null);
+  expect(store.signIn(alice).user.status).toBe("active");
+  expect(store.listRules()[0]!.people).toBe(1);
 });

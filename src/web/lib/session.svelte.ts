@@ -13,6 +13,8 @@ class Session {
   loaded = $state(false);
   accounts = $state(false);
   user = $state<SessionUser | null>(null);
+  // What sign-in asks GitHub for beyond the public profile; the access list decides.
+  asks = $state<{ orgs: boolean; emails: boolean } | null>(null);
   error = $state("");
 
   // May use the app at all: no accounts, or an approved account.
@@ -27,9 +29,10 @@ class Session {
 
   refresh = async (): Promise<void> => {
     try {
-      const s = await api<{ accounts: boolean; user: SessionUser | null }>("/api/session");
+      const s = await api<{ accounts: boolean; user: SessionUser | null; asks?: { orgs: boolean; emails: boolean } }>("/api/session");
       this.accounts = s.accounts;
       this.user = s.user;
+      this.asks = s.asks ?? null;
       this.error = "";
     } catch (err) {
       this.error = errorText(err);

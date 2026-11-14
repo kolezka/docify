@@ -6,14 +6,36 @@ import { newDocify, tempDir } from "./helpers.ts";
 const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const fn of cleanup.splice(0)) fn();
+  asked.length = 0;
 });
 
-const PEOPLE: Record<string, { id: number; login: string; name: string | null }> = {
+interface Person {
+  id: number;
+  login: string;
+  name: string | null;
+  // Organization name to membership state, or the HTTP status GitHub answers with.
+  orgs?: Record<string, "active" | "pending" | number>;
+  emails?: { email: string; verified: boolean }[];
+  // What the person granted at GitHub; everything asked for unless set.
+  scope?: string;
+}
+const PEOPLE: Record<string, Person> = {
   "code-boss": { id: 1, login: "boss", name: "The Boss" },
   "code-alice": { id: 101, login: "alice", name: null },
   // A display name with a right-to-left override and a bell character.
   "code-mallory": { id: 202, login: "mallory", name: "Mal\u202elory\u0007" },
+  "code-carol": { id: 303, login: "carol", name: null, orgs: { acme: "active" } },
+  "code-dave": { id: 404, login: "dave", name: null, emails: [{ email: "Dave@Example.com", verified: true }, { email: "ceo@example.com", verified: false }] },
+  "code-erin": { id: 505, login: "erin", name: null, emails: [{ email: "erin@elsewhere.test", verified: true }] },
+  // Invited to the organization but has not accepted.
+  "code-pat": { id: 606, login: "pat", name: null, orgs: { acme: "pending" } },
+  // The organization does not let this OAuth app read its membership.
+  "code-frank": { id: 707, login: "frank", name: null, orgs: { acme: 403 } },
+  // A member who took the organization scope out of the link.
+  "code-gina": { id: 808, login: "gina", name: null, orgs: { acme: "active" }, scope: "" },
 };
+// Every request the server made to the stand-in, so a test can see what was asked.
+const asked: string[] = [];
 
 // Stands in for GitHub: a code is the access token of the person it belongs to.
 const fakeGitHub = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -21,10 +43,21 @@ const fakeGitHub = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.includes("access_token")) {
     const { code, client_secret } = JSON.parse(String(init?.body));
     if (client_secret !== "s3cret-for-tests") return Response.json({ error: "incorrect_client_credentials" });
-    return Response.json(PEOPLE[code] ? { access_token: code } : { error: "bad_verification_code" });
+    return Response.json(PEOPLE[code] ? { access_token: code, token_type: "bearer", scope: PEOPLE[code].scope ?? "read:org,user:email" } : { error: "bad_verification_code" });
   }
   const token = new Headers(init?.headers).get("authorization")?.replace("Bearer ", "") ?? "";
-  return PEOPLE[token] ? Response.json(PEOPLE[token]) : new Response("{}", { status: 401 });
+  const person = PEOPLE[token];
+  if (!person) return new Response("{}", { status: 401 });
+  const path = new URL(url).pathname;
+  asked.push(path);
+  const org = /^\/user\/memberships\/orgs\/([^/]+)$/.exec(path)?.[1];
+  if (org) {
+    const state = person.orgs?.[org];
+    if (typeof state === "number") return new Response("{}", { status: state });
+    return state ? Response.json({ state, organization: { login: org } }) : new Response("{}", { status: 404 });
+  }
+  if (path === "/user/emails") return Response.json(person.emails ?? []);
+  return Response.json({ id: person.id, login: person.login, name: person.name });
 }) as typeof fetch;
 
 async function setup(opts: { publicUrl?: string; admins?: string; allowedHosts?: string[]; mcpClients?: StartServerOptions["mcpClients"]; mcpClientRate?: StartServerOptions["mcpClientRate"] } = {}) {
@@ -107,7 +140,7 @@ test("sign-in starts at GitHub with a state that is also set as a cookie", async
 
 test("a named administrator signs in and gets an HttpOnly session; the page then knows who it is", async () => {
   const { call, signIn } = await setup();
-  expect((await call("/api/session")).data).toEqual({ accounts: true, user: null });
+  expect((await call("/api/session")).data).toEqual({ accounts: true, user: null, asks: { orgs: false, emails: false } });
   const { cookie, location, res } = await signIn("code-boss");
   expect(location).toBe("/");
   expect(cookie).toMatch(/^docify_session=[A-Za-z0-9_-]{43}$/);
@@ -115,7 +148,7 @@ test("a named administrator signs in and gets an HttpOnly session; the page then
   expect(set).toContain("HttpOnly");
   expect(set).toContain("SameSite=Lax");
   expect(set).not.toContain("Secure");
-  expect((await call("/api/session", cookie)).data).toEqual({ accounts: true, user: { id: 1, login: "boss", name: "The Boss", role: "admin", status: "active" } });
+  expect((await call("/api/session", cookie)).data).toEqual({ accounts: true, user: { id: 1, login: "boss", name: "The Boss", role: "admin", status: "active" }, asks: { orgs: false, emails: false } });
   expect((await call("/api/sources", cookie)).status).toBe(200);
   expect((await call("/api/config", cookie)).status).toBe(200);
 });
@@ -209,6 +242,10 @@ test("a member can search and read, and cannot manage sources, settings, backups
     ["/api/users", "GET"],
     [`/api/users/${id}`, "PATCH", { role: "admin" }],
     [`/api/users/${id}`, "DELETE", {}],
+    ["/api/access", "GET"],
+    ["/api/access", "PUT", { outsiders: "refuse" }],
+    ["/api/access/rules", "POST", { kind: "login", value: "alice" }],
+    ["/api/access/rules/1", "DELETE", {}],
   ];
   for (const [path, method, body] of refused) {
     const r = await call(path, alice, method, body);
@@ -562,4 +599,152 @@ test("without accounts there are no personal keys or history", async () => {
   }
   const rpc = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer dcf_${"x".repeat(43)}`, "content-type": "application/json" }, body: "{}" });
   expect(rpc.status).toBe(404);
+});
+
+// The access list: an administrator says who gets in, and GitHub is asked only for what the list needs.
+test("an administrator edits the access list; bad entries are refused at their field", async () => {
+  const { call, signIn } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  expect((await call("/api/access", admin)).data).toEqual({ outsiders: "pending", rules: [], maxOrgs: 10, maxRules: 500 });
+
+  const made = await call("/api/access/rules", admin, "POST", { kind: "org", value: "Acme" });
+  expect(made.status).toBe(201);
+  expect(made.data).toMatchObject({ kind: "org", value: "acme", createdBy: "boss", people: 0, bound: false });
+  expect((await call("/api/access/rules", admin, "POST", { kind: "org", value: "acme" })).status).toBe(409);
+  const bad = await call("/api/access/rules", admin, "POST", { kind: "email", value: "not an address" });
+  expect([bad.status, bad.data.field]).toEqual([400, "value"]);
+  expect((await call("/api/access/rules", admin, "POST", { kind: "team", value: "x" })).data.field).toBe("kind");
+
+  expect((await call("/api/access", admin, "PUT", { outsiders: "refuse" })).data.outsiders).toBe("refuse");
+  expect((await call("/api/access", admin, "PUT", { outsiders: "everyone" })).status).toBe(400);
+  expect((await call("/api/access", admin)).data).toMatchObject({ outsiders: "refuse", rules: [{ kind: "org", value: "acme" }] });
+
+  expect((await call("/api/access/rules/999", admin, "DELETE", {})).status).toBe(404);
+  expect((await call("/api/access/rules/abc", admin, "DELETE", {})).status).toBe(404);
+  expect((await call(`/api/access/rules/${made.data.id}`, admin, "DELETE", {})).data).toEqual({ ok: true, suspended: [] });
+  expect((await call("/api/access", admin)).data.rules).toEqual([]);
+});
+
+test("sign-in asks GitHub only for what the access list needs, and the sign-in page is told", async () => {
+  const { call, signIn } = await setup();
+  const scope = async () => new URL((await call("/auth/github")).res.headers.get("location")!).searchParams.get("scope");
+  expect(await scope()).toBeNull();
+  const admin = (await signIn("code-boss")).cookie;
+  // With an empty list nothing but the profile is read.
+  expect(asked).toEqual(["/user"]);
+
+  await call("/api/access/rules", admin, "POST", { kind: "login", value: "alice" });
+  expect(await scope()).toBeNull();
+  await call("/api/access/rules", admin, "POST", { kind: "org", value: "acme" });
+  expect(await scope()).toBe("read:org");
+  expect((await call("/api/session")).data.asks).toEqual({ orgs: true, emails: false });
+  await call("/api/access/rules", admin, "POST", { kind: "email", value: "dave@example.com" });
+  expect(await scope()).toBe("read:org user:email");
+  expect((await call("/api/session")).data.asks).toEqual({ orgs: true, emails: true });
+});
+
+test("a member of a listed organization gets in at once; an invited one and a stranger wait", async () => {
+  const { call, signIn } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  await call("/api/access/rules", admin, "POST", { kind: "org", value: "acme" });
+
+  const carol = (await signIn("code-carol")).cookie;
+  expect((await call("/api/session", carol)).data.user).toMatchObject({ login: "carol", role: "member", status: "active" });
+  expect((await call("/api/sources", carol)).status).toBe(200);
+  const pat = (await signIn("code-pat")).cookie;
+  expect((await call("/api/session", pat)).data.user.status).toBe("pending");
+  const alice = (await signIn("code-alice")).cookie;
+  expect((await call("/api/session", alice)).data.user.status).toBe("pending");
+
+  const users = (await call("/api/users", admin)).data.users;
+  expect(users.find((u: any) => u.login === "carol").rule).toEqual({ kind: "org", value: "acme" });
+  expect(users.find((u: any) => u.login === "alice").rule).toBeNull();
+  expect((await call("/api/access", admin)).data.rules[0].people).toBe(1);
+  const lines = (await call("/api/logs", admin)).data.lines.map((l: any) => l.message ?? l.text ?? JSON.stringify(l)).join("\n");
+  expect(lines).toContain("carol");
+  expect(lines).toContain("acme");
+});
+
+test("a person who does not grant the scope is not let in by that entry, and GitHub is not asked", async () => {
+  const { call, signIn } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  await call("/api/access/rules", admin, "POST", { kind: "org", value: "acme" });
+  asked.length = 0;
+  const gina = (await signIn("code-gina")).cookie;
+  expect((await call("/api/session", gina)).data.user.status).toBe("pending");
+  expect(asked).toEqual(["/user"]);
+  expect(JSON.stringify((await call("/api/logs", admin)).data.lines)).toContain("without granting read:org");
+});
+
+test("a verified email on the list lets its owner in; an unverified one does not, and no address is kept", async () => {
+  const { call, signIn, server } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  await call("/api/access/rules", admin, "POST", { kind: "email", value: "dave@example.com" });
+  await call("/api/access/rules", admin, "POST", { kind: "email", value: "ceo@example.com" });
+  const dave = (await signIn("code-dave")).cookie;
+  expect((await call("/api/session", dave)).data.user.status).toBe("active");
+  const users = (await call("/api/users", admin)).data.users;
+  expect(users.find((u: any) => u.login === "dave").rule).toEqual({ kind: "email", value: "dave@example.com" });
+  // The second address is on his GitHub account but not verified: it proves nothing.
+  expect((await call("/api/access", admin)).data.rules.map((r: any) => [r.value, r.people])).toEqual([["dave@example.com", 1], ["ceo@example.com", 0]]);
+  const erin = (await signIn("code-erin")).cookie;
+  expect((await call("/api/session", erin)).data.user.status).toBe("pending");
+  // What GitHub said about a person's addresses is used for the match and dropped.
+  expect(JSON.stringify(users) + JSON.stringify(server.accounts!.listUsers())).not.toContain("elsewhere.test");
+});
+
+test("with outsiders refused a stranger gets no account and is told why", async () => {
+  const { call, signIn } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  await call("/api/access/rules", admin, "POST", { kind: "org", value: "acme" });
+  await call("/api/access", admin, "PUT", { outsiders: "refuse" });
+  const alice = await signIn("code-alice");
+  expect([alice.location, alice.cookie]).toEqual(["/#signin=uninvited", ""]);
+  expect((await call("/api/users", admin)).data.users.map((u: any) => u.login)).toEqual(["boss"]);
+  expect((await signIn("code-carol")).location).toBe("/");
+});
+
+test("removing an entry signs out the people it let in and ends their keys", async () => {
+  const { call, signIn, mcp } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  const rule = (await call("/api/access/rules", admin, "POST", { kind: "org", value: "acme" })).data;
+  const carol = (await signIn("code-carol")).cookie;
+  const key = (await call("/api/me/keys", carol, "POST", { name: "laptop" })).data.token;
+  expect((await mcp(key)).status).toBe(200);
+
+  expect((await call(`/api/access/rules/${rule.id}`, admin, "DELETE", {})).data).toEqual({ ok: true, suspended: ["carol"] });
+  expect((await call("/api/sources", carol)).status).toBe(401);
+  expect((await mcp(key)).status).toBe(401);
+  expect((await call("/api/users", admin)).data.users.find((u: any) => u.login === "carol").status).toBe("pending");
+});
+
+test("when GitHub will not say whether someone is a member, nobody loses access over it", async () => {
+  const { call, signIn, server } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  await call("/api/access/rules", admin, "POST", { kind: "org", value: "acme" });
+  // Frank was let in while the organization still answered.
+  PEOPLE["code-frank"]!.orgs = { acme: "active" };
+  cleanup.push(() => (PEOPLE["code-frank"]!.orgs = { acme: 403 }));
+  expect((await signIn("code-frank")).location).toBe("/");
+  PEOPLE["code-frank"]!.orgs = { acme: 403 };
+  const again = (await signIn("code-frank")).cookie;
+  expect((await call("/api/session", again)).data.user.status).toBe("active");
+  const lines = JSON.stringify((await call("/api/logs", admin)).data.lines);
+  expect(lines).toContain("would not say");
+  // A real "no" does end it.
+  PEOPLE["code-frank"]!.orgs = {};
+  const last = (await signIn("code-frank")).cookie;
+  expect((await call("/api/session", last)).data.user.status).toBe("pending");
+  expect(server.accounts!.listUsers().find((u) => u.login === "frank")!.rule_id).toBeNull();
+});
+
+test("without accounts there is no access list", async () => {
+  const d = newDocify(tempDir());
+  const server = await startServer(0, { docify: d, quiet: true, token: "a".repeat(32), mcpClients: [] });
+  cleanup.push(() => {
+    server.stop(true);
+    d.close();
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/api/access`, { headers: { "x-docify-token": "a".repeat(32) } });
+  expect([r.status, (await r.json()).code]).toEqual([404, "accounts_off"]);
 });

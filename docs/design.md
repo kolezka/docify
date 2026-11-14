@@ -28,6 +28,12 @@ These are design defaults, not choices the user previously made between offline,
   write a query causes. It never touches `docify.sqlite`, snapshots or `config.json`, a failed
   note never fails the search, and without accounts, on stdio and in the CLI queries write
   nothing, as before.
+  Third amendment, same day: administrators decide who gets in. An access list in
+  `accounts.sqlite` holds GitHub organizations, logins and email addresses; a person who matches
+  is a member from sign-in, and everyone else waits for approval or is refused, as the
+  administrators choose. Sign-in asks GitHub for organization membership or verified addresses
+  only when the list has such an entry, uses the answer for the match and keeps neither. The
+  match is repeated at every sign-in, so access given by an entry ends with it.
 - Queries run entirely locally and offline once sources, models, and indices are prepared.
   Amendment 2026-11-04: the optional Ollama embedding provider embeds each query on its server.
   With the bundled `docker-compose.yml` that server is on `127.0.0.1`, so queries stay local.

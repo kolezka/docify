@@ -2,6 +2,7 @@
   import StatusIcon from "../components/StatusIcon.svelte";
   import ThemeSwitch from "../components/ThemeSwitch.svelte";
   import { errorText } from "../lib/api.ts";
+  import { signInNote } from "../lib/access.ts";
   import { session } from "../lib/session.svelte.ts";
   import { button, notice } from "../lib/ui.ts";
 
@@ -13,6 +14,7 @@
     failed: "GitHub did not confirm the sign-in. Try again in a moment.",
     setup: "GitHub refused this server's callback address. An administrator has to check the OAuth app and DOCIFY_PUBLIC_URL.",
     disabled: "This account is disabled. Ask an administrator of this server to enable it.",
+    uninvited: "Your GitHub account is not on this server's access list. Ask an administrator to add you.",
   };
 
   // The server reports how a sign-in ended as #signin=<word>; read it once and clean the address bar.
@@ -53,14 +55,14 @@
         <button type="button" class={button({ size: "md", class: "mt-5" })} disabled={busy} onclick={check}>Try Again</button>
       {:else if !session.user}
         <p class="mt-2 text-[13px] leading-[18px] text-label2">
-          Sign in to search the documentation on this server. A new account can be used once an administrator approves it.
+          Sign in to search the documentation on this server. Its administrators decide who gets in.
         </p>
         {#if result}
           <div class={notice({ tone: "warn", class: "mt-5 text-left" })} role="status"><StatusIcon tone="warn" class="mt-0.5" /><span>{result}</span></div>
         {/if}
         <!-- A plain link: the page policy allows no form posts, and GitHub needs a top-level visit. -->
         <a href="/auth/github" class={button({ intent: "primary", size: "md", class: "mt-5 h-8 px-5" })}>Sign In with GitHub</a>
-        <p class="mt-3 text-[11px] leading-[14px] text-label2">Docify reads only your public GitHub profile: your login and name.</p>
+        <p class="mt-3 text-[11px] leading-[14px] text-label2">{signInNote(session.asks)}</p>
       {:else}
         <h2 class="mt-5 text-[17px] leading-[22px] font-semibold">{session.user.status === "pending" ? "Waiting for Approval" : "Account Disabled"}</h2>
         <p class="mt-2 text-[13px] leading-[18px] text-label2">

@@ -1,4 +1,5 @@
 import { api, errorText } from "./api.ts";
+import type { RuleKind } from "./access.ts";
 
 export interface UserInfo {
   id: number;
@@ -12,6 +13,8 @@ export interface UserInfo {
   // Named in DOCIFY_ADMINS: the panel cannot demote, disable or remove this account.
   named: boolean;
   self: boolean;
+  // The access-list entry that let this person in; null when an administrator approved them.
+  rule: { kind: RuleKind; value: string } | null;
 }
 
 // The account list, shared by the Users view and the sidebar's count of people waiting.

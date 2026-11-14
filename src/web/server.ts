@@ -17,7 +17,20 @@ import { RateLimiter, parseRate, rateLimit, type RateLimit } from "../http/rate-
 import { chain } from "../http/guard.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { OAuthError, githubAuthorizeUrl, githubProfile, type GitHubOAuthConfig } from "../http/github-oauth.ts";
-import { AccountStore, MAX_KEYS_PER_USER, MAX_QUERIES_PER_USER, SESSION_TTL_MS, parseAdmins, type AdminList, type KeyRow, type QueryRecord, type UserRow } from "../core/accounts.ts";
+import {
+  AccountStore,
+  MAX_ACCESS_RULES,
+  MAX_KEYS_PER_USER,
+  MAX_ORG_RULES,
+  MAX_QUERIES_PER_USER,
+  SESSION_TTL_MS,
+  parseAdmins,
+  type AccessRule,
+  type AdminList,
+  type KeyRow,
+  type QueryRecord,
+  type UserRow,
+} from "../core/accounts.ts";
 import { mcpHttpHandler } from "../mcp/http.ts";
 import { scopeText } from "../mcp/tools.ts";
 import { DOCS_INIT, DOCS_PAGE, openApiSpec } from "./openapi.ts";
@@ -33,6 +46,8 @@ const STATUS_BY_CODE: Record<string, number> = {
   invalid_summary: 502,
   user_unknown: 404,
   key_unknown: 404,
+  rule_unknown: 404,
+  not_invited: 403,
   accounts_off: 404,
   conflict: 409,
 };
@@ -202,7 +217,10 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     }
   };
   const actors = new WeakMap<Request, UserRow>();
-  const userView = (u: UserRow, self?: UserRow) => ({
+  const ruleView = (r: AccessRule) => ({ id: r.id, kind: r.kind, value: r.value, createdAt: r.created_at, createdBy: r.created_by, people: r.people, bound: r.bound });
+  const userView = (u: UserRow, self?: UserRow) => {
+    const rule = u.rule_id === null ? null : store!.getRule(u.rule_id);
+    return {
     id: u.id,
     login: u.login,
     name: u.name,
@@ -213,7 +231,10 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     lastLoginAt: u.last_login_at,
     named: store!.isNamedAdmin(u),
     self: self?.id === u.id,
-  });
+    // The access-list entry that let this person in; null when an administrator approved them.
+    rule: rule && { kind: rule.kind, value: rule.value },
+    };
+  };
 
   // Answers depend on who asks, so nothing between the server and the browser may keep one.
   const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
@@ -387,11 +408,12 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
         return fail(err);
       }
     };
-  const signInStart = authRoute((_req, _store, accounts) => {
+  const signInStart = authRoute((_req, accountStore, accounts) => {
     // The state goes out in the link and in a cookie; the callback accepts the code only when
     // both match, so nobody can make a visitor finish a sign-in that someone else began.
     const state = randomBytes(24).toString("base64url");
-    return redirect(githubAuthorizeUrl(accounts.github, state), [setCookie(STATE_COOKIE, state, STATE_TTL_SEC, "/auth")]);
+    // Scopes follow the access list: with no organization or email entry, only the public profile is read.
+    return redirect(githubAuthorizeUrl(accounts.github, state, accountStore.accessNeeds()), [setCookie(STATE_COOKIE, state, STATE_TTL_SEC, "/auth")]);
   });
   const signInCallback = authRoute(async (req, store, accounts) => {
     const params = new URL(req.url).searchParams;
@@ -408,15 +430,30 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     if (!code) return back("expired");
     let profile;
     try {
-      profile = await githubProfile(accounts.github, code);
+      profile = await githubProfile(accounts.github, code, store.accessNeeds());
     } catch (err) {
       if (!(err instanceof OAuthError)) throw err;
       docify.logs.append("accounts", `sign-in failed: ${err.message}`, "system", "warn");
       return back("failed");
     }
-    const { user, session, created, loginTaken } = store.signIn(profile, cookieOf(req, SESSION_COOKIE));
+    if (profile.unknownOrgs.length) {
+      docify.logs.append("accounts", `GitHub would not say whether ${profile.login} is a member of ${profile.unknownOrgs.join(", ")}; the organization may have to approve this OAuth app`, "system", "warn");
+    }
+    if (profile.ungranted.length) docify.logs.append("accounts", `${profile.login} signed in without granting ${profile.ungranted.join(", ")}; the access list entries that need it were not checked`, "system", "warn");
+    if (profile.emailsUnknown) docify.logs.append("accounts", `GitHub would not say which email addresses ${profile.login} has`, "system", "warn");
+    let result;
+    try {
+      result = store.signIn(profile, cookieOf(req, SESSION_COOKIE));
+    } catch (err) {
+      if (!(err instanceof DocifyError) || err.code !== "not_invited") throw err;
+      docify.logs.append("accounts", `${profile.login} (GitHub id ${profile.id}) tried to sign in and is not on the access list`);
+      return back("uninvited");
+    }
+    const { user, session, created, loginTaken, admitted, suspended } = result;
+    if (admitted) docify.logs.append("accounts", `${user.login} (GitHub id ${profile.id}) was let in by the access list: ${admitted.kind} ${admitted.value}`);
+    if (suspended) docify.logs.append("accounts", `${user.login} no longer matches the access list and waits for approval again`);
     if (loginTaken) docify.logs.append("accounts", `${user.login} (GitHub id ${profile.id}) signed in with a login named in DOCIFY_ADMINS that belongs to another GitHub account; not made an administrator`, "system", "warn");
-    if (created) docify.logs.append("accounts", user.status === "pending" ? `${user.login} signed up and is waiting for approval` : `${user.login} (GitHub id ${profile.id}) signed up as an administrator named in DOCIFY_ADMINS`);
+    if (created && !admitted) docify.logs.append("accounts", user.status === "pending" ? `${user.login} signed up and is waiting for approval` : `${user.login} (GitHub id ${profile.id}) signed up as an administrator named in DOCIFY_ADMINS`);
     if (!session) return back("disabled");
     return redirect("/", [clearState, setCookie(SESSION_COOKIE, session, Math.floor(SESSION_TTL_MS / 1000))]);
   });
@@ -435,7 +472,11 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       "/api/session": {
         GET: api((req) => {
           const user = store?.userForSession(cookieOf(req, SESSION_COOKIE)) ?? null;
-          return json({ accounts: !!store, user: user && { id: user.id, login: user.login, name: user.name, role: user.role, status: user.status } });
+          const session = { accounts: !!store, user: user && { id: user.id, login: user.login, name: user.name, role: user.role, status: user.status } };
+          if (!store) return json(session);
+          // The sign-in page says what GitHub will be asked for before the person goes there.
+          const needs = store.accessNeeds();
+          return json({ ...session, asks: { orgs: needs.orgs.length > 0, emails: needs.emails } });
         }, { access: "open" }),
         DELETE: api((req) => {
           store?.signOut(cookieOf(req, SESSION_COOKIE));
@@ -460,6 +501,39 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           const user = accountStore.removeUser(userId(req), actor?.id ?? null);
           docify.logs.append("accounts", `${actor?.login ?? "?"} removed ${user.login}`);
           return json({ ok: true });
+        }),
+      },
+      // Who gets in without waiting, and what happens to everyone else.
+      "/api/access": {
+        GET: api(() => {
+          const accountStore = requireStore();
+          return json({ outsiders: accountStore.outsiders, rules: accountStore.listRules().map(ruleView), maxOrgs: MAX_ORG_RULES, maxRules: MAX_ACCESS_RULES });
+        }),
+        PUT: api(async (req) => {
+          const accountStore = requireStore();
+          const outsiders = accountStore.setOutsiders((await body(req)).outsiders);
+          docify.logs.append("accounts", `${actors.get(req)?.login ?? "?"} set people outside the access list to ${outsiders === "refuse" ? "be refused" : "wait for approval"}`);
+          return json({ outsiders });
+        }),
+      },
+      "/api/access/rules": {
+        POST: api(async (req) => {
+          const accountStore = requireStore();
+          const b = await body(req);
+          const actor = actors.get(req);
+          const rule = accountStore.addRule(b.kind, b.value, actor?.login ?? null);
+          docify.logs.append("accounts", `${actor?.login ?? "?"} added ${rule.kind} ${rule.value} to the access list`);
+          return json(ruleView(rule), 201);
+        }),
+      },
+      "/api/access/rules/:id": {
+        DELETE: api((req) => {
+          const accountStore = requireStore();
+          if (!/^\d{1,15}$/.test(req.params.id ?? "")) throw new DocifyError("rule_unknown", "unknown access rule");
+          const actor = actors.get(req);
+          const { rule, suspended } = accountStore.removeRule(Number(req.params.id), actor?.id ?? null);
+          docify.logs.append("accounts", `${actor?.login ?? "?"} removed ${rule.kind} ${rule.value} from the access list${suspended.length ? `; waiting again: ${suspended.join(", ")}` : ""}`);
+          return json({ ok: true, suspended });
         }),
       },
       // A person's own MCP keys and search history. Nobody else's are reachable, administrators included.
