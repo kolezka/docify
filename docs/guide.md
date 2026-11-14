@@ -207,6 +207,18 @@ When the model leaves some documents out or a request fails, Graphify still retu
 
 `graph.timeoutSeconds` (default 900) is an inactivity limit: Graphify is stopped only after that many seconds without any output, so a large source can take longer as long as chunks keep finishing. A stopped run fails the prepare and keeps the previous generation; Graphify has cached the finished chunks, so the next `prepare` continues from there.
 
+Five more `graph` keys tune the model requests. They are also in Settings, under Semantic Graph. Graphify runs with a clean environment, so a `GRAPHIFY_*` variable set in your shell does not reach it; use these keys instead.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `maxOutputTokens` | `null` | Upper limit for one model reply. `null` keeps Graphify's default for the backend. Raise it when replies are cut off. |
+| `temperature` | `null` | Sampling temperature from 0 to 2. `null` keeps Graphify's default, which is 0 for most models. |
+| `maxRetries` | `6` | How many times a request is retried after a rate limit or network error. 0 turns retries off. |
+| `maxRetryDepth` | `3` | How many times a cut-off chunk is halved and sent again. Each level can double the requests for that chunk. 0 sends every chunk once. |
+| `disableThinking` | `false` | Asks a reasoning model not to think. Runs get steadier, but Graphify measured lower extraction quality and more cut-off replies. |
+
+Graphify caches finished chunks, so a changed setting reaches documents that already have nodes only on a forced prepare.
+
 ## Query
 
 ```bash

@@ -15,6 +15,12 @@ export interface GraphProviderConfig {
   tokenBudget?: number;
   apiTimeoutSeconds?: number;
   maxWorkers?: number | null;
+  // The rest reach Graphify as GRAPHIFY_* variables. null leaves the choice to Graphify.
+  maxOutputTokens?: number | null;
+  temperature?: number | null;
+  maxRetries?: number;
+  maxRetryDepth?: number;
+  disableThinking?: boolean;
 }
 
 export interface DocifyConfig {
@@ -69,6 +75,11 @@ export const DEFAULT_GRAPH: GraphProviderConfig = {
   tokenBudget: 60000,
   apiTimeoutSeconds: 600,
   maxWorkers: null,
+  maxOutputTokens: null,
+  temperature: null,
+  maxRetries: 6,
+  maxRetryDepth: 3,
+  disableThinking: false,
 };
 
 export class ConfigError extends Error {
@@ -183,7 +194,7 @@ const LOCKED_KEYS: Record<string, string> = { home: "DOCIFY_HOME", graphifyBin: 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 // Model names reach argv and the model loader: no leading dash, no path traversal.
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
-const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers"];
+const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers", "maxOutputTokens", "temperature", "maxRetries", "maxRetryDepth", "disableThinking"];
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -265,6 +276,23 @@ function graphField(v: unknown): Partial<GraphProviderConfig> | null {
         break;
       case "maxWorkers":
         out.maxWorkers = value === null ? null : numberField(field, value, 1, 256, true);
+        break;
+      case "maxOutputTokens":
+        out.maxOutputTokens = value === null ? null : numberField(field, value, 1, 1_000_000, true);
+        break;
+      case "temperature":
+        out.temperature = value === null ? null : numberField(field, value, 0, 2);
+        break;
+      case "maxRetries":
+        out.maxRetries = numberField(field, value, 0, 100, true);
+        break;
+      case "maxRetryDepth":
+        // Graphify splits a truncated chunk into up to 2**depth pieces, so the cap is low.
+        out.maxRetryDepth = numberField(field, value, 0, 10, true);
+        break;
+      case "disableThinking":
+        if (typeof value !== "boolean") throw new ConfigError(`${field} must be true or false`, field);
+        out.disableThinking = value;
         break;
       default:
         throw new ConfigError(`unknown graph setting: ${k} (known: ${GRAPH_KEYS.join(", ")})`, field);
