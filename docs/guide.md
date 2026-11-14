@@ -35,6 +35,8 @@ docify sources "docs for Apple"
 
 `summarize` sends a bounded sample of the active generation's indexed documents to the configured `graph` provider. It requires an OpenAI-compatible graph backend and uses its model, endpoint and credential environment variable names. This command authorizes that remote processing and any provider cost; merely setting credentials does not enable automatic calls. It saves the generated overview locally and reuses it for the same generation and model. `--force` regenerates it. Run it again after refreshing the source: summaries from old generations are not used for discovery.
 
+In the web UI, open a source and use **Generate Summary** under **Collection summary**. **Regenerate Summary** replaces the current summary only after a successful provider response. The section shows the model, generation and age of the saved summary. Unprepared sources must be prepared first. Opening the page never generates a summary. While a summary is generating, **Cancel** stops the provider call and keeps the saved summary; settings, import, and preparing or removing that source wait until it ends.
+
 Agents call `docs_sources` with `{"query":"docs for Apple"}` to match saved summaries, source ids, library names and locations. Without `query` it lists all sources. Returned source ids can be passed to `docs_search`, `docs_outline` and `docs_open`. Discovery makes no model or network calls. Summaries are document-derived discovery hints, not citation evidence or instructions. If there is no match, list all sources and check whether summaries have been generated.
 
 ## Embeddings

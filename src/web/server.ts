@@ -6,6 +6,7 @@ import { Docify, DocifyError } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
 import { graphView } from "../core/graph-view.ts";
+import { summarizeSource } from "../core/summary.ts";
 import { exportStore, importStore } from "../core/backup.ts";
 import { uiAssets } from "./bundle.ts";
 import { LogReadError } from "../core/logs.ts";
@@ -18,7 +19,7 @@ import { mcpHttpHandler } from "../mcp/http.ts";
 import { DOCS_INIT, DOCS_PAGE, openApiSpec } from "./openapi.ts";
 import { VERSION } from "../version.ts";
 
-const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404 };
+const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404, generation_changed: 409, summary_failed: 502, invalid_summary: 502 };
 
 // Documentation excerpts are untrusted. The page renders them as text; this policy is the second line.
 const PAGE_HEADERS = {
@@ -247,7 +248,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           return json({ ok: true });
         }),
         DELETE: api((req) => {
-          if (running.has(req.params.id!)) throw new DocifyError("busy", "cancel the running preparation first");
+          if (running.has(req.params.id!)) throw new DocifyError("busy", "cancel the running operation first");
           docify.removeSource(decodeURIComponent(req.params.id!));
           return json({ ok: true });
         }),
@@ -290,6 +291,26 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
         })())),
       },
       "/api/sources/:id/graph": { GET: api((req) => json(graphView(docify, decodeURIComponent(req.params.id!)))) },
+      "/api/sources/:id/summary": {
+        POST: api(async (req) => {
+          const id = decodeURIComponent(req.params.id!);
+          docify.requireSource(id);
+          const b = await body(req);
+          if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((key) => key !== "force") || (b.force !== undefined && typeof b.force !== "boolean")) {
+            throw new DocifyError("invalid_input", "summary body accepts only a boolean force");
+          }
+          if (running.has(id)) throw new DocifyError("busy", `${id} already has a running operation`);
+          const controller = new AbortController();
+          running.set(id, controller);
+          server.timeout(req, 0);
+          try {
+            // A client that went away cannot cancel, so its request must not keep the source busy.
+            return json(await summarizeSource(docify, id, { force: b.force === true, signal: AbortSignal.any([controller.signal, req.signal]) }));
+          } finally {
+            running.delete(id);
+          }
+        }),
+      },
       "/api/sources/:id/prepare": {
         POST: api(async (req) => {
           const id = decodeURIComponent(req.params.id!);
@@ -351,7 +372,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
         GET: api(() => json(describeConfig(docify.config))),
         PUT: api(async (req) => {
           const b = await body(req);
-          if (running.size) throw new DocifyError("busy", `cannot change settings while preparing ${[...running.keys()].join(", ")}; wait or cancel first`);
+          if (running.size) throw new DocifyError("busy", `cannot change settings while ${[...running.keys()].join(", ")} has a running operation; wait or cancel first`);
           docify.saveConfig(b);
           return json(describeConfig(docify.config));
         }),
@@ -375,6 +396,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
             const real = existsSync(path) ? realpathSync(path) : resolve(path);
             if (!withinSourceRoots(real, sourceRoots)) throw new DocifyError("invalid_input", `the backup has a local source outside DOCIFY_SOURCE_ROOTS: ${path}`);
           };
+          if (running.size) throw new DocifyError("busy", "wait for running source operations before importing");
           importing = true;
           try {
             const r = await importStore(docify, data, { force: q.get("force") === "1", keepConfig: q.get("keepConfig") === "1", checkLocalSource });
