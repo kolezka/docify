@@ -41,7 +41,8 @@ services:
       # Optional; empty means no token. The server refuses tokens shorter than 16 characters.
       DOCIFY_WEB_TOKEN: ${DOCIFY_WEB_TOKEN:-}
       # User accounts with GitHub sign-in, instead of the token. Client id and secret of a GitHub
-      # OAuth app, the administrators' GitHub logins, and the public https address. Empty keeps accounts off.
+      # OAuth app, the administrators' GitHub logins, and the public https address (required with
+      # accounts: the server will not start without it here). Empty id and secret keep accounts off.
       DOCIFY_GITHUB_CLIENT_ID: ${DOCIFY_GITHUB_CLIENT_ID:-}
       DOCIFY_GITHUB_CLIENT_SECRET: ${DOCIFY_GITHUB_CLIENT_SECRET:-}
       DOCIFY_ADMINS: ${DOCIFY_ADMINS:-}

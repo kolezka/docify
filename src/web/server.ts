@@ -1,7 +1,8 @@
 import { homedir } from "node:os";
 import { delimiter, join, resolve, sep } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { basename } from "node:path";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Docify, DocifyError } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
@@ -52,7 +53,8 @@ export function withinSourceRoots(realPath: string, roots: string[]): boolean {
 export interface AccountsOptions {
   github: GitHubOAuthConfig;
   admins: AdminList;
-  // The address people open, such as https://docs.example.com. Makes the session cookie Secure.
+  // The address people open, such as https://docs.example.com. Required off loopback. With https
+  // the cookies are Secure and carry the __Host- prefix, and writes must come from this origin.
   publicUrl?: string;
 }
 
@@ -141,19 +143,49 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   // but say so, because the Host check then only protects against nothing.
   const allowAnyHost = configuredHosts.length === 0 && !LOOPBACK_HOSTS.has(host);
   const allowedHosts = new Set(configuredHosts);
-  const sameText = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  // Digests have one length, so odd input (non-ASCII, another length) compares instead of throwing.
+  const digest = (text: string) => createHash("sha256").update(text).digest();
+  const sameText = (a: string, b: string) => timingSafeEqual(digest(a), digest(b));
   const tokenOk = (given: string | null) => token === null || (!!given && sameText(given, token));
 
   const accounts = opts.accounts ?? null;
   if (accounts && token !== null) throw new Error("DOCIFY_WEB_TOKEN cannot be used together with GitHub sign-in; accounts replace the shared token");
   // Without a named administrator nobody could approve the first account.
   if (accounts && !accounts.admins.logins.size && !accounts.admins.ids.size) throw new Error("DOCIFY_ADMINS must name at least one GitHub login when GitHub sign-in is on");
+  // Behind a proxy the server cannot see the address people use, and without it the cookie
+  // would not be Secure and GitHub would be sent to whatever callback the OAuth app has saved.
+  if (accounts && !accounts.publicUrl && !LOOPBACK_HOSTS.has(host)) {
+    throw new Error(`GitHub sign-in on ${host} needs DOCIFY_PUBLIC_URL, the https address people open (for example https://docs.example.com)`);
+  }
   const store = accounts ? new AccountStore(docify.config.home, accounts.admins, opts.now) : null;
+  for (const login of store?.demoted ?? []) docify.logs.append("accounts", `${login} is no longer named in DOCIFY_ADMINS: now a member, signed out`, "system", "warn");
   const secureCookies = !!accounts?.publicUrl?.startsWith("https://");
-  const cookieOf = (req: Request, name: string) => new Bun.CookieMap(req.headers.get("cookie") ?? "").get(name) ?? null;
+  // __Host- makes the browser refuse a copy set by a sibling subdomain or over plain http.
+  const cookieName = (name: string) => (secureCookies ? `__Host-${name}` : name);
+  // A name sent twice means someone planted a copy; which one a parser picks is not ours to trust.
+  const cookieOf = (req: Request, name: string) => {
+    const wanted = cookieName(name);
+    const values = (req.headers.get("cookie") ?? "")
+      .split(";")
+      .map((pair) => pair.trim())
+      .filter((pair) => pair.startsWith(`${wanted}=`))
+      .map((pair) => pair.slice(wanted.length + 1));
+    return values.length === 1 && values[0] ? values[0] : null;
+  };
   // HttpOnly keeps the session away from page scripts; Lax still sends it on the redirect back from GitHub.
   const setCookie = (name: string, value: string, maxAgeSec: number, path = "/") =>
-    `${name}=${value}; Path=${path}; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secureCookies ? "; Secure" : ""}`;
+    `${cookieName(name)}=${value}; Path=${secureCookies ? "/" : path}; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secureCookies ? "; Secure" : ""}`;
+  // With a public address known, a write must come from exactly that origin: same scheme and
+  // port, not only the same hostname. Loopback stays allowed for checks on the server itself.
+  const originOk = (origin: string, hostHeader: string) => {
+    if (!originAllowed(origin, hostHeader)) return false;
+    if (!accounts?.publicUrl || origin === accounts.publicUrl) return true;
+    try {
+      return LOOPBACK_HOSTS.has(new URL(origin).hostname);
+    } catch {
+      return false;
+    }
+  };
   const actors = new WeakMap<Request, UserRow>();
   const userView = (u: UserRow, self?: UserRow) => ({
     id: u.id,
@@ -168,7 +200,8 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     self: self?.id === u.id,
   });
 
-  const json = (data: unknown, status = 200) => Response.json(data, { status });
+  // Answers depend on who asks, so nothing between the server and the browser may keep one.
+  const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
   const fail = (err: unknown) => {
     if (err instanceof LogReadError) return json({ error: err.message, code: "logs_unavailable" }, 500);
     if (err instanceof ConfigError) return json({ error: err.message, code: "invalid_input", field: err.field ?? null }, 400);
@@ -185,6 +218,9 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   const guard = (req: Request, bodyType = "application/json", access: Access | "open" = "admin"): Response | null => {
     const hostHeader = req.headers.get("host") ?? "";
     if (!allowAnyHost && !hostAllowed(hostHeader, allowedHosts)) return json({ error: "forbidden host", code: "forbidden" }, 403);
+    // A link on another site carries the Lax cookie and no Origin. Browsers mark such a request,
+    // and no page of ours makes one, so it stops here: an export or a search cannot be set off from outside.
+    if (store && req.headers.get("sec-fetch-site") === "cross-site") return json({ error: "cross-site request refused", code: "forbidden" }, 403);
     if (access !== "open" && store) {
       const user = store.userForSession(cookieOf(req, SESSION_COOKIE));
       if (!user) return json({ error: "sign in to use Docify", code: "unauthorized" }, 401);
@@ -197,7 +233,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     if (req.method !== "GET") {
       if (!(req.headers.get("content-type") ?? "").startsWith(bodyType)) return json({ error: `${bodyType} body required`, code: "unsupported" }, 415);
       const origin = req.headers.get("origin");
-      if (origin && !originAllowed(origin, hostHeader)) return json({ error: "forbidden origin", code: "forbidden" }, 403);
+      if (origin && !originOk(origin, hostHeader)) return json({ error: "forbidden origin", code: "forbidden" }, 403);
     }
     return null;
   };
@@ -250,6 +286,10 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     throw new DocifyError("invalid_input", "invalid crawlProvider");
   };
   const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
+  // A member may see what there is to search, not where it lives on the server or why a prepare failed.
+  const isMember = (req: Request) => actors.get(req)?.role === "member";
+  const memberSources = () =>
+    sources(docify).map((s) => ({ ...s, locator: s.kind === "local" ? basename(s.locator) : s.locator, latest: s.latest && { ...s.latest, error: null } }));
 
   // The IP limit runs before auth so guessing tokens is slow; the client limit runs after it.
   const mcp = mcpSettings(opts);
@@ -304,11 +344,14 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     const clearState = setCookie(STATE_COOKIE, "", 0, "/auth");
     // The page shows a message for the word after signin=; no detail from GitHub goes into the URL.
     const back = (result: string) => redirect(`/#signin=${result}`, [clearState]);
-    if (params.get("error")) return back("cancelled");
     const expected = cookieOf(req, STATE_COOKIE);
     const state = params.get("state");
     const code = params.get("code");
-    if (!expected || !state || !code || !sameText(state, expected)) return back("expired");
+    // State first: what the link says about an error or a code counts only in the browser that began it.
+    if (!expected || !state || !sameText(state, expected)) return back("expired");
+    const refused = params.get("error");
+    if (refused) return back(refused === "redirect_uri_mismatch" ? "setup" : "cancelled");
+    if (!code) return back("expired");
     let profile;
     try {
       profile = await githubProfile(accounts.github, code);
@@ -317,8 +360,9 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       docify.logs.append("accounts", `sign-in failed: ${err.message}`, "system", "warn");
       return back("failed");
     }
-    const { user, session, created } = store.signIn(profile);
-    if (created) docify.logs.append("accounts", user.status === "pending" ? `${user.login} signed up and is waiting for approval` : `${user.login} signed up as an administrator named in DOCIFY_ADMINS`);
+    const { user, session, created, loginTaken } = store.signIn(profile, cookieOf(req, SESSION_COOKIE));
+    if (loginTaken) docify.logs.append("accounts", `${user.login} (GitHub id ${profile.id}) signed in with a login named in DOCIFY_ADMINS that belongs to another GitHub account; not made an administrator`, "system", "warn");
+    if (created) docify.logs.append("accounts", user.status === "pending" ? `${user.login} signed up and is waiting for approval` : `${user.login} (GitHub id ${profile.id}) signed up as an administrator named in DOCIFY_ADMINS`);
     if (!session) return back("disabled");
     return redirect("/", [clearState, setCookie(SESSION_COOKIE, session, Math.floor(SESSION_TTL_MS / 1000))]);
   });
@@ -341,7 +385,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
         }, { access: "open" }),
         DELETE: api((req) => {
           store?.signOut(cookieOf(req, SESSION_COOKIE));
-          return Response.json({ ok: true }, { headers: { "set-cookie": setCookie(SESSION_COOKIE, "", 0) } });
+          return Response.json({ ok: true }, { headers: { "set-cookie": setCookie(SESSION_COOKIE, "", 0), "cache-control": "no-store" } });
         }, { access: "open" }),
       },
       "/api/users": {
@@ -383,7 +427,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
         }),
       },
       "/api/sources": {
-        GET: member(() => json(sources(docify))),
+        GET: member((req) => json(isMember(req) ? memberSources() : sources(docify))),
         POST: api(async (req) => {
           const b = await body(req);
           const kind = b.kind === "url" ? "url" : "local";
@@ -559,7 +603,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
         }, { bodyType: "application/octet-stream" }),
       },
       "/api/pins": {
-        GET: member(() => json(pinsView())),
+        GET: member((req) => json(isMember(req) ? { ...pinsView(), project: null, file: null } : pinsView())),
         PUT: api(async (req) => {
           const b = await body(req);
           const library = str(b.library);
@@ -583,7 +627,8 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       const asset = assets.get(path);
       if (!asset) return new Response("not found", { status: 404 });
       const headers: Record<string, string> = { "content-type": asset.type, "x-content-type-options": "nosniff" };
-      return new Response(asset.body, { headers: path === "/" ? { ...headers, ...PAGE_HEADERS, "cache-control": "no-store" } : headers });
+      const hsts: Record<string, string> = secureCookies ? { "strict-transport-security": "max-age=15552000" } : {};
+      return new Response(asset.body, { headers: path === "/" ? { ...headers, ...PAGE_HEADERS, ...hsts, "cache-control": "no-store" } : headers });
     },
   });
   boundPort = server.port!;
@@ -592,9 +637,10 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     const where = `${host}:${boundPort}`;
     const warning = allowAnyHost ? " DOCIFY_ALLOWED_HOSTS is unset, so any Host is accepted; set it to your public domain." : "";
     const url = `http://${host === "0.0.0.0" ? "localhost" : host}:${boundPort}/`;
+    if (store?.demoted.length) console.log(`No longer named in DOCIFY_ADMINS, now members and signed out: ${store.demoted.join(", ")}.`);
     if (accounts) {
       const named = [...accounts.admins.logins, ...[...accounts.admins.ids].map((id) => `id:${id}`)].join(", ");
-      const cookieNote = secureCookies || LOOPBACK_HOSTS.has(host) ? "" : " Set DOCIFY_PUBLIC_URL to your https address so the session cookie is sent only over TLS.";
+      const cookieNote = secureCookies || LOOPBACK_HOSTS.has(host) ? "" : " DOCIFY_PUBLIC_URL is not https, so the session cookie also travels over plain http; use https outside a trusted network.";
       console.log(`Docify UI listening on ${where}; people sign in with GitHub, administrators: ${named}.${cookieNote}${warning}`);
     } else if (tokenFromEnv) console.log(`Docify UI listening on ${where}; the access token comes from DOCIFY_WEB_TOKEN.${warning}`);
     else if (token === null) console.log(`Docify UI on ${url}; no access token is set (DOCIFY_WEB_TOKEN), so anyone who can reach this port can use it.${warning}`);

@@ -20,7 +20,7 @@ const MAX_LINE = 8192;
 export class LogReadError extends Error {}
 
 export function redactLog(text: string, config: DocifyConfig): string {
-  const names = new Set([config.embeddingApiKeyEnv, config.graph?.apiKeyEnv, "OPENAI_API_KEY", "LITELLM_API_KEY"]);
+  const names = new Set([config.embeddingApiKeyEnv, config.graph?.apiKeyEnv, "OPENAI_API_KEY", "LITELLM_API_KEY", "DOCIFY_GITHUB_CLIENT_SECRET"]);
   let clean = text;
   for (const name of names) {
     const secret = name ? process.env[name] : undefined;

@@ -25,7 +25,7 @@ export function openApiSpec() {
       title: "Docify web API",
       version: "1",
       description:
-        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. When GitHub sign-in is on (`DOCIFY_GITHUB_CLIENT_ID`), the token is not used: calls carry the `docify_session` cookie set by `/auth/github`, members may search, read and list, and everything else needs an administrator. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
+        "The HTTP API behind the Docify web UI. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. When GitHub sign-in is on (`DOCIFY_GITHUB_CLIENT_ID`), the token is not used: calls carry the `docify_session` cookie set by `/auth/github` (named `__Host-docify_session` when the public address is https), members may search, read and list, and everything else needs an administrator. A request a browser marks as cross-site is refused. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes.",
     },
     servers: [{ url: "/" }],
     security: [{ docifyToken: [] }, { docifySession: [] }],

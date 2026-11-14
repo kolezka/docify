@@ -11,6 +11,7 @@
     cancelled: "Sign-in was cancelled at GitHub.",
     expired: "That sign-in link expired or was opened in another browser. Start again here.",
     failed: "GitHub did not confirm the sign-in. Try again in a moment.",
+    setup: "GitHub refused this server's callback address. An administrator has to check the OAuth app and DOCIFY_PUBLIC_URL.",
     disabled: "This account is disabled. Ask an administrator of this server to enable it.",
   };
 
@@ -18,7 +19,7 @@
   function takeResult(): string {
     const word = new URLSearchParams(location.hash.slice(1)).get("signin");
     if (word) history.replaceState(null, "", location.pathname);
-    return word ? (RESULTS[word] ?? "") : "";
+    return word && Object.hasOwn(RESULTS, word) ? RESULTS[word]! : "";
   }
 
   let result = $state(takeResult());

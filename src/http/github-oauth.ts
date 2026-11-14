@@ -24,6 +24,8 @@ const AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
 const USER_URL = "https://api.github.com/user";
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+// A display name is shown beside the login in the users list: no control or text-direction characters.
+const cleanName = (name: string) => name.replace(/[\p{Cc}\p{Cf}]/gu, "").trim().slice(0, 200);
 
 // No scope: the public profile is all Docify reads.
 export function githubAuthorizeUrl(config: GitHubOAuthConfig, state: string): string {
@@ -72,5 +74,5 @@ export async function githubProfile(config: GitHubOAuthConfig, code: string): Pr
   }
   const { id, login, name } = user;
   if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1 || typeof login !== "string" || !LOGIN_RE.test(login)) throw new OAuthError("GitHub returned an unexpected profile");
-  return { id, login, name: typeof name === "string" && name.trim() ? name.trim().slice(0, 200) : null };
+  return { id, login, name: (typeof name === "string" && cleanName(name)) || null };
 }

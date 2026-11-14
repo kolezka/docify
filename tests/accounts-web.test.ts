@@ -11,6 +11,8 @@ afterEach(() => {
 const PEOPLE: Record<string, { id: number; login: string; name: string | null }> = {
   "code-boss": { id: 1, login: "boss", name: "The Boss" },
   "code-alice": { id: 101, login: "alice", name: null },
+  // A display name with a right-to-left override and a bell character.
+  "code-mallory": { id: 202, login: "mallory", name: "Mal\u202elory\u0007" },
 };
 
 // Stands in for GitHub: a code is the access token of the person it belongs to.
@@ -25,11 +27,14 @@ const fakeGitHub = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return PEOPLE[token] ? Response.json(PEOPLE[token]) : new Response("{}", { status: 401 });
 }) as typeof fetch;
 
-async function setup(opts: { publicUrl?: string; admins?: string } = {}) {
+async function setup(opts: { publicUrl?: string; admins?: string; allowedHosts?: string[] } = {}) {
   const d = newDocify(tempDir());
   const server = await startServer(0, {
     docify: d,
     quiet: true,
+    // Pins are written under the project; without this they land in the repository.
+    project: tempDir(),
+    allowedHosts: opts.allowedHosts,
     accounts: { github: { clientId: "client-id", clientSecret: "s3cret-for-tests", fetch: fakeGitHub }, admins: parseAdmins(opts.admins ?? "boss"), publicUrl: opts.publicUrl },
   });
   cleanup.push(() => {
@@ -47,8 +52,9 @@ async function setup(opts: { publicUrl?: string; admins?: string } = {}) {
     });
     return { status: res.status, res, data: (await res.clone().json().catch(() => null)) as any };
   };
+  // With an https public address the cookies carry the __Host- prefix.
   const cookiePair = (res: Response, name: string) =>
-    res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`))?.split(";")[0] ?? "";
+    res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`) || c.startsWith(`__Host-${name}=`))?.split(";")[0] ?? "";
   // Walks the sign-in the way a browser does and returns the session cookie, or the page it landed on.
   const signIn = async (code: string) => {
     const start = await call("/auth/github");
@@ -94,8 +100,13 @@ test("a named administrator signs in and gets an HttpOnly session; the page then
 
 test("with a public https address the cookies are Secure", async () => {
   const { signIn } = await setup({ publicUrl: "https://docs.example.com" });
-  const { res } = await signIn("code-boss");
-  expect(res.headers.getSetCookie().find((c) => c.startsWith("docify_session="))).toContain("; Secure");
+  const { res, cookie } = await signIn("code-boss");
+  // __Host- makes the browser refuse a copy set for a parent domain or over plain http.
+  const set = res.headers.getSetCookie().find((c) => c.startsWith("__Host-docify_session="))!;
+  expect(set).toContain("; Secure");
+  expect(set).toContain("Path=/;");
+  expect(set).not.toContain("Domain");
+  expect(cookie).toStartWith("__Host-docify_session=");
 });
 
 test("the callback refuses a wrong, missing or replayed state, a bad code, and a cancelled sign-in", async () => {
@@ -282,4 +293,114 @@ test("accountsFromEnv: off without the GitHub variables, strict when they are ha
   for (const bad of ["docs.example.com", "ftp://docs.example.com", "https://docs.example.com/app", "https://user:pw@docs.example.com"]) {
     expect(() => accountsFromEnv({ DOCIFY_GITHUB_CLIENT_ID: "id", DOCIFY_GITHUB_CLIENT_SECRET: "secret", DOCIFY_PUBLIC_URL: bad })).toThrow("DOCIFY_PUBLIC_URL");
   }
+});
+
+// Findings of the security review, 2026-11-14.
+test("the callback answers a malformed state with the sign-in page, not an error", async () => {
+  const { call, d } = await setup();
+  const r = await call(`/auth/github/callback?code=x&state=${encodeURIComponent("a".repeat(31) + "é")}`, `docify_oauth_state=${"a".repeat(32)}`);
+  expect([r.status, r.res.headers.get("location")]).toEqual([302, "/#signin=expired"]);
+  expect(d.logs.read(0, 1000).lines.filter((l) => l.level === "error")).toEqual([]);
+  // GitHub's error is trusted only together with this browser's state.
+  expect((await call("/auth/github/callback?error=access_denied")).res.headers.get("location")).toBe("/#signin=expired");
+});
+
+test("a cookie sent twice is refused, so a planted copy cannot win", async () => {
+  const { call, signIn, cookiePair } = await setup();
+  const start = await call("/auth/github");
+  const real = cookiePair(start.res, "docify_oauth_state");
+  const planted = "a".repeat(32);
+  const r = await call(`/auth/github/callback?code=code-alice&state=${planted}`, `docify_oauth_state=${planted}; ${real}`);
+  expect([r.res.headers.get("location"), cookiePair(r.res, "docify_session")]).toEqual(["/#signin=expired", ""]);
+  const admin = (await signIn("code-boss")).cookie;
+  expect((await call("/api/users", `docify_session=${"x".repeat(43)}; ${admin}`)).status).toBe(401);
+  expect((await call("/api/users", admin)).status).toBe(200);
+});
+
+test("signing in again in the same browser ends the earlier session", async () => {
+  const { call, signIn, cookiePair } = await setup();
+  const first = (await signIn("code-boss")).cookie;
+  const start = await call("/auth/github");
+  const state = new URL(start.res.headers.get("location")!).searchParams.get("state")!;
+  const back = await call(`/auth/github/callback?code=code-boss&state=${state}`, `${cookiePair(start.res, "docify_oauth_state")}; ${first}`);
+  const second = cookiePair(back.res, "docify_session");
+  expect(second).not.toBe(first);
+  expect((await call("/api/users", first)).status).toBe(401);
+  expect((await call("/api/users", second)).status).toBe(200);
+});
+
+// A link on another site carries the Lax cookie. Nothing under /api may answer it.
+test("a request that the browser marks as cross-site is refused", async () => {
+  const { base, call, signIn } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  const from = (site: string) => fetch(`${base}/api/export`, { headers: { cookie: admin, "sec-fetch-site": site, "sec-fetch-mode": "navigate" } });
+  const cross = await from("cross-site");
+  expect(cross.status).toBe(403);
+  expect((await cross.json()).code).toBe("forbidden");
+  expect((await from("same-origin")).status).toBe(200);
+  expect((await call("/api/export", admin)).status).toBe(200);
+});
+
+test("answers that depend on who asks are never cached", async () => {
+  const { call, signIn } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  for (const path of ["/api/session", "/api/users", "/api/sources"]) {
+    expect([path, (await call(path, admin)).res.headers.get("cache-control")]).toEqual([path, "no-store"]);
+  }
+  expect((await call("/api/session")).res.headers.get("cache-control")).toBe("no-store");
+});
+
+test("a member sees sources without server paths", async () => {
+  const { call, signIn, d } = await setup();
+  const docs = tempDir();
+  await Bun.write(`${docs}/a.md`, "# A\n\ntext\n");
+  d.addSource({ library: "lib", version: "1", kind: "local", locator: docs });
+  const admin = (await signIn("code-boss")).cookie;
+  const alice = (await signIn("code-alice")).cookie;
+  const id = (await call("/api/users", admin)).data.users[0].id;
+  await call(`/api/users/${id}`, admin, "PATCH", { status: "active" });
+
+  expect((await call("/api/sources", admin)).data[0].locator).toBe(docs);
+  const seen = (await call("/api/sources", alice)).data[0];
+  expect(seen.locator).toBe(docs.split("/").pop());
+  expect(JSON.stringify(seen)).not.toContain(docs);
+  const pins = (await call("/api/pins", alice)).data;
+  expect([pins.project, pins.file]).toEqual([null, null]);
+  expect(typeof (await call("/api/pins", admin)).data.project).toBe("string");
+});
+
+test("settings cannot name the server's own secrets as a credential variable", async () => {
+  const { call, signIn } = await setup();
+  const admin = (await signIn("code-boss")).cookie;
+  for (const patch of [{ crawl4aiApiKeyEnv: "DOCIFY_GITHUB_CLIENT_SECRET" }, { embeddingApiKeyEnv: "DOCIFY_MCP_TOKENS" }, { embeddingBaseUrlEnv: "DOCIFY_WEB_TOKEN" }]) {
+    const r = await call("/api/config", admin, "PUT", patch);
+    expect([Object.keys(patch)[0], r.status, r.data.code]).toEqual([Object.keys(patch)[0], 400, "invalid_input"]);
+  }
+  expect((await call("/api/config", admin, "PUT", { embeddingApiKeyEnv: "MY_EMBEDDING_KEY" })).status).toBe(200);
+});
+
+test("control and direction characters are dropped from a display name", async () => {
+  const { call, signIn } = await setup();
+  const { cookie } = await signIn("code-mallory");
+  expect((await call("/api/session", cookie)).data.user.name).toBe("Mallory");
+});
+
+test("off loopback, sign-in needs the public address", async () => {
+  const d = newDocify(tempDir());
+  cleanup.push(() => d.close());
+  const github = { clientId: "client-id", clientSecret: "s3cret-for-tests", fetch: fakeGitHub };
+  await expect(startServer(0, { docify: d, quiet: true, host: "0.0.0.0", accounts: { github, admins: parseAdmins("boss") } })).rejects.toThrow("DOCIFY_PUBLIC_URL");
+});
+
+// Hostname alone is not enough: the same name over plain http or on another port is another origin.
+test("with a public address a write must come from exactly that origin", async () => {
+  const { base, signIn, call } = await setup({ publicUrl: "https://docs.example.com", allowedHosts: ["docs.example.com"] });
+  const admin = (await signIn("code-boss")).cookie;
+  const write = (origin: string) =>
+    fetch(`${base}/api/pins`, { method: "PUT", headers: { cookie: admin, host: "docs.example.com", origin, "content-type": "application/json" }, body: JSON.stringify({ library: "lib", version: "1" }) });
+  expect((await write("http://docs.example.com")).status).toBe(403);
+  expect((await write("https://docs.example.com:8443")).status).toBe(403);
+  expect((await write("https://docs.example.com")).status).toBe(200);
+  const page = await call("/");
+  expect(page.res.headers.get("strict-transport-security")).toContain("max-age=");
 });

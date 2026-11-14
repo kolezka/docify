@@ -204,8 +204,14 @@ function stringField(field: string, v: unknown, max: number, pattern?: RegExp, h
   return s;
 }
 
-const envNameField = (field: string, v: unknown) =>
-  stringField(field, v, 128, ENV_NAME, "must be an environment variable name (letters, digits, underscore)");
+// A credential variable is read and sent to a server the same settings name. Docify's own
+// secrets must never be reachable that way.
+const OWN_SECRETS = new Set(["DOCIFY_GITHUB_CLIENT_SECRET", "DOCIFY_GITHUB_CLIENT_ID", "DOCIFY_MCP_TOKENS", "DOCIFY_WEB_TOKEN", "DOCIFY_ADMINS"]);
+const envNameField = (field: string, v: unknown) => {
+  const name = stringField(field, v, 128, ENV_NAME, "must be an environment variable name (letters, digits, underscore)");
+  if (OWN_SECRETS.has(name.toUpperCase())) throw new ConfigError(`${field} cannot be ${name}; that variable belongs to Docify itself`, field);
+  return name;
+};
 
 function modelField(field: string, v: unknown): string {
   const s = stringField(field, v, 200, MODEL_NAME, "must be a model name such as bge-m3 or org/model");

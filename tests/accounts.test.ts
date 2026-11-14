@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ACCOUNTS_FILE, AccountStore, SESSION_TTL_MS, parseAdmins } from "../src/core/accounts.ts";
 import { exportStore, importStore } from "../src/core/backup.ts";
@@ -161,4 +162,81 @@ test("store backups hold no accounts, and an import leaves accounts in place", a
   await importStore(d, bytes, { force: true, keepConfig: false });
   expect(store.userForSession(session)?.login).toBe("Boss");
   expect(store.listUsers().length).toBe(1);
+});
+
+// A GitHub login can be renamed away and registered again by someone else, so a login in
+// DOCIFY_ADMINS is tied to the first GitHub id that signs in with it.
+test("a login named in DOCIFY_ADMINS belongs to the first GitHub account that used it", () => {
+  const { store } = open("boss");
+  const pending = store.signIn({ id: 2, login: "alice", name: null }).user;
+  expect(store.signIn({ id: 1, login: "boss", name: null })).toMatchObject({ user: { role: "admin", status: "active" }, loginTaken: false });
+
+  // Someone else now holds the login: a new account, and an existing one that was renamed.
+  expect(store.signIn({ id: 999, login: "boss", name: null })).toMatchObject({ user: { role: "member", status: "pending" }, created: true, loginTaken: true });
+  expect(store.signIn({ id: 2, login: "BOSS", name: null })).toMatchObject({ user: { id: pending.id, role: "member", status: "pending" }, loginTaken: true });
+  // The real administrator keeps the role under a new login.
+  expect(store.signIn({ id: 1, login: "big-boss", name: null }).user).toMatchObject({ role: "admin", status: "active" });
+  expect(store.listUsers().filter((u) => store.isNamedAdmin(u)).map((u) => u.github_id)).toEqual([1]);
+});
+
+test("a login taken out of DOCIFY_ADMINS loses the role and its sessions at the next start", () => {
+  const home = tempDir();
+  const before = new AccountStore(home, parseAdmins("boss, carol"));
+  const admin = before.signIn(boss).user;
+  const carol = before.signIn({ id: 3, login: "carol", name: null });
+  expect(carol.user.role).toBe("admin");
+  // Made an administrator in the panel, not by the variable: that one stays.
+  const panel = before.signIn(alice).user;
+  before.updateUser(panel.id, { status: "active", role: "admin" }, admin.id);
+  expect(before.demoted).toEqual([]);
+  before.close();
+
+  const { store } = open("boss", undefined, home);
+  expect(store.demoted).toEqual(["carol"]);
+  expect(store.getUser(carol.user.id)).toMatchObject({ role: "member", status: "active" });
+  expect(store.userForSession(carol.session)).toBeNull();
+  expect(store.getUser(panel.id)!.role).toBe("admin");
+  expect(store.getUser(admin.id)!.role).toBe("admin");
+  expect(store.signIn({ id: 3, login: "carol", name: null }).user.role).toBe("member");
+});
+
+test("a sign-in ends the session the browser already had, and a person keeps at most ten", () => {
+  const { store, home } = open();
+  const first = store.signIn(boss).session;
+  const second = store.signIn(boss, first).session;
+  expect(store.userForSession(first)).toBeNull();
+  expect(store.userForSession(second)?.login).toBe("Boss");
+  for (let i = 0; i < 12; i++) store.signIn(boss);
+  expect(store.userForSession(second)).toBeNull();
+  const raw = new Database(join(home, ACCOUNTS_FILE), { readonly: true });
+  expect(raw.query<{ n: number }, []>("SELECT count(*) AS n FROM sessions").get()!.n).toBe(10);
+  raw.close();
+});
+
+test("the accounts file is readable by its owner only", () => {
+  const { store, home } = open();
+  store.signIn(boss);
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const file = join(home, ACCOUNTS_FILE + suffix);
+    if (existsSync(file)) expect([suffix, statSync(file).mode & 0o777]).toEqual([suffix, 0o600]);
+  }
+  expect(statSync(join(home, ACCOUNTS_FILE)).mode & 0o777).toBe(0o600);
+});
+
+test("an accounts file from before the named-admin fix still opens", () => {
+  const home = tempDir();
+  // The users table as the first build created it: no by_env column, no named_logins table.
+  const old = new Database(join(home, ACCOUNTS_FILE), { create: true });
+  old.run("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  old.run("INSERT INTO meta (key, value) VALUES ('schema_version', '1')");
+  old.run(
+    "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, github_id INTEGER NOT NULL UNIQUE, login TEXT NOT NULL, name TEXT, role TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, last_login_at TEXT)",
+  );
+  old.run("INSERT INTO users (github_id, login, role, status, created_at) VALUES (101, 'alice', 'member', 'active', '2026-11-14T00:00:00.000Z')");
+  old.close();
+
+  const { store } = open("boss", undefined, home);
+  expect(store.listUsers().map((u) => u.login)).toEqual(["alice"]);
+  expect(store.signIn(boss).user.role).toBe("admin");
+  expect(store.signIn(alice).user.status).toBe("active");
 });
