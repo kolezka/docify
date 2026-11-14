@@ -4,7 +4,7 @@ import { afterAll, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { collectLocal, crawl, DEFAULT_LIMITS } from "../src/core/collect.ts";
-import { validateIgnorePatterns } from "../src/core/docify.ts";
+import { DocifyError, validateIgnorePatterns } from "../src/core/docify.ts";
 import { renderSources, search, sources } from "../src/core/search.ts";
 import { fakeGraph, newDocify, tempDir, writeDocs } from "./helpers.ts";
 
@@ -70,6 +70,26 @@ test("patterns must be a bounded list of valid regular expressions", () => {
     expect(() => validateIgnorePatterns(bad, "ignore")).toThrow(/^ignore/);
   }
   expect(() => validateIgnorePatterns(["("], "graphIgnore")).toThrow(/^graphIgnore: /);
+});
+
+test("a rejected list names the option and the pattern, so a form can point at the field", () => {
+  const caught = (value: unknown, name: "ignore" | "graphIgnore") => {
+    try {
+      validateIgnorePatterns(value, name);
+    } catch (err) {
+      return err as DocifyError;
+    }
+    throw new Error("expected a rejection");
+  };
+  const bad = caught(["^docs/", "^api/(v1"], "graphIgnore");
+  expect(bad).toBeInstanceOf(DocifyError);
+  expect(bad.code).toBe("invalid_input");
+  expect(bad.field).toBe("graphIgnore");
+  // The second of two lines is wrong; the message has to say which.
+  expect(bad.message).toStartWith('graphIgnore: "^api/(v1" is not a valid regular expression');
+  expect(bad.message).not.toContain("^docs/");
+  expect(caught("^a", "ignore").field).toBe("ignore");
+  expect(caught(Array.from({ length: 101 }, (_, i) => `p${i}`), "ignore").message).toBe("ignore: at most 100 patterns are accepted");
 });
 
 test("local collection leaves out files whose path matches, and says so when nothing is left", () => {

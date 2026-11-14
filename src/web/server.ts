@@ -103,7 +103,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   const fail = (err: unknown) => {
     if (err instanceof LogReadError) return json({ error: err.message, code: "logs_unavailable" }, 500);
     if (err instanceof ConfigError) return json({ error: err.message, code: "invalid_input", field: err.field ?? null }, 400);
-    if (err instanceof DocifyError) return json({ error: err.message, code: err.code }, STATUS_BY_CODE[err.code] ?? 400);
+    if (err instanceof DocifyError) return json({ error: err.message, code: err.code, ...(err.field ? { field: err.field } : {}) }, STATUS_BY_CODE[err.code] ?? 400);
     docify.logs.append("docify", err instanceof Error ? err.message : String(err), "system", "error");
     console.error(err);
     return json({ error: String(err instanceof Error ? err.message : err), code: "internal" }, 500);

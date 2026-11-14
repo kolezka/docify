@@ -59,6 +59,31 @@ test("a source that is not prepared, or prepared without a graph, has no nodes a
   expect(skipped.generation).not.toBeNull();
   expect(skipped.graphStatus).toBe("skipped");
   expect(skipped.nodes).toEqual([]);
+  expect(skipped.stats.ignoredDocuments).toBe(0);
+});
+
+test("pages left out by graphIgnore are counted as ignored, not as missing", async () => {
+  const d = setup();
+  const dir = writeDocs(join(tempDir("docify-src-"), "two"), {
+    "guide.md": "# Guide\n\n## Install\n\nRun the installer.\n",
+    "notes-a.md": "# A\n\n## Draft a\n\nText.\n",
+    "notes-b.md": "# B\n\n## Draft b\n\nText.\n",
+  });
+  d.addSource({ library: "two", version: "1", kind: "local", locator: dir, graphIgnore: ["^notes-"] });
+  await d.prepare("two@1", { graphRunner: fakeGraph });
+  const some = graphView(d, "two@1");
+  expect(some.graphStatus).toBe("ok");
+  expect(some.stats.ignoredDocuments).toBe(2);
+  expect(some.stats.missingDocuments).toEqual([]);
+  expect(some.nodes.every((n) => n.page === "guide.md")).toBe(true);
+
+  // Every page ignored: no graph, and the view can say that the patterns are the reason.
+  d.updateSourceIgnore("two@1", { graphIgnore: ["."] });
+  await d.prepare("two@1", { graphRunner: fakeGraph });
+  const none = graphView(d, "two@1");
+  expect(none.graphStatus).toBe("skipped");
+  expect(none.stats.ignoredDocuments).toBe(3);
+  expect(none.nodes).toEqual([]);
 });
 
 test("the active graph comes back with pages, grounding, one edge per pair and hyperedges as groups", async () => {

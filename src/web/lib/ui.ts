@@ -65,10 +65,21 @@ export const input = tv({
 // A text view: several lines of input, here one pattern per line.
 export const textArea = tv({
   base: "block w-full min-w-0 resize-y rounded-md border border-sep bg-field px-2 py-1 font-mono text-[12px] leading-[18px] text-label transition-colors placeholder:text-label2 focus:border-accent focus:ring-[3px] focus:ring-accent-soft focus:outline-none disabled:opacity-60",
+  variants: {
+    invalid: {
+      true: "border-bad focus:border-bad focus:ring-bad/25",
+    },
+  },
 });
 
 // One pattern per line; blank lines are dropped.
 export const patternLines = (text: string): string[] => text.split("\n").map((line) => line.trim()).filter(Boolean);
+
+export const PATTERN_FIELDS = ["ignore", "graphIgnore"] as const;
+export type PatternField = (typeof PATTERN_FIELDS)[number];
+export const isPatternField = (field: string | null): field is PatternField => (PATTERN_FIELDS as readonly string[]).includes(field ?? "");
+// The server names the option first ("ignore: ..."); beside the field that name is noise.
+export const patternError = (message: string): string => message.replace(/^(?:ignore|graphIgnore): /, "");
 
 // A popup button: a native select styled as one.
 export const popup = tv({

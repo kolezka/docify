@@ -105,15 +105,18 @@ const MAX_IGNORE_PATTERN_LENGTH = 500;
 
 // Regular expressions tested against a document's path inside the source, anywhere in it unless anchored.
 export function validateIgnorePatterns(value: unknown, name: "ignore" | "graphIgnore"): string[] {
-  if (!Array.isArray(value)) throw new DocifyError("invalid_input", `${name} must be a list of regular expressions`);
-  if (value.length > MAX_IGNORE_PATTERNS) throw new DocifyError("invalid_input", `${name} accepts at most ${MAX_IGNORE_PATTERNS} patterns`);
+  const invalid = (message: string) => new DocifyError("invalid_input", `${name}: ${message}`, name);
+  if (!Array.isArray(value)) throw invalid("must be a list of regular expressions");
+  if (value.length > MAX_IGNORE_PATTERNS) throw invalid(`at most ${MAX_IGNORE_PATTERNS} patterns are accepted`);
   for (const pattern of value) {
-    if (typeof pattern !== "string" || !pattern) throw new DocifyError("invalid_input", `${name} patterns must be non-empty text`);
-    if (pattern.length > MAX_IGNORE_PATTERN_LENGTH) throw new DocifyError("invalid_input", `${name} patterns are limited to ${MAX_IGNORE_PATTERN_LENGTH} characters`);
+    if (typeof pattern !== "string" || !pattern) throw invalid("patterns must be non-empty text");
+    if (pattern.length > MAX_IGNORE_PATTERN_LENGTH) throw invalid(`patterns are limited to ${MAX_IGNORE_PATTERN_LENGTH} characters`);
     try {
       new RegExp(pattern);
     } catch (err) {
-      throw new DocifyError("invalid_input", `${name}: ${err instanceof Error ? err.message : `invalid regular expression: ${pattern}`}`);
+      // Name the pattern: the engine's message alone does not say which line of a list is wrong.
+      const reason = err instanceof Error ? err.message.replace(/^Invalid regular expression: /, "") : "";
+      throw invalid(`${JSON.stringify(pattern)} is not a valid regular expression${reason ? ` (${reason})` : ""}`);
     }
   }
   return [...new Set(value as string[])];
@@ -156,6 +159,8 @@ export class DocifyError extends Error {
   constructor(
     public code: string,
     message: string,
+    // The input the error is about, when there is one; the web UI shows the message at that field.
+    public field?: string,
   ) {
     super(message);
   }

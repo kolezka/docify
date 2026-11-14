@@ -226,8 +226,14 @@ test("ignore patterns round trip through the source APIs for URL and local sourc
     const patched = await call(`/api/sources/${id}`, "PATCH", { ignore });
     expect(patched.status).toBe(400);
     expect(patched.data.code).toBe("invalid_input");
-    expect((await call("/api/sources", "POST", { library: "bad", kind: "url", locator: "https://example.com", graphIgnore: ignore })).status).toBe(400);
+    // The form puts the message at the field the response names.
+    expect(patched.data.field).toBe("ignore");
+    const posted = await call("/api/sources", "POST", { library: "bad", kind: "url", locator: "https://example.com", graphIgnore: ignore });
+    expect(posted.status).toBe(400);
+    expect(posted.data.field).toBe("graphIgnore");
   }
+  // Errors that are not about one input carry no field.
+  expect((await call(`/api/sources/${id}`, "PATCH", {})).data.field).toBeUndefined();
   // A bad list must not leave the crawler half of the same request applied.
   expect((await call(`/api/sources/${id}`, "PATCH", { crawl: { maxPages: 9 }, graphIgnore: ["("] })).status).toBe(400);
   expect((await read()).crawl).toEqual({ maxPages: 3 });

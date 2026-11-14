@@ -18,3 +18,14 @@ export function fraction(text: string | null | undefined): number | null {
   const total = Number(m[2]);
   return total > 0 ? Math.min(1, Number(m[1]) / total) : null;
 }
+
+// What the graph row says about coverage. `ignored` counts pages kept out by the source's graphIgnore patterns.
+export function graphCoverage(status: string | null, missing: number, ignored: number): string | undefined {
+  const pages = (n: number) => `${n} ${n === 1 ? "page" : "pages"}`;
+  const left = ignored ? `${pages(ignored)} left out by ignore patterns` : "";
+  if (status === "ok") return left ? `${left}. Every other page has graph nodes` : "Every page has graph nodes";
+  if (status === "partial") return `${pages(missing)} ${missing === 1 ? "has" : "have"} no graph nodes${left ? `. ${left}` : ""}`;
+  // A graph that was wanted is skipped only when no page was left to build it from.
+  if (status === "skipped" && ignored) return "Every page matches the ignore patterns, so no graph was built";
+  return undefined;
+}

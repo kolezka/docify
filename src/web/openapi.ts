@@ -121,7 +121,7 @@ export function openApiSpec() {
         get: {
           summary: "Graph of the active generation",
           description:
-            "Nodes with their page and best grounding passage, one edge per connected node pair (indexes into `nodes`), and hyperedge groups. `nodes` is empty when the source is not prepared or was prepared without a graph; `graphStatus` says which.",
+            "Nodes with their page and best grounding passage, one edge per connected node pair (indexes into `nodes`), and hyperedge groups. `nodes` is empty when the source is not prepared or was prepared without a graph; `graphStatus` says which. `stats.ignoredDocuments` counts the documents the source's graphIgnore patterns kept out; they are not in `stats.missingDocuments`.",
           parameters: [idParam("Source id")],
           responses: { "200": ok("Graph view"), ...errors(401, 404) },
         },

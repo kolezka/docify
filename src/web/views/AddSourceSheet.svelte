@@ -6,11 +6,12 @@
   import { api, ApiError, errorText, type ConfigDescription } from "../lib/api.ts";
   import { nav } from "../lib/nav.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
-  import { button, footnote, input, notice, panel, patternLines, popup, row, textArea } from "../lib/ui.ts";
+  import { tick } from "svelte";
+  import { button, footnote, input, isPatternField, notice, panel, patternError, patternLines, popup, row, textArea } from "../lib/ui.ts";
 
   type Kind = "url" | "local";
   const CRAWLER_LABELS: Record<string, string> = { builtin: "Built-in", crawl4ai: "Crawl4AI", browserless: "Browserless" };
-  const FIELDS = ["locator", "library", "version", "crawlProvider"] as const;
+  const FIELDS = ["locator", "library", "version", "crawlProvider", "ignore", "graphIgnore"] as const;
   type FieldName = (typeof FIELDS)[number];
 
   let kind = $state<Kind>("url");
@@ -124,6 +125,11 @@
       if (field && (FIELDS as readonly string[]).includes(field)) fieldError = { field: field as FieldName, message: err instanceof ApiError ? err.message : errorText(err) };
       else error = errorText(err);
       submitting = false;
+      // The pattern fields sit low in the sheet; bring the one with the error into view.
+      if (isPatternField(field)) {
+        await tick();
+        document.getElementById(field === "ignore" ? "add-ignore" : "add-graph-ignore")?.focus();
+      }
       return;
     }
     reset();
@@ -252,14 +258,16 @@
     <div class={panel({ class: "mt-3.5" })}>
       <div class={row({ class: "flex-col items-stretch gap-1.5" })}>
         <label for="add-ignore" class="text-[13px] text-label">Do not collect</label>
-        <textarea id="add-ignore" class={textArea()} rows="2" spellcheck="false" autocomplete="off" placeholder="One pattern per line" bind:value={ignoreText} disabled={submitting}></textarea>
+        <textarea id="add-ignore" class={textArea({ invalid: !!errorFor("ignore") })} rows="2" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={!!errorFor("ignore")} aria-describedby="add-ignore-hint" bind:value={ignoreText} oninput={() => fieldError?.field === "ignore" && (fieldError = null)} disabled={submitting}></textarea>
+        {#if errorFor("ignore")}<span class="text-[11px] leading-[14px] font-medium break-words text-bad-text" role="alert">{patternError(errorFor("ignore") ?? "")}</span>{/if}
       </div>
       <div class={row({ class: "flex-col items-stretch gap-1.5" })}>
         <label for="add-graph-ignore" class="text-[13px] text-label">Leave out of the graph</label>
-        <textarea id="add-graph-ignore" class={textArea()} rows="2" spellcheck="false" autocomplete="off" placeholder="One pattern per line" bind:value={graphIgnoreText} disabled={submitting}></textarea>
+        <textarea id="add-graph-ignore" class={textArea({ invalid: !!errorFor("graphIgnore") })} rows="2" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={!!errorFor("graphIgnore")} aria-describedby="add-ignore-hint" bind:value={graphIgnoreText} oninput={() => fieldError?.field === "graphIgnore" && (fieldError = null)} disabled={submitting}></textarea>
+        {#if errorFor("graphIgnore")}<span class="text-[11px] leading-[14px] font-medium break-words text-bad-text" role="alert">{patternError(errorFor("graphIgnore") ?? "")}</span>{/if}
       </div>
     </div>
-    <p class="mx-3.5 mt-1.5 text-[11px] leading-[14px] text-label2">Optional. Regular expressions matched against the document path, such as ^changelog/.</p>
+    <p id="add-ignore-hint" class="mx-3.5 mt-1.5 text-[11px] leading-[14px] text-label2">Optional. Regular expressions matched against the document path, such as ^changelog/.</p>
 
     <div class={panel({ class: "mt-3.5" })}>
       <div class={row()}>
