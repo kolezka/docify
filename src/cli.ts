@@ -14,7 +14,14 @@ const USAGE = `docify <command> [options]
 Preparation (may use the network or the configured graph provider):
   setup                         install the pinned Graphify runtime and download the embedding model
   add <library> <path|url> [--version V] [--id ID] [--crawler builtin|crawl4ai|browserless]
+                                [--ignore REGEX ...] [--graph-ignore REGEX ...]
   crawler <source-id> <builtin|crawl4ai|browserless|default>
+  ignore <source-id> [--ignore REGEX ...] [--graph-ignore REGEX ...] [--no-ignore] [--no-graph-ignore]
+                                paths left out of a source, as regular expressions over the
+                                document path. --ignore: not collected at all. --graph-ignore:
+                                searchable, but not in the graph. Each option replaces its list,
+                                --no-... removes it; without options the current lists are shown.
+                                Applies at the next prepare.
   summarize <source-id> [--force] generate and save a collection summary using the configured OpenAI graph provider
   prepare <source-id> [--no-graph] [--force] [--summary]
   remove <source-id>
@@ -82,6 +89,10 @@ async function main(argv: string[]) {
       require: { type: "string" },
       heading: { type: "string" },
       crawler: { type: "string" },
+      ignore: { type: "string", multiple: true },
+      "graph-ignore": { type: "string", multiple: true },
+      "no-ignore": { type: "boolean" },
+      "no-graph-ignore": { type: "boolean" },
     },
   });
   if (!command || command === "help" || command === "--help") {
@@ -115,8 +126,22 @@ async function main(argv: string[]) {
         const [library, locator] = positionals;
         if (!library || !locator) throw new DocifyError("invalid_input", "usage: docify add <library> <path|url> [--version V]");
         const kind = /^https?:\/\//.test(locator) ? "url" : "local";
-        const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id, crawlProvider: values.crawler as CrawlProvider | undefined });
+        const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id, crawlProvider: values.crawler as CrawlProvider | undefined, ignore: values.ignore, graphIgnore: values["graph-ignore"] });
         console.log(`added ${s.id} (${s.kind} ${s.locator}). Run: docify prepare ${s.id}`);
+        break;
+      }
+      case "ignore": {
+        const id = positionals[0];
+        if (!id) throw new DocifyError("invalid_input", "usage: docify ignore <source-id> [--ignore REGEX ...] [--graph-ignore REGEX ...] [--no-ignore] [--no-graph-ignore]");
+        if (values.ignore && values["no-ignore"]) throw new DocifyError("invalid_input", "use either --ignore or --no-ignore");
+        if (values["graph-ignore"] && values["no-graph-ignore"]) throw new DocifyError("invalid_input", "use either --graph-ignore or --no-graph-ignore");
+        const ignore = values["no-ignore"] ? null : values.ignore;
+        const graphIgnore = values["no-graph-ignore"] ? null : values["graph-ignore"];
+        const changed = ignore !== undefined || graphIgnore !== undefined;
+        const options = JSON.parse((changed ? docify.updateSourceIgnore(id, { ignore, graphIgnore }) : docify.requireSource(id)).options) as { ignore?: string[]; graphIgnore?: string[] };
+        const list = (patterns: string[] | undefined) => (patterns?.length ? patterns.map((p) => `\n    ${p}`).join("") : " none");
+        console.log(`${id}\n  ignored paths:${list(options.ignore)}\n  left out of the graph:${list(options.graphIgnore)}`);
+        if (changed) console.log(`Run: docify prepare ${id}`);
         break;
       }
       case "crawler": {

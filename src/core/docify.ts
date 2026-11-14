@@ -100,6 +100,30 @@ function validateCrawlLimitPatch(value: unknown, allowNull: boolean): CrawlLimit
   return patch as CrawlLimitPatch;
 }
 
+const MAX_IGNORE_PATTERNS = 100;
+const MAX_IGNORE_PATTERN_LENGTH = 500;
+
+// Regular expressions tested against a document's path inside the source, anywhere in it unless anchored.
+export function validateIgnorePatterns(value: unknown, name: "ignore" | "graphIgnore"): string[] {
+  const invalid = (message: string) => new DocifyError("invalid_input", `${name}: ${message}`, name);
+  if (!Array.isArray(value)) throw invalid("must be a list of regular expressions");
+  if (value.length > MAX_IGNORE_PATTERNS) throw invalid(`at most ${MAX_IGNORE_PATTERNS} patterns are accepted`);
+  for (const pattern of value) {
+    if (typeof pattern !== "string" || !pattern) throw invalid("patterns must be non-empty text");
+    if (pattern.length > MAX_IGNORE_PATTERN_LENGTH) throw invalid(`patterns are limited to ${MAX_IGNORE_PATTERN_LENGTH} characters`);
+    try {
+      new RegExp(pattern);
+    } catch (err) {
+      // Name the pattern: the engine's message alone does not say which line of a list is wrong.
+      const reason = err instanceof Error ? err.message.replace(/^Invalid regular expression: /, "") : "";
+      throw invalid(`${JSON.stringify(pattern)} is not a valid regular expression${reason ? ` (${reason})` : ""}`);
+    }
+  }
+  return [...new Set(value as string[])];
+}
+
+const compileIgnore = (value: unknown, name: "ignore" | "graphIgnore") => validateIgnorePatterns(value ?? [], name).map((pattern) => new RegExp(pattern));
+
 export interface AddSourceInput {
   library: string;
   version?: string | null;
@@ -108,6 +132,10 @@ export interface AddSourceInput {
   id?: string;
   crawl?: Partial<CrawlLimits>;
   crawlProvider?: CrawlProvider;
+  // Paths that are not collected at all.
+  ignore?: string[];
+  // Paths that stay searchable but are left out of the graph.
+  graphIgnore?: string[];
 }
 
 export interface PrepareOptions {
@@ -131,6 +159,8 @@ export class DocifyError extends Error {
   constructor(
     public code: string,
     message: string,
+    // The input the error is about, when there is one; the web UI shows the message at that field.
+    public field?: string,
   ) {
     super(message);
   }
@@ -246,6 +276,8 @@ export class Docify {
         if (key in input.crawl) validateCrawlLimitPatch({ [key]: input.crawl[key] }, false);
       }
     }
+    const ignore = input.ignore === undefined ? [] : validateIgnorePatterns(input.ignore, "ignore");
+    const graphIgnore = input.graphIgnore === undefined ? [] : validateIgnorePatterns(input.graphIgnore, "graphIgnore");
     let locator = input.locator.trim();
     if (input.kind === "local") {
       locator = resolve(locator.replace(/^~(?=$|\/)/, homedir()));
@@ -268,7 +300,12 @@ export class Docify {
     if (existing) throw new DocifyError("exists", `source ${id} already exists`);
     this.db.run(
       "INSERT INTO sources (id, library, version, kind, locator, options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [id, library, version, input.kind, locator, JSON.stringify({ crawl: input.crawl ?? {}, ...(input.crawlProvider === undefined ? {} : { crawlProvider: input.crawlProvider }) }), nowIso()],
+      [id, library, version, input.kind, locator, JSON.stringify({
+        crawl: input.crawl ?? {},
+        ...(input.crawlProvider === undefined ? {} : { crawlProvider: input.crawlProvider }),
+        ...(ignore.length ? { ignore } : {}),
+        ...(graphIgnore.length ? { graphIgnore } : {}),
+      }), nowIso()],
     );
     this.logs.append(id, `Source registered (${input.kind})`);
     return this.getSource(id)!;
@@ -293,6 +330,26 @@ export class Docify {
           if (value === null) delete options.crawl[key];
           else options.crawl[key] = value;
         }
+      }
+      this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
+      return this.requireSource(id);
+    }).immediate();
+  }
+
+  // Works for local and URL sources. A list replaces the stored one; null or an empty list removes it.
+  // The change applies at the next prepare.
+  updateSourceIgnore(id: string, patch: { ignore?: unknown; graphIgnore?: unknown }): SourceRow {
+    if (patch.ignore === undefined && patch.graphIgnore === undefined) throw new DocifyError("invalid_input", "ignore or graphIgnore is required");
+    const lists = (["ignore", "graphIgnore"] as const)
+      .filter((name) => patch[name] !== undefined)
+      .map((name) => ({ name, patterns: patch[name] === null ? [] : validateIgnorePatterns(patch[name], name) }));
+    return this.db.transaction(() => {
+      const source = this.requireSource(id);
+      if (leaseAlive(source.lock_pid, source.lock_at)) throw new DocifyError("busy", `source ${id} is being prepared`);
+      const options = JSON.parse(source.options);
+      for (const { name, patterns } of lists) {
+        if (patterns.length) options[name] = patterns;
+        else delete options[name];
       }
       this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
       return this.requireSource(id);
@@ -456,7 +513,10 @@ export class Docify {
     };
     try {
       await checkpoint("collect");
-      const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits>; crawlProvider?: CrawlProvider; crawl4ai?: Crawl4aiSourceOptions };
+      const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits>; crawlProvider?: CrawlProvider; crawl4ai?: Crawl4aiSourceOptions; ignore?: string[]; graphIgnore?: string[] };
+      const ignore = compileIgnore(sourceOpts.ignore, "ignore");
+      const graphIgnore = compileIgnore(sourceOpts.graphIgnore, "graphIgnore");
+      const inGraph = (path: string) => !graphIgnore.some((pattern) => pattern.test(path));
       const provider = source.kind === "local" ? "local" : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
       if (provider !== "local") validateCrawlProvider(provider);
       const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth, maxTotalBytes: this.config.maxTotalBytes } : {}), ...sourceOpts.crawl };
@@ -464,18 +524,24 @@ export class Docify {
       const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
       const collectLog: CollectLog = (level, text) => this.logs.append(sourceId, text, "system", level);
       if (provider !== "local") this.logs.append(sourceId, `Collecting with ${this.describeProvider(provider as CrawlProvider)}`);
-      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits, collectLog) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts, collectLog);
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits, collectLog, ignore) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts, collectLog, ignore);
       raw.sort((a, b) => a.path.localeCompare(b.path));
       const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
       const snapshotHash = sha256([...docHashes.map((x) => `${x.d.path}\0${x.rawSha}`), ...artifacts.map((a) => `artifact:${a.kind}\0${sha256(a.bytes)}`)].join("\n"));
       const active = source.active_generation ? this.getGeneration(source.active_generation) : null;
-      const graphWanted = opts.graph !== false && this.config.graph !== null;
+      const graphEnabled = opts.graph !== false && this.config.graph !== null;
+      // With every document left out there is nothing to extract, so the graph is skipped, not failed.
+      const graphWanted = graphEnabled && raw.some((d) => inGraph(d.path));
+      // As the user wrote them: RegExp.source escapes slashes.
+      const graphIgnorePatterns = validateIgnorePatterns(sourceOpts.graphIgnore ?? [], "graphIgnore");
       if (
         !opts.force &&
         active?.snapshot_hash === snapshotHash &&
         (JSON.parse(active.stats) as { pipeline?: number }).pipeline === PIPELINE_VERSION &&
         (JSON.parse(active.stats) as { collector?: string }).collector === provider &&
         (active.graph_status === "ok" || !graphWanted) &&
+        // The same documents with another graphIgnore list need a new graph.
+        (!graphEnabled || JSON.stringify((JSON.parse(active.stats) as { graphIgnore?: string[] }).graphIgnore ?? []) === JSON.stringify(graphIgnorePatterns)) &&
         active.embedding_model === embeddingIdentity(this.config)
       ) {
         this.db.transaction(() => {
@@ -566,13 +632,21 @@ export class Docify {
 
       let graphStatus = "skipped";
       let graphStats: Record<string, unknown> = {};
+      const graphDocs = normalizedDocs.filter((d) => inGraph(d.path));
+      const graphIgnored = normalizedDocs.length - graphDocs.length;
+      if (graphEnabled && graphIgnored) {
+        this.logs.append(sourceId, graphDocs.length
+          ? `Left ${graphIgnored} documents out of the graph (graphIgnore)`
+          : `Every document matches graphIgnore; no graph is built`, "system", graphDocs.length ? "info" : "warn");
+      }
       if (graphWanted) {
         await checkpoint("graph", "semantic extraction");
         const runner = opts.graphRunner ?? runGraphify;
-        const result = await runner(this.config, sourceId, normalizedDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force,
+        const result = await runner(this.config, sourceId, graphDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force,
           (stream, text) => this.logs.append(sourceId, text, stream, /\b(error|failed|traceback)\b/i.test(text) ? "error" : /\bwarn(?:ing)?\b/i.test(text) ? "warn" : "info"));
         writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
-        graphStats = this.importGraph(genId, result, normalizedDocs);
+        // Only documents sent to the graph can be missing from it.
+        graphStats = this.importGraph(genId, result, graphDocs);
         // Partial still activates and is searchable; it never counts as unchanged, so the next prepare retries the gaps.
         graphStatus = (graphStats.graphMissing as string[]).length || result.incomplete.length ? "partial" : "ok";
         if (graphStatus === "partial") this.logs.append(sourceId, `Graph is partial: ${(graphStats.graphMissing as string[]).length} documents without nodes`, "system", "warn");
@@ -590,7 +664,7 @@ export class Docify {
       if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
         throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
       }
-      const stats = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, embedReused, artifacts: artifacts.map((a) => a.kind), ...graphStats };
+      const stats = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, embedReused, artifacts: artifacts.map((a) => a.kind), ...graphStats, ...(graphEnabled && graphIgnorePatterns.length ? { graphIgnore: graphIgnorePatterns, graphIgnored } : {}) };
 
       await checkpoint("activate");
       this.db
@@ -640,7 +714,7 @@ export class Docify {
   }
 
   // Remote providers never fall back to the built-in crawler.
-  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions, provider: CrawlProvider, runOptions: Crawl4aiSourceOptions | undefined, artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[], log: CollectLog): Promise<RawDoc[]> {
+  private async collectUrl(locator: string, limits: CrawlLimits, opts: PrepareOptions, provider: CrawlProvider, runOptions: Crawl4aiSourceOptions | undefined, artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[], log: CollectLog, ignore: RegExp[]): Promise<RawDoc[]> {
     try {
       if (provider === "browserless") {
         const fetcher = browserlessFetcher({
@@ -650,7 +724,7 @@ export class Docify {
           maxBytesPerPage: limits.maxBytesPerPage,
           signal: opts.signal,
         });
-        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { signal: opts.signal, markdownExports: false, log });
+        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { signal: opts.signal, markdownExports: false, log, ignore });
       }
       if (provider === "crawl4ai") {
         const fetcher = crawl4aiFetcher({
@@ -668,14 +742,14 @@ export class Docify {
             },
           } : undefined,
         }, runOptions);
-        const docs = await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false, pdfFetcher: opts.fetcher ?? fetch, onAcceptedPage: (url) => fetcher.acceptPage(url), log });
+        const docs = await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false, pdfFetcher: opts.fetcher ?? fetch, onAcceptedPage: (url) => fetcher.acceptPage(url), log, ignore });
         if ((runOptions?.captureScreenshot && !artifacts.some(a => a.kind === "screenshot")) || (runOptions?.capturePdf && !artifacts.some(a => a.kind === "pdf"))) {
           throw new Error("Crawl4AI did not capture the start page");
         }
         return docs;
       }
       if (provider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(provider)}`);
-      return await crawl(locator, limits, opts.fetcher, { signal: opts.signal, log });
+      return await crawl(locator, limits, opts.fetcher, { signal: opts.signal, log, ignore });
     } catch (err) {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
       throw err;
