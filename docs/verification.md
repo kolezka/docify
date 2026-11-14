@@ -194,3 +194,14 @@ The mount went back to a default, now absolute: `${DOCIFY_SOURCES_DIR:-/srv/doci
 - `docify add docify /sources/docify` and `prepare docify@unknown --no-graph`: generation 1 activated with 19 documents and 225 passages.
 - `docify search "how are generations activated" --source docify@unknown --max-tokens 300`: status `weak_match`, top hit `CLAUDE.md > Architecture`, lines 36-46.
 - Not verified: a Linux host, where the files must be readable by uid 10001.
+
+## 2026-11-14: total crawl size in megabytes
+
+`maxTotalBytes` became `maxTotalMb` (whole megabytes, 1 MB = 1,000,000 bytes, 1 to 1000, default 50). The limit applied to a crawl is unchanged: 50 MB is the old 50,000,000 bytes.
+
+- `bun run typecheck` and `bun test`: 306 pass, 0 fail.
+- A `config.json` that still has `maxTotalBytes` is read as megabytes, rounded up; `maxTotalMb` wins when both are present; saving `maxTotalMb` removes the old key and saving any other key leaves it alone (`tests/config.test.ts`). A backup with the old key imports, and one with an invalid value is refused (`tests/backup.test.ts`).
+- Prepare with the built-in crawler and two 0.6 MB pages: 1 MB fails with `crawl exceeded the 1 MB total size limit`, 2 MB activates. A source override stored in bytes still applies (`tests/per-source-crawler.test.ts`).
+- Web UI in a browser against an isolated store whose `config.json` held `"maxTotalBytes": 120000000`: Settings > Web Crawling showed `Max total size 120 MB`; 1500 kept Save disabled; saving 80 wrote `{"maxTotalMb": 80}` and dropped the old key.
+- Re-break checks, each file restored byte-identical (`cmp`): rounding down; ignoring the old key; keeping the old key on save; passing megabytes to the crawler as bytes; 1 MB as 1,048,576 bytes. Each made its own test fail.
+- Not changed: per-source `options.crawl.maxTotalBytes` and `maxBytesPerPage` stay in bytes. Log sizes now use decimal units to match the setting.

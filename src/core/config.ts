@@ -43,7 +43,7 @@ export interface DocifyConfig {
   crawlProvider: "builtin" | "crawl4ai";
   maxPages: number;
   maxDepth: number;
-  maxTotalBytes: number;
+  maxTotalMb: number; // 1 MB = 1,000,000 bytes
   crawl4aiUrl: string;
   // Name of the environment variable holding the Crawl4AI bearer token, never the value.
   crawl4aiApiKeyEnv: string;
@@ -125,7 +125,7 @@ export function defaultConfig(home: string, env: Env = process.env): DocifyConfi
     crawlProvider: "builtin",
     maxPages: 50,
     maxDepth: 2,
-    maxTotalBytes: 50_000_000,
+    maxTotalMb: 50,
     crawl4aiUrl: "http://127.0.0.1:11235",
     crawl4aiApiKeyEnv: "CRAWL4AI_API_KEY",
     crawl4aiTimeoutSeconds: 120,
@@ -139,10 +139,24 @@ export function defaultConfig(home: string, env: Env = process.env): DocifyConfi
   };
 }
 
-export function loadConfig(home = docifyHome()): DocifyConfig {
-  const config = { ...defaultConfig(home), ...(readConfigFile(home) as Partial<DocifyConfig>) };
-  numberField("maxTotalBytes", config.maxTotalBytes, 1, 1_000_000_000, true);
+export const BYTES_PER_MB = 1_000_000;
+
+// Older config.json files name the total crawl limit in bytes (maxTotalBytes). It is read as
+// whole megabytes, rounded up so a crawl that fitted before still fits. maxTotalMb wins when both are set.
+export function legacyMaxTotalMb(file: Record<string, unknown>): number | undefined {
+  if ("maxTotalMb" in file || !("maxTotalBytes" in file)) return undefined;
+  return Math.ceil(numberField("maxTotalBytes", file.maxTotalBytes, 1, 1_000_000_000, true) / BYTES_PER_MB);
+}
+
+export function withConfigFile(defaults: DocifyConfig, file: Record<string, unknown>): DocifyConfig {
+  const config = { ...defaults, ...(file as Partial<DocifyConfig>) };
+  config.maxTotalMb = legacyMaxTotalMb(file) ?? config.maxTotalMb;
+  numberField("maxTotalMb", config.maxTotalMb, 1, 1000, true);
   return config;
+}
+
+export function loadConfig(home = docifyHome()): DocifyConfig {
+  return withConfigFile(defaultConfig(home), readConfigFile(home));
 }
 
 // ---- editing (web UI) --------------------------------------------------------
@@ -164,7 +178,7 @@ export const EDITABLE_KEYS = [
   "crawlProvider",
   "maxPages",
   "maxDepth",
-  "maxTotalBytes",
+  "maxTotalMb",
   "crawl4aiUrl",
   "crawl4aiApiKeyEnv",
   "crawl4aiTimeoutSeconds",
@@ -330,8 +344,8 @@ export function validateConfigPatch(input: unknown): ConfigPatch {
       case "maxDepth":
         out.maxDepth = numberField(key, v, 0, 1000, true);
         break;
-      case "maxTotalBytes":
-        out.maxTotalBytes = numberField(key, v, 1, 1_000_000_000, true);
+      case "maxTotalMb":
+        out.maxTotalMb = numberField(key, v, 1, 1000, true);
         break;
       case "crawlProvider":
         if (v !== "builtin" && v !== "crawl4ai") throw new ConfigError("crawlProvider must be builtin or crawl4ai", key);
@@ -380,7 +394,8 @@ export function saveConfig(home: string, input: unknown, env: Env = process.env)
       next.graph = { ...(isPlainObject(file.graph) ? file.graph : DEFAULT_GRAPH), ...(value as Partial<GraphProviderConfig>) };
     } else next[key] = value;
   }
-  const effective = { ...defaultConfig(home, env), ...next } as DocifyConfig;
+  if ("maxTotalMb" in patch) delete next.maxTotalBytes;
+  const effective = withConfigFile(defaultConfig(home, env), next);
   if (effective.weakVectorSim > effective.strongVectorSim) {
     throw new ConfigError("weakVectorSim must not be above strongVectorSim", "weakVectorSim");
   }
@@ -393,7 +408,7 @@ export function saveConfig(home: string, input: unknown, env: Env = process.env)
   const tmp = `${target}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
   renameSync(tmp, target);
-  return { ...defaultConfig(home, env), ...(next as Partial<DocifyConfig>) };
+  return effective;
 }
 
 // ---- describing (web UI) -----------------------------------------------------

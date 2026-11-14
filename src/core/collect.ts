@@ -34,7 +34,8 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "graphify-out"]);
 // Progress and skip reasons for the application log. Without one, warnings go to stderr as before.
 export type CollectLog = (level: "info" | "warn", text: string) => void;
 const stderrWarnings: CollectLog = (level, text) => { if (level === "warn") console.error(`docify: ${text}`); };
-const kb = (n: number) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+// Decimal units, the same as the maxTotalMb setting: 1 MB = 1,000,000 bytes.
+const kb = (n: number) => n < 1000 ? `${n} B` : n < 1_000_000 ? `${Number((n / 1000).toFixed(1))} KB` : `${Number((n / 1_000_000).toFixed(1))} MB`;
 
 // Symlinks are followed only while they resolve inside the registered root, so a link
 // cannot pull files from elsewhere into the store (the UI only vets the root itself).
@@ -75,7 +76,7 @@ export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS,
       continue;
     }
     total += bytes.length;
-    if (total > limits.maxTotalBytes) throw new Error(`source exceeds ${limits.maxTotalBytes} bytes`);
+    if (total > limits.maxTotalBytes) throw new Error(`source exceeds the ${kb(limits.maxTotalBytes)} total size limit`);
     docs.push({ path: st.isFile() ? relative(join(abs, ".."), f) : relative(abs, f), url: null, kind: kindFromPath(f)!, bytes });
   }
   if (!docs.length) throw new Error(`no Markdown or HTML files found under ${abs}`);
@@ -189,7 +190,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
       continue;
     }
     total += bytes.length;
-    if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded ${limits.maxTotalBytes} bytes`);
+    if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded the ${kb(limits.maxTotalBytes)} total size limit`);
     const path = current.pathname.slice(scopePath.length) || "index.html";
     collected.add(canonical(current));
     let content = bytes;

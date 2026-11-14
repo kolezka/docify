@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, statSync } 
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { openDb, nowIso, SCHEMA_VERSION } from "./db.ts";
-import { loadConfig, saveConfig, type DocifyConfig } from "./config.ts";
+import { BYTES_PER_MB, loadConfig, saveConfig, type DocifyConfig } from "./config.ts";
 import { collectLocal, crawl, DEFAULT_LIMITS, type CollectLog, type CrawlLimits, type Fetcher, type RawDoc } from "./collect.ts";
 import { normalize } from "./normalize.ts";
 import { chunk } from "./chunk.ts";
@@ -459,7 +459,7 @@ export class Docify {
       const sourceOpts = JSON.parse(source.options) as { crawl?: Partial<CrawlLimits>; crawlProvider?: CrawlProvider; crawl4ai?: Crawl4aiSourceOptions };
       const provider = source.kind === "local" ? "local" : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
       if (provider !== "local") validateCrawlProvider(provider);
-      const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth, maxTotalBytes: this.config.maxTotalBytes } : {}), ...sourceOpts.crawl };
+      const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth, maxTotalBytes: this.config.maxTotalMb * BYTES_PER_MB } : {}), ...sourceOpts.crawl };
       const downloadedAt = nowIso();
       const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
       const collectLog: CollectLog = (level, text) => this.logs.append(sourceId, text, "system", level);

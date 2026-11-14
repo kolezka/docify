@@ -47,7 +47,7 @@ Docify fixes that at the source. You point it at the documentation you actually 
 2. **Prepare** it once. Docify snapshots the pages, splits them by heading, builds full-text and vector indexes and, if you want, a semantic graph with Graphify. The new version goes live in one transaction. If anything fails, the previous one keeps serving.
 3. **Search** from the agent, the CLI or the web UI. Hybrid retrieval combines word matches, exact API symbols and embeddings, then fits the result into your token budget.
 
-URL collection stops if the total downloaded document content exceeds `maxTotalBytes`. Set it in Settings > Web Crawling > Max total size, or set `"maxTotalBytes": 100000000` in `~/.config/docify/config.json`. The default is 50,000,000 bytes; values from 1 to 1,000,000,000 are accepted. Higher limits can increase memory use. The change applies to the next preparation; restart the server after editing the file directly.
+URL collection stops if the total downloaded document content exceeds `maxTotalMb` megabytes (1 MB is 1,000,000 bytes). Set it in Settings > Web Crawling > Max total size, or set `"maxTotalMb": 100` in `~/.config/docify/config.json`. The default is 50 MB; whole numbers from 1 to 1000 are accepted. A `maxTotalBytes` value left in an older `config.json` is still read, rounded up to whole megabytes, until `maxTotalMb` is set. Higher limits can increase memory use. The change applies to the next preparation; restart the server after editing the file directly.
 
 ## Quick start
 

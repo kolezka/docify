@@ -72,5 +72,5 @@ test("rejects invalid PDF and enforces input byte limits", async () => {
   const invalid: Fetcher = async () => new Response("not a PDF", { headers: { "content-type": "application/pdf" } });
   await expect(crawl("https://example.test/a.pdf", DEFAULT_LIMITS, fetch, { pdfFetcher: invalid })).rejects.toThrow("failed to extract PDF");
   await expect(crawl("https://example.test/a.pdf", { ...DEFAULT_LIMITS, maxBytesPerPage: 10 }, fetch, { pdfFetcher: async () => pdfResponse() })).rejects.toThrow("no documents fetched");
-  await expect(crawl("https://example.test/a.pdf", { ...DEFAULT_LIMITS, maxTotalBytes: 10 }, fetch, { pdfFetcher: async () => pdfResponse() })).rejects.toThrow("crawl exceeded 10 bytes");
+  await expect(crawl("https://example.test/a.pdf", { ...DEFAULT_LIMITS, maxTotalBytes: 10 }, fetch, { pdfFetcher: async () => pdfResponse() })).rejects.toThrow("crawl exceeded the 10 B total size limit");
 });

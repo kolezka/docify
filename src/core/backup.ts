@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { sha256 } from "./hash.ts";
 import { SCHEMA_VERSION, nowIso } from "./db.ts";
 import { Docify, DocifyError, PIPELINE_VERSION } from "./docify.ts";
-import { ConfigError, EDITABLE_KEYS, configFilePath, readConfigFile, validateConfigPatch } from "./config.ts";
+import { ConfigError, EDITABLE_KEYS, configFilePath, legacyMaxTotalMb, readConfigFile, validateConfigPatch } from "./config.ts";
 import { VERSION } from "../version.ts";
 
 // A whole-store backup: docify.sqlite, config.json and the snapshot files of every active and
@@ -191,6 +191,7 @@ function mergeConfig(imported: Uint8Array | undefined, current: Record<string, u
   const editable = Object.fromEntries(Object.entries(parsed).filter(([k]) => (EDITABLE_KEYS as readonly string[]).includes(k)));
   try {
     validateConfigPatch(editable);
+    legacyMaxTotalMb(parsed); // a backup made before maxTotalMb names the limit in bytes
   } catch (err) {
     if (err instanceof ConfigError) throw new DocifyError("invalid_backup", `config.json in the backup: ${err.message}`);
     throw err;
