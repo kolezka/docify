@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { crawl, DEFAULT_LIMITS, type Fetcher } from "../src/core/collect.ts";
 import { newDocify, tempDir } from "./helpers.ts";
 
@@ -100,7 +101,7 @@ test("every crawled page keeps its own snapshot files whatever its route looks l
   for (const row of rows) {
     if (row.path === "llms.txt") continue;
     expect(readFileSync(row.raw_file, "utf8")).toBe(pages[row.path]!);
-    expect(readFileSync(row.normalized_file, "utf8")).toContain(pages[row.path]!.split("mentions the ")[1]!.trim());
+    expect(gunzipSync(readFileSync(row.normalized_file)).toString("utf8")).toContain(pages[row.path]!.split("mentions the ")[1]!.trim());
   }
   // Distinct even on a case-insensitive file system.
   expect(new Set(rows.map((r) => r.raw_file.toLowerCase())).size).toBe(rows.length);
@@ -108,6 +109,6 @@ test("every crawled page keeps its own snapshot files whatever its route looks l
   // Routes that clash with nothing keep their readable mirrored names.
   const gmail = rows.find((r) => r.path === "automation/cron-jobs/gmail")!;
   expect(gmail.raw_file.endsWith("/raw/automation/cron-jobs/gmail")).toBe(true);
-  expect(gmail.normalized_file.endsWith("/normalized/automation/cron-jobs/gmail.md")).toBe(true);
+  expect(gmail.normalized_file.endsWith("/normalized/automation/cron-jobs/gmail.md.gz")).toBe(true);
   d.close();
 });

@@ -7,6 +7,7 @@ import { ConfigError, describeConfig } from "../core/config.ts";
 import { read, search, sources, type Mode } from "../core/search.ts";
 import { graphView } from "../core/graph-view.ts";
 import { exportStore, importStore } from "../core/backup.ts";
+import { readSnapshotFile } from "../core/snapshot-file.ts";
 import { uiAssets } from "./bundle.ts";
 import { LogReadError } from "../core/logs.ts";
 import { LOOPBACK_HOSTS, hostAllowed, hostGuard, originAllowed, parseAllowedHosts, splitList } from "../http/host.ts";
@@ -338,13 +339,16 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       "/api/raw/:id": {
         GET: api((req) => {
           const row = docify.db
-            .query<{ raw_file: string }, [string]>("SELECT d.raw_file FROM passages p JOIN documents d ON d.id = p.document_id WHERE p.id = ?")
+            .query<{ raw_file: string; raw_sha256: string }, [string]>("SELECT d.raw_file, d.raw_sha256 FROM passages p JOIN documents d ON d.id = p.document_id WHERE p.id = ?")
             .get(req.params.id!);
           if (!row) return json({ error: "unknown passage", code: "unavailable" }, 404);
           const root = realpathSync(join(docify.config.home, "snapshots"));
           const file = realpathSync(row.raw_file);
           if (!file.startsWith(root + sep)) return json({ error: "forbidden", code: "forbidden" }, 403);
-          return new Response(Bun.file(file), { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" } });
+          // Stored gzipped or plain; either way only the content the database recorded is served.
+          const content = readSnapshotFile(file, row.raw_sha256);
+          if (!content) return json({ error: "the preserved source no longer matches its recorded hash", code: "unavailable" }, 404);
+          return new Response(content, { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" } });
         }),
       },
       "/api/config": {

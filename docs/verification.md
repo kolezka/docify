@@ -205,3 +205,16 @@ The mount went back to a default, now absolute: `${DOCIFY_SOURCES_DIR:-/srv/doci
 - Web UI in a browser against an isolated store whose `config.json` held `"maxTotalBytes": 120000000`: Settings > Web Crawling showed `Max total size 120 MB`; 1500 kept Save disabled; saving 80 wrote `{"maxTotalMb": 80}` and dropped the old key.
 - Re-break checks, each file restored byte-identical (`cmp`): rounding down; ignoring the old key; keeping the old key on save; passing megabytes to the crawler as bytes; 1 MB as 1,048,576 bytes. Each made its own test fail.
 - Not changed: per-source `options.crawl.maxTotalBytes` and `maxBytesPerPage` stay in bytes. Log sizes now use decimal units to match the setting.
+
+## 2026-11-15: gzipped snapshot files
+
+Prepare now stores raw HTML and every normalized copy gzipped, with `.gz` added to the stored path. Raw Markdown stays plain. The database schema, the recorded hashes (over the content) and the indexed text are unchanged, so an unchanged source is still skipped and keeps its plain files.
+
+- `bun run typecheck` and `bun test`: 314 pass, 0 fail.
+- New layout, `docs_open` with a heading, `/api/raw`, export and import, a store and a backup in the old plain layout, routes named like another page's gzipped file, a swapped or broken gzipped file (not served, not exported, backup refused), a local folder (`tests/snapshot-gzip.test.ts`).
+- Re-break checks, each file restored identical: HTML kept plain; Markdown gzipped too; normalized kept plain; names ignoring the `.gz` and `.md.gz` forms; unpacked content not checked against the hash; no plain fallback for a name ending in `.gz`; never unpacking; `docs_open` ignoring the normalized file; `/api/raw` serving the stored bytes; backup comparing hashes of the stored bytes. Each made at least one test fail.
+- Real data, on a copy of a store with 851 active documents in the old layout: export, import into an empty home, all 1702 snapshot files read with a matching hash, `docs_open` and `/api/raw` correct for one HTML document of each of five sources.
+- Measured on that copy by gzipping the same files: 126.3 MB of active snapshot files become 23.7 MB (19%).
+- `/api/raw` now returns 404 when the file no longer matches its recorded hash; before it sent whatever was on disk.
+- Not verified: a full prepare of a real source with the new code (the tests prepare fixture sites). An older Docify cannot read a store or backup that holds gzipped files.
+- Found, not fixed: export fails on a case-insensitive file system when one generation records two directories that differ only by case (`raw/human-interface-guidelines` and `raw/Human-Interface-Guidelines`). The same export fails on the code before this change.
