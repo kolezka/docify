@@ -122,9 +122,11 @@ The source id is `library@version` (`library@unknown` without `--version`) unles
 
 URLs ending in `llm.txt` or `llms.txt` are read as Markdown indexes, including when served as `text/plain`. Docify follows inline links in all Markdown and MDX pages, not just these indexes. Both HTML and Markdown can link to extensionless documentation routes within the registered origin and directory.
 
-When an HTML or `.md` page links to an extensionless route, Docify tries its `.md` export first, then the original route if the export is unavailable, fails to load or returns an unsupported content type. This supports sites such as Apple HIG, where Markdown links can point to broken HTML routes while their Markdown exports work. Sites without exports can incur one extra request per such link. HTML pages can also advertise Markdown through a `<link rel="alternate" type="text/markdown" href="...">`. Starting directly from that Markdown URL saves one link level.
+When an HTML page, a `.md` page or an `llm.txt` / `llms.txt` index links to an extensionless route, Docify tries its `.md` export first, then the original route if the export is unavailable, fails to load or returns an unsupported content type. This supports sites such as Apple HIG, where Markdown links can point to broken HTML routes while their Markdown exports work. An index usually lists routes without `.md` on sites that serve each page as Markdown at `<route>.md`; the Markdown copy is many times smaller than the HTML page, which keeps such a crawl inside the size limit. Sites without exports can incur one extra request per such link. HTML pages can also advertise Markdown through a `<link rel="alternate" type="text/markdown" href="...">`. Starting directly from that Markdown URL saves one link level.
 
 By default, a crawl collects at most 50 documents (including the index), follows two link levels, and is limited to 5 MB per page and 50 MB total. This is a bounded crawl, not a guarantee that the whole site is indexed.
+
+Some sites send a page whose article is an empty placeholder and keep the text in the data of a component the browser loads later (lazy Livewire components, in a `wire:snapshot` attribute). A rendering provider returns such a page either before the text is loaded, or after, and then the page holds the text twice next to the site menu. When a page's `<article>` is empty and a component that has not loaded carries HTML, or the article shows the text of such a component and little else, Docify keeps that HTML as the page and counts only it against the total size limit. The stored page is the same in both cases. The per-page limit still applies to the page as downloaded, and links are still read from the whole page. The crawl log marks these pages with `kept ... of lazy-loaded content`. Any other page is stored as it was downloaded.
 
 Set the global page and depth limits under Settings > Web Crawling, or set `maxPages` and `maxDepth` in `config.json`. The allowed ranges are 1 to 100,000 pages and 0 to 1,000 link levels; depth 0 collects only the start page. Each URL source can override either limit on its source page. Leave a field blank to inherit the global setting. Changes apply on the next prepare and do not expand the allowed origin or path scope. The source API accepts a `crawl` object with `maxPages` and `maxDepth`; a PATCH value of `null` removes that field's override.
 
@@ -245,7 +247,15 @@ docify export ~/docify-backup.tar.gz      # --force overwrites an existing file
 docify import ~/docify-backup.tar.gz      # --force replaces a store that has sources; --keep-config keeps this machine's settings
 ```
 
-A backup holds the database, `config.json` and the snapshot files of every active and superseded generation, so the imported store answers queries without preparing again. Models and the Graphify runtime are not in it; run `docify setup` on the new machine. Export is refused while a source is being prepared.
+A backup holds the database, `config.json` and the snapshot files of every active and superseded generation, so the imported store answers queries without preparing again. Raw HTML and the normalized Markdown copies are stored gzipped (`.gz`); stores and backups made before that keep their plain files and still work, but an older Docify cannot read a store or backup that holds gzipped files. Models and the Graphify runtime are not in it; run `docify setup` on the new machine. Export is refused while a source is being prepared.
+
+A source prepared before that keeps its plain files until its content changes. To gzip them now, stop `docify serve` and `docify mcp`, then run:
+
+```bash
+docify compress      # prints how many files it gzipped and the size before and after
+```
+
+It gzips the same files a new prepare would, for active and superseded generations, and changes no search result. A file is replaced only when it still matches the hash recorded for it. One that does not, is missing, or whose `.gz` name is already taken stays as it is and is listed, and the command then exits with 1. It is refused while a source is being prepared, and running it again is safe.
 
 Import checks every file against the backup's manifest (SHA-256) and the database's own hashes before it touches the store. A store with sources is replaced only with `--force`, and its files are moved to `<store>.before-import-<time>`, never deleted. From the backup's `config.json`, `graphifyBin` and `modelsDir` are ignored, because they point at code Docify runs; this machine's values stay. Restart running `docify serve` and `docify mcp` processes afterwards. The web UI has the same two actions under Settings → Backup; there, local sources in the backup must be inside `DOCIFY_SOURCE_ROOTS`, and uploads are limited to 1 GiB.
 

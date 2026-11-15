@@ -71,6 +71,13 @@ These are design defaults, not choices the user previously made between offline,
   credentials, query or fragment), `browserlessApiKeyEnv` (default `BROWSERLESS_API_KEY`) and
   `browserlessTimeoutSeconds` (default 120). The named environment variable supplies an optional
   bearer token; its value is not stored in config. Both providers skip Markdown export probes.
+  With the built-in crawler an extensionless route linked from an HTML page, a `.md` page or an
+  `llm.txt` / `llms.txt` index is fetched from its `<route>.md` export when there is one.
+  With every provider, a page whose `<article>` is the text of a lazy Livewire component is stored
+  as the HTML that component carries in its `wire:snapshot` data (`lazy-content.ts`), and only the
+  stored bytes count against the total size limit. That holds while the article is still empty and
+  the component has not loaded, and once the article shows the component's text and little else;
+  the stored page is the same in both states.
   Docify handles link discovery and limits collected documents to the registered origin and directory
   path, depth, page count and bytes. This is not a browser network sandbox: Crawl4AI may follow
   redirects and load subrequests before the returned URL is checked. Browserless intercepts later

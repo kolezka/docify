@@ -195,6 +195,20 @@ test("a backup whose config.json fails validation is refused", async () => {
   await rejects(importStore(fresh(), bad), "invalid_backup", /config\.json in the backup/);
 });
 
+test("a backup that names the crawl limit in bytes still imports, and a bad value is refused", async () => {
+  const withConfig = (config: unknown) => rebuild(backup, (f) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(config));
+    f.set("config.json", bytes);
+    const m = JSON.parse(new TextDecoder().decode(f.get("docify-backup.json")!));
+    m.files["config.json"] = { size: bytes.length, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
+    f.set("docify-backup.json", new TextEncoder().encode(JSON.stringify(m)));
+  });
+  const dst = fresh();
+  await importStore(dst, await withConfig({ maxTotalBytes: 120_000_000 }));
+  expect(dst.config.maxTotalMb).toBe(120);
+  await rejects(importStore(fresh(), await withConfig({ maxTotalBytes: 0 })), "invalid_backup", /config\.json in the backup: maxTotalBytes/);
+});
+
 test("checkLocalSource can refuse local paths outside the allowed roots", async () => {
   const dst = fresh();
   await rejects(

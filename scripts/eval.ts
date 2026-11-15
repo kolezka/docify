@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
 import { Docify } from "../src/core/docify.ts";
 import { search, type Mode, type SearchHit } from "../src/core/search.ts";
+import { readSnapshotFile } from "../src/core/snapshot-file.ts";
 
 type OneOrMany = string | string[];
 interface Locator {
@@ -76,11 +77,18 @@ console.log(`fixture ok: ${spec.questions.length} questions, ${spec.questions.re
 const normalizedCache = new Map<string, string[]>();
 function citationValid(h: SearchHit): boolean {
   const row = docify.db
-    .query<{ normalized_file: string; text: string }, [string]>("SELECT d.normalized_file, p.text FROM passages p JOIN documents d ON d.id = p.document_id WHERE p.id = ?")
+    .query<{ normalized_file: string; normalized_sha256: string; text: string }, [string]>(
+      "SELECT d.normalized_file, d.normalized_sha256, p.text FROM passages p JOIN documents d ON d.id = p.document_id WHERE p.id = ?",
+    )
     .get(h.id);
   if (!row) return false;
   let lines = normalizedCache.get(row.normalized_file);
-  if (!lines) normalizedCache.set(row.normalized_file, (lines = readFileSync(row.normalized_file, "utf8").split("\n")));
+  if (!lines) {
+    // Stored gzipped or plain; null means the file is not what the database recorded.
+    const content = readSnapshotFile(row.normalized_file, row.normalized_sha256);
+    if (!content) return false;
+    normalizedCache.set(row.normalized_file, (lines = Buffer.from(content).toString("utf8").split("\n")));
+  }
   const slice = lines.slice(h.citation.lines[0] - 1, h.citation.lines[1]).join("\n");
   if (slice !== row.text) return false;
   if (h.citation.linesMatchRaw) {

@@ -3,12 +3,13 @@ import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, statSync } 
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { openDb, nowIso, SCHEMA_VERSION } from "./db.ts";
-import { loadConfig, saveConfig, type DocifyConfig } from "./config.ts";
+import { BYTES_PER_MB, loadConfig, saveConfig, type DocifyConfig } from "./config.ts";
 import { collectLocal, crawl, DEFAULT_LIMITS, type CollectLog, type CrawlLimits, type Fetcher, type RawDoc } from "./collect.ts";
 import { normalize } from "./normalize.ts";
 import { chunk } from "./chunk.ts";
 import { countTokens } from "./tokens.ts";
 import { sha256 } from "./hash.ts";
+import { writeSnapshotFile } from "./snapshot-file.ts";
 import { embedTexts, embeddingIdentity } from "./embed.ts";
 import { crawl4aiFetcher } from "./crawl4ai.ts";
 import { browserlessFetcher } from "./browserless.ts";
@@ -519,7 +520,7 @@ export class Docify {
       const inGraph = (path: string) => !graphIgnore.some((pattern) => pattern.test(path));
       const provider = source.kind === "local" ? "local" : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
       if (provider !== "local") validateCrawlProvider(provider);
-      const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth, maxTotalBytes: this.config.maxTotalBytes } : {}), ...sourceOpts.crawl };
+      const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth, maxTotalBytes: this.config.maxTotalMb * BYTES_PER_MB } : {}), ...sourceOpts.crawl };
       const downloadedAt = nowIso();
       const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
       const collectLog: CollectLog = (level, text) => this.logs.append(sourceId, text, "system", level);
@@ -572,12 +573,13 @@ export class Docify {
       for (const [i, { d, rawSha }] of docHashes.entries()) {
         const text = new TextDecoder().decode(d.bytes);
         const norm = normalize(text, d.kind);
-        const rawFile = join(snapshotDir, "raw", fileNames[i]!);
-        const normFile = join(snapshotDir, "normalized", fileNames[i]! + ".md");
-        mkdirSync(dirname(rawFile), { recursive: true });
-        mkdirSync(dirname(normFile), { recursive: true });
-        writeFileSync(rawFile, d.bytes);
-        writeFileSync(normFile, norm.markdown);
+        const rawPath = join(snapshotDir, "raw", fileNames[i]!);
+        const normPath = join(snapshotDir, "normalized", fileNames[i]! + ".md");
+        mkdirSync(dirname(rawPath), { recursive: true });
+        mkdirSync(dirname(normPath), { recursive: true });
+        // Raw Markdown stays plain: its citations give raw line numbers a reader can open.
+        const rawFile = writeSnapshotFile(rawPath, d.bytes, d.kind === "html");
+        const normFile = writeSnapshotFile(normPath, norm.markdown, true);
         const chunks = chunk(norm.markdown, norm.anchors);
         const entry = { path: d.path, markdown: norm.markdown, docId: 0, passages: [] as { rowid: number; text: string; headingPath: string[] }[] };
         this.db.transaction(() => {
@@ -938,6 +940,7 @@ function safeRel(path: string): string {
 
 // File names under raw/ and normalized/, one per path, in order. A name mirrors its path and gets
 // a "~n" suffix only when it would sit on a directory another path needs or on another document's file.
+// On disk the raw file is the name or the name plus ".gz", and the normalized copy the name plus ".md.gz".
 function snapshotNames(paths: string[]): string[] {
   const rels = paths.map(safeRel);
   // Compared in lower case so names also stay apart on a case-insensitive file system.
@@ -948,12 +951,12 @@ function snapshotNames(paths: string[]): string[] {
     for (let i = 1; i < parts.length; i++) dirs.add(key(parts.slice(0, i).join("/")));
   }
   const used = new Set<string>();
-  // The normalized copy adds ".md", so that name must stay off directories too.
-  const taken = (name: string) => used.has(key(name)) || dirs.has(key(name)) || dirs.has(key(name + ".md"));
+  // Every form a name can take on disk must stay off directories and off other documents' files.
+  const taken = (name: string) => [name, name + ".gz"].some((file) => used.has(key(file))) || [name, name + ".gz", name + ".md.gz"].some((file) => dirs.has(key(file)));
   return rels.map((rel) => {
     let name = rel;
     for (let n = 1; taken(name); n++) name = `${rel}~${n}`;
-    used.add(key(name));
+    used.add(key(name)).add(key(name + ".gz"));
     return name;
   });
 }
