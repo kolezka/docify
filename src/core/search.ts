@@ -5,8 +5,7 @@ import { countTokens, TOKENIZER } from "./tokens.ts";
 import { extractSymbols, methodToken, squash } from "./symbols.ts";
 import { headingLines } from "./chunk.ts";
 import { getSourceSummary, type SourceSummary } from "./summary.ts";
-import { sha256 } from "./hash.ts";
-import { readFileSync } from "node:fs";
+import { readSnapshotFile } from "./snapshot-file.ts";
 import { isAbsolute, join, relative } from "node:path";
 
 export type Mode = "lexical" | "vector" | "graph" | "combined";
@@ -1172,8 +1171,8 @@ function normalizedLines(docify: Docify, sourceId: string, gen: GenerationRow, f
   const rel = relative(gen.snapshot_dir, file);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
   try {
-    const text = readFileSync(join(docify.config.home, "snapshots", sourceId, String(gen.id), rel), "utf8");
-    return sha256(text) === sha ? text.split("\n") : null;
+    const content = readSnapshotFile(join(docify.config.home, "snapshots", sourceId, String(gen.id), rel), sha);
+    return content ? Buffer.from(content).toString("utf8").split("\n") : null;
   } catch {
     return null; // collected or never written: fall back to passage heading paths
   }

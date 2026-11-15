@@ -245,7 +245,15 @@ docify export ~/docify-backup.tar.gz      # --force overwrites an existing file
 docify import ~/docify-backup.tar.gz      # --force replaces a store that has sources; --keep-config keeps this machine's settings
 ```
 
-A backup holds the database, `config.json` and the snapshot files of every active and superseded generation, so the imported store answers queries without preparing again. Models and the Graphify runtime are not in it; run `docify setup` on the new machine. Export is refused while a source is being prepared.
+A backup holds the database, `config.json` and the snapshot files of every active and superseded generation, so the imported store answers queries without preparing again. Raw HTML and the normalized Markdown copies are stored gzipped (`.gz`); stores and backups made before that keep their plain files and still work, but an older Docify cannot read a store or backup that holds gzipped files. Models and the Graphify runtime are not in it; run `docify setup` on the new machine. Export is refused while a source is being prepared.
+
+A source prepared before that keeps its plain files until its content changes. To gzip them now, stop `docify serve` and `docify mcp`, then run:
+
+```bash
+docify compress      # prints how many files it gzipped and the size before and after
+```
+
+It gzips the same files a new prepare would, for active and superseded generations, and changes no search result. A file is replaced only when it still matches the hash recorded for it. One that does not, is missing, or whose `.gz` name is already taken stays as it is and is listed, and the command then exits with 1. It is refused while a source is being prepared, and running it again is safe.
 
 Import checks every file against the backup's manifest (SHA-256) and the database's own hashes before it touches the store. A store with sources is replaced only with `--force`, and its files are moved to `<store>.before-import-<time>`, never deleted. From the backup's `config.json`, `graphifyBin` and `modelsDir` are ignored, because they point at code Docify runs; this machine's values stay. Restart running `docify serve` and `docify mcp` processes afterwards. The web UI has the same two actions under Settings → Backup; there, local sources in the backup must be inside `DOCIFY_SOURCE_ROOTS`, and uploads are limited to 1 GiB.
 

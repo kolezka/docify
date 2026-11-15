@@ -154,11 +154,12 @@ test("the description never exposes credential values and names where each path 
 
 test("crawl limits have validated persisted global defaults", () => {
   const home = tempDir();
-  expect(loadConfig(home)).toMatchObject({ maxPages: 50, maxDepth: 2, maxTotalBytes: 50_000_000 });
-  saveConfig(home, { maxPages: 123, maxDepth: 0, maxTotalBytes: 100_000_000 });
-  expect(loadConfig(home)).toMatchObject({ maxPages: 123, maxDepth: 0, maxTotalBytes: 100_000_000 });
-  expect(describeConfig(loadConfig(home)).values.maxTotalBytes).toBe(100_000_000);
-  for (const value of [0, -1, 1.5, "3", 1_000_000_001]) expect(() => validateConfigPatch({ maxTotalBytes: value })).toThrow();
+  expect(loadConfig(home)).toMatchObject({ maxPages: 50, maxDepth: 2, maxTotalMb: 50 });
+  saveConfig(home, { maxPages: 123, maxDepth: 0, maxTotalMb: 100 });
+  expect(loadConfig(home)).toMatchObject({ maxPages: 123, maxDepth: 0, maxTotalMb: 100 });
+  expect(describeConfig(loadConfig(home)).values.maxTotalMb).toBe(100);
+  for (const value of [0, -1, 1.5, "3", 1001]) expect(() => validateConfigPatch({ maxTotalMb: value })).toThrow();
+  expect(() => validateConfigPatch({ maxTotalBytes: 100_000_000 })).toThrow("unknown setting");
   for (const value of [0, -1, 1.5, "3", 100001]) expect(() => validateConfigPatch({ maxPages: value })).toThrow();
   for (const value of [-1, 1.5, "3", 1001]) expect(() => validateConfigPatch({ maxDepth: value })).toThrow();
 });
@@ -171,4 +172,28 @@ test("config.example.json passes the strict settings check and spells out the wh
   const home = tempDir();
   writeFileSync(join(home, "config.json"), JSON.stringify(example));
   expect(loadConfig(home)).toMatchObject(example);
+});
+
+test("a config.json that still names the crawl limit in bytes is read as megabytes", () => {
+  const home = tempDir();
+  const file = join(home, "config.json");
+  const write = (value: unknown) => writeFileSync(file, JSON.stringify(value));
+  // Rounded up, so a crawl that fitted under the old limit still fits.
+  for (const [bytes, mb] of [[100_000_000, 100], [1, 1], [1_500_000, 2], [1_000_000_000, 1000]] as const) {
+    write({ maxTotalBytes: bytes });
+    expect(loadConfig(home).maxTotalMb).toBe(mb);
+  }
+  write({ maxTotalBytes: 100_000_000, maxTotalMb: 7 });
+  expect(loadConfig(home).maxTotalMb).toBe(7);
+  for (const bad of [{ maxTotalBytes: 0 }, { maxTotalBytes: "5" }, { maxTotalBytes: 1_000_000_001 }, { maxTotalMb: 0 }, { maxTotalMb: 1.5 }]) {
+    write(bad);
+    expect(() => loadConfig(home)).toThrow(ConfigError);
+  }
+  // Saving another key leaves the old one alone; saving the new key retires it.
+  write({ maxTotalBytes: 100_000_000, future: 1 });
+  expect(saveConfig(home, { maxPages: 9 }, {}).maxTotalMb).toBe(100);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ maxTotalBytes: 100_000_000, future: 1, maxPages: 9 });
+  expect(saveConfig(home, { maxTotalMb: 20 }, {}).maxTotalMb).toBe(20);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ future: 1, maxPages: 9, maxTotalMb: 20 });
+  expect(loadConfig(home).maxTotalMb).toBe(20);
 });

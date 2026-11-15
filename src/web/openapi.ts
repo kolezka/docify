@@ -189,7 +189,7 @@ export function openApiSpec() {
         get: {
           summary: "Raw source file of a passage",
           parameters: [idParam("Passage id (`p_...`)")],
-          responses: { "200": { description: "File contents", content: { "text/plain": { schema: { type: "string" } } } }, ...errors(401, 403, 404) },
+          responses: { "200": { description: "File contents, unpacked when the file is stored gzipped; 404 when they no longer match the recorded hash", content: { "text/plain": { schema: { type: "string" } } } }, ...errors(401, 403, 404) },
         },
       },
       "/api/config": {

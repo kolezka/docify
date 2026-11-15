@@ -162,16 +162,21 @@ test("crawl limits inherit, persist independently, and preserve other options", 
   } finally { d.close(); }
 });
 
-test("prepare enforces the configured total byte limit and honors existing source overrides", async () => {
+test("prepare enforces the configured total size in megabytes and honors existing source overrides", async () => {
   const d = newDocify(home(), config);
+  // 0.6 MB per page: two pages pass a 2 MB limit and break a 1 MB one.
+  const big = `<html><body><h1>Guide</h1><p>${"word ".repeat(120_000)}</p><a href="more">More</a></body></html>`;
+  const bigFetcher = async (input: string | URL | Request) =>
+    String(input).startsWith(url) ? new Response(big, { headers: { "content-type": "text/html" } }) : new Response("not found", { status: 404 });
   try {
-    const id = d.addSource({ library: "bytes", kind: "url", locator: url }).id;
-    d.saveConfig({ maxTotalBytes: 10 });
-    await expect(d.prepare(id, { graph: false, fetcher })).rejects.toThrow("crawl exceeded 10 bytes");
-    d.saveConfig({ maxTotalBytes: 1000 });
-    expect((await d.prepare(id, { graph: false, fetcher })).status).toBe("activated");
-    const limited = d.addSource({ library: "override", kind: "url", locator: url, crawl: { maxTotalBytes: 10 } }).id;
-    await expect(d.prepare(limited, { graph: false, fetcher })).rejects.toThrow("crawl exceeded 10 bytes");
+    const id = d.addSource({ library: "bytes", kind: "url", locator: url, crawlProvider: "builtin" }).id;
+    d.saveConfig({ maxTotalMb: 1 });
+    await expect(d.prepare(id, { graph: false, fetcher: bigFetcher })).rejects.toThrow("crawl exceeded the 1 MB total size limit");
+    d.saveConfig({ maxTotalMb: 2 });
+    expect((await d.prepare(id, { graph: false, fetcher: bigFetcher })).status).toBe("activated");
+    // Source overrides written before the setting changed are still in bytes.
+    const limited = d.addSource({ library: "override", kind: "url", locator: url, crawlProvider: "builtin", crawl: { maxTotalBytes: 10 } }).id;
+    await expect(d.prepare(limited, { graph: false, fetcher })).rejects.toThrow("crawl exceeded the 10 B total size limit");
   } finally { d.close(); }
 });
 

@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { sha256 } from "./hash.ts";
+import { snapshotContent, snapshotRel } from "./snapshot-file.ts";
 import { SCHEMA_VERSION, nowIso } from "./db.ts";
 import { Docify, DocifyError, PIPELINE_VERSION } from "./docify.ts";
-import { ConfigError, EDITABLE_KEYS, configFilePath, readConfigFile, validateConfigPatch } from "./config.ts";
+import { ConfigError, EDITABLE_KEYS, configFilePath, legacyMaxTotalMb, readConfigFile, validateConfigPatch } from "./config.ts";
 import { VERSION } from "../version.ts";
 
 // A whole-store backup: docify.sqlite, config.json and the snapshot files of every active and
@@ -67,13 +68,6 @@ function walkFiles(root: string, prefix = ""): string[] {
   return out;
 }
 
-// Snapshot file of a document, relative to its generation directory, from the stored absolute path.
-function snapshotRel(snapshotDir: string, file: string): string | null {
-  const rel = relative(snapshotDir, file);
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
-  return rel.split(sep).join("/");
-}
-
 interface DocRow {
   generation_id: number;
   source_id: string;
@@ -88,7 +82,8 @@ const KEPT_DOCS_SQL = `SELECT d.generation_id, g.source_id, g.snapshot_dir, d.ra
   FROM documents d JOIN generations g ON g.id = d.generation_id WHERE g.status IN ('active', 'superseded')`;
 
 // Every document of a kept generation must have both snapshot files, with the hashes the DB recorded.
-function checkDocuments(db: Database, files: Map<string, string>, what: string) {
+// The hashes are over the content, so a gzipped file is unpacked first.
+function checkDocuments(db: Database, files: Map<string, Uint8Array<ArrayBuffer>>, what: string) {
   for (const d of db.query<DocRow, []>(KEPT_DOCS_SQL).all()) {
     for (const [file, sha] of [
       [d.raw_file, d.raw_sha256],
@@ -96,8 +91,9 @@ function checkDocuments(db: Database, files: Map<string, string>, what: string) 
     ] as const) {
       const rel = d.snapshot_dir ? snapshotRel(d.snapshot_dir, file) : null;
       const key = rel && `snapshots/${d.source_id}/${d.generation_id}/${rel}`;
+      const stored = key ? files.get(key) : undefined;
       // raw_sha256 is over the raw bytes; normalized_sha256 over the text, which is the same for UTF-8.
-      if (!key || files.get(key) !== sha) throw new DocifyError(what, `snapshot file missing or changed for generation ${d.generation_id}: ${rel ?? file}`);
+      if (!key || !stored || !snapshotContent(key, stored, sha)) throw new DocifyError(what, `snapshot file missing or changed for generation ${d.generation_id}: ${rel ?? file}`);
     }
   }
 }
@@ -111,7 +107,7 @@ export async function exportStore(docify: Docify): Promise<ExportResult> {
       const dbCopy = join(work, DB_FILE);
       docify.db.run("VACUUM INTO ?", [dbCopy]);
       const copy = new Database(dbCopy, { strict: true });
-      const entries = new Map<string, Uint8Array>();
+      const entries = new Map<string, Uint8Array<ArrayBuffer>>();
       let sources: string[];
       try {
         copy.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL");
@@ -125,8 +121,7 @@ export async function exportStore(docify: Docify): Promise<ExportResult> {
           if (!existsSync(dir)) throw new DocifyError("export_failed", `snapshot directory missing for ${g.source_id} generation ${g.id}: ${dir}`);
           for (const rel of walkFiles(dir)) entries.set(`snapshots/${g.source_id}/${g.id}/${rel}`, readFileSync(join(dir, rel)));
         }
-        const hashes = new Map([...entries].map(([k, v]) => [k, sha256(v)]));
-        checkDocuments(copy, hashes, "export_failed");
+        checkDocuments(copy, entries, "export_failed");
       } finally {
         copy.close();
       }
@@ -191,6 +186,7 @@ function mergeConfig(imported: Uint8Array | undefined, current: Record<string, u
   const editable = Object.fromEntries(Object.entries(parsed).filter(([k]) => (EDITABLE_KEYS as readonly string[]).includes(k)));
   try {
     validateConfigPatch(editable);
+    legacyMaxTotalMb(parsed); // a backup made before maxTotalMb names the limit in bytes
   } catch (err) {
     if (err instanceof ConfigError) throw new DocifyError("invalid_backup", `config.json in the backup: ${err.message}`);
     throw err;
@@ -201,7 +197,7 @@ function mergeConfig(imported: Uint8Array | undefined, current: Record<string, u
 }
 
 // Checks the staged database and points its stored snapshot paths at this store.
-function prepareStagedDb(file: string, home: string, files: Map<string, string>, opts: ImportOptions): string[] {
+function prepareStagedDb(file: string, home: string, files: Map<string, Uint8Array<ArrayBuffer>>, opts: ImportOptions): string[] {
   const db = new Database(file, { strict: true });
   try {
     const integrity = db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").all();
@@ -251,18 +247,15 @@ export async function importStore(docify: Docify, data: Uint8Array, opts: Import
   const manifest = parseManifest(await manifestBlob.text());
 
   // Every file must be listed, safe and intact; nothing listed may be missing.
-  const contents = new Map<string, Uint8Array>();
-  const hashes = new Map<string, string>();
+  const contents = new Map<string, Uint8Array<ArrayBuffer>>();
   for (const [path, blob] of entries) {
     if (path === MANIFEST) continue;
     const expected = manifest.files[path];
     if (!expected) throw new DocifyError("invalid_backup", `file not listed in the manifest: ${path}`);
     if (!safeEntryPath(path)) throw new DocifyError("invalid_backup", `unsafe path in the backup: ${path}`);
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    const sum = sha256(bytes);
-    if (bytes.length !== expected.size || sum !== expected.sha256) throw new DocifyError("invalid_backup", `file damaged in the backup: ${path}`);
+    if (bytes.length !== expected.size || sha256(bytes) !== expected.sha256) throw new DocifyError("invalid_backup", `file damaged in the backup: ${path}`);
     contents.set(path, bytes);
-    hashes.set(path, sum);
   }
   for (const path of Object.keys(manifest.files)) if (!contents.has(path)) throw new DocifyError("invalid_backup", `file missing from the backup: ${path}`);
 
@@ -276,7 +269,7 @@ export async function importStore(docify: Docify, data: Uint8Array, opts: Import
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
       writeFileSync(target, bytes, { mode: 0o600 });
     }
-    const sources = prepareStagedDb(join(stage, DB_FILE), home, hashes, opts);
+    const sources = prepareStagedDb(join(stage, DB_FILE), home, contents, opts);
     const current = existsSync(configFilePath(home)) ? readConfigFile(home) : {};
     let dropped: string[] = [];
     if (!opts.keepConfig) {
