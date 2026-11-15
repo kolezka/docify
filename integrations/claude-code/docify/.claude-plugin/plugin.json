@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "docify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Search documentation prepared by a Docify service, with cited, token-bounded excerpts.",
   "license": "UNLICENSED",
   "keywords": [

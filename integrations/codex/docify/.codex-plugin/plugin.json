@@ -1,6 +1,6 @@
 {
   "name": "docify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Search locally prepared documentation with cited, token-bounded excerpts. Queries run offline.",
   "license": "UNLICENSED",
   "skills": "./skills/",
