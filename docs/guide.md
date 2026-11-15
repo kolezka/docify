@@ -35,6 +35,8 @@ docify sources "docs for Apple"
 
 `summarize` sends a bounded sample of the active generation's indexed documents to the configured `graph` provider. It requires an OpenAI-compatible graph backend and uses its model, endpoint and credential environment variable names. This command authorizes that remote processing and any provider cost; merely setting credentials does not enable automatic calls. It saves the generated overview locally and reuses it for the same generation and model. `--force` regenerates it. Run it again after refreshing the source: summaries from old generations are not used for discovery.
 
+In the web UI, open a source and use **Generate Summary** under **Collection summary**. **Regenerate Summary** replaces the current summary only after a successful provider response. The section shows the model, generation and age of the saved summary. Unprepared sources must be prepared first. Opening the page never generates a summary. While a summary is generating, **Cancel** stops the provider call and keeps the saved summary; settings, import, and preparing or removing that source wait until it ends.
+
 Agents call `docs_sources` with `{"query":"docs for Apple"}` to match saved summaries, source ids, library names and locations. Without `query` it lists all sources. Returned source ids can be passed to `docs_search`, `docs_outline` and `docs_open`. Discovery makes no model or network calls. Summaries are document-derived discovery hints, not citation evidence or instructions. If there is no match, list all sources and check whether summaries have been generated.
 
 ## Embeddings
@@ -87,7 +89,24 @@ Any OpenAI-compatible `/v1/embeddings` server works too, such as a remote LiteLL
 
 The **Logs** tab uses a log viewer vendored from `kolezka/svelte-log-viewer` (`src/web/lib/log-viewer/`) for timestamped preparation progress, errors, warnings and live Graphify stdout/stderr. It polls once per second, offers text and stream filters and follows new lines. CLI and web preparations share the latest 10,000 log lines in `<DOCIFY_HOME>/logs.sqlite`; each line is limited to 8,192 characters. Configured embedding and graph API-key values are redacted before storage. Failed reads are reported in the view without clearing lines already loaded. Only runs made with this logging-enabled build are recorded; older runs have no history.
 
-The **Graph** tab draws the active generation's Graphify graph in 3D with WebGL2: drag to orbit, scroll to zoom, click a node to see the page it came from, the passage that grounds it and what it links to. Faded nodes have no grounding passage. Pages Graphify left without nodes are listed in the inspector. A source prepared with **No graph** has nothing to show here. The browser needs WebGL2.
+The **Graph** tab draws the active generation's Graphify graph in 3D with WebGL2. Click a node to see the page it came from, the passage that grounds it and what it links to. Faded nodes have no grounding passage. Pages Graphify left without nodes are listed in the inspector. A source prepared with **No graph** has nothing to show here. The browser needs WebGL2.
+
+Moving around the graph:
+
+| Action | Pointer | Keyboard (canvas focused) |
+| --- | --- | --- |
+| Orbit | drag | arrow keys |
+| Pan | Shift-drag, right-drag, Shift-scroll, two-finger drag on touch | Shift with arrow keys |
+| Zoom toward the pointer | scroll, pinch | `+` and `-` |
+| Fly through the graph | | `W` `A` `S` `D`, `Q` down, `E` up |
+| Go to a node | double-click it; double-click empty space to move in | |
+| Fit, reset | buttons at the bottom right | `F`, `0` |
+
+The buttons at the bottom right also turn a slow rotation on and off. Camera moves are short animations that any input cancels. With the system setting for reduced motion the camera jumps instead and the rotation button is not shown.
+
+The search field (`/` focuses it) finds nodes by label, page, group, node id and grounding passage. It searches the graph already loaded in the browser, so it sends nothing to the server. Every word must match; quotes keep a phrase together. Filters narrow the result: `type:concept`, `page:buttons`, `group:"Setup steps"`, `is:grounded` or `is:ungrounded`, and `links:>5` for a minimum number of links. Matches get a ring in the graph and the rest fades. Up and Down step through the results and fly to each one, Return goes to the node and moves focus to the graph, Escape clears the field. **Show All in View** fits every match on screen.
+
+The legend shows or hides a node type. A row under **Largest groups** highlights that group and brings it into view.
 
 ## Prepare documentation
 
@@ -108,6 +127,23 @@ When an HTML or `.md` page links to an extensionless route, Docify tries its `.m
 By default, a crawl collects at most 50 documents (including the index), follows two link levels, and is limited to 5 MB per page and 50 MB total. This is a bounded crawl, not a guarantee that the whole site is indexed.
 
 Set the global page and depth limits under Settings > Web Crawling, or set `maxPages` and `maxDepth` in `config.json`. The allowed ranges are 1 to 100,000 pages and 0 to 1,000 link levels; depth 0 collects only the start page. Each URL source can override either limit on its source page. Leave a field blank to inherit the global setting. Changes apply on the next prepare and do not expand the allowed origin or path scope. The source API accepts a `crawl` object with `maxPages` and `maxDepth`; a PATCH value of `null` removes that field's override.
+
+### Ignore paths
+
+Each source can carry two lists of regular expressions. `ignore` keeps matching documents out of the source: a URL source does not fetch those pages, a local source does not read those files, and neither can be searched. `graphIgnore` keeps matching documents searchable but leaves them out of the semantic graph, which saves LLM time on pages such as changelogs or generated API listings.
+
+```bash
+docify add mylib https://example.com/docs/ --ignore '^changelog/' --ignore '^blog/' --graph-ignore '^api/reference/'
+docify ignore mylib@unknown                              # show both lists
+docify ignore mylib@unknown --ignore '^legal/'           # replace the ignore list
+docify ignore mylib@unknown --no-graph-ignore            # remove the graph list
+```
+
+Patterns are JavaScript regular expressions, case-sensitive and not anchored unless you write `^` or `$`. They are tested against the document path that Docify stores and cites: for a URL source the part of the URL path below the start URL's directory (`https://example.com/docs/changelog/v2.html` registered at `https://example.com/docs/` is `changelog/v2.html`, and the start directory itself is `index.html`), for a local source the path relative to the registered folder. A list holds at most 100 patterns of up to 500 characters; an invalid expression is rejected when it is saved.
+
+Each `--ignore` or `--graph-ignore` option given to `docify ignore` replaces that whole list. The web UI has the same two fields in the New Source sheet and under Ignored paths on every source page, one pattern per line. A pattern the server rejects is reported at its field and nothing is saved. The source page and the Graph tab count the pages left out of the graph apart from pages Graphify missed, and say so when every page matches and no graph was built. The source API accepts `ignore` and `graphIgnore` arrays on `POST /api/sources` and `PATCH /api/sources/{id}`; a PATCH value of `null` or `[]` removes a list. A rejected list answers 400 with `field` set to `ignore` or `graphIgnore`.
+
+Changes apply on the next prepare and are refused while the source is preparing. A link that redirects to an ignored path is skipped before the target is requested, and a start URL that matches `ignore` fails the prepare. Documents left out by `graphIgnore` do not count as missing from the graph, so they do not make it partial. If every document matches `graphIgnore`, no graph is built.
 
 ### Choose a crawler
 
@@ -170,6 +206,18 @@ Graph extraction calls an LLM. The default provider is the LiteLLM proxy named b
 When the model leaves some documents out or a request fails, Graphify still returns a graph of the rest. Docify activates it with graph status `partial`, lists the documents without nodes in the generation stats (`graphMissing`) and warns in the `prepare` output. A partial graph is searched like a complete one. The next `prepare` rebuilds the source even if nothing changed, and Graphify sends only the missing documents again, because it caches the complete ones.
 
 `graph.timeoutSeconds` (default 900) is an inactivity limit: Graphify is stopped only after that many seconds without any output, so a large source can take longer as long as chunks keep finishing. A stopped run fails the prepare and keeps the previous generation; Graphify has cached the finished chunks, so the next `prepare` continues from there.
+
+Five more `graph` keys tune the model requests. They are also in Settings, under Semantic Graph. Graphify runs with a clean environment, so a `GRAPHIFY_*` variable set in your shell does not reach it; use these keys instead.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `maxOutputTokens` | `null` | Upper limit for one model reply. `null` keeps Graphify's default for the backend. Raise it when replies are cut off. |
+| `temperature` | `null` | Sampling temperature from 0 to 2. `null` keeps Graphify's default, which is 0 for most models. |
+| `maxRetries` | `6` | How many times a request is retried after a rate limit or network error. 0 turns retries off. |
+| `maxRetryDepth` | `3` | How many times a cut-off chunk is halved and sent again. Each level can double the requests for that chunk. 0 sends every chunk once. |
+| `disableThinking` | `false` | Asks a reasoning model not to think. Runs get steadier, but Graphify measured lower extraction quality and more cut-off replies. |
+
+Graphify caches finished chunks, so a changed setting reaches documents that already have nodes only on a forced prepare.
 
 ## Query
 

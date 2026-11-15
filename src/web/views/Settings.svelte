@@ -9,10 +9,10 @@
   import Switch from "../components/Switch.svelte";
   import Toolbar from "../components/Toolbar.svelte";
   import { api, ApiError, downloadBackup, errorText, uploadBackup, type ConfigDescription, type EditableConfig, type PathSetting, type PinsView } from "../lib/api.ts";
+  import { graphChanges, graphErrors, graphForm, type GraphForm, type GraphKey } from "../lib/graph-settings.ts";
   import { button, cn, footnote, input, notice as noticeStyle, popup } from "../lib/ui.ts";
 
   type Provider = EditableConfig["embeddingProvider"];
-  type GraphForm = { backend: string; model: string; baseUrlEnv?: string; baseUrlSuffix?: string; apiKeyEnv?: string; maxConcurrency?: number; timeoutSeconds?: number; mode?: "standard" | "deep"; tokenBudget?: number; apiTimeoutSeconds?: number; maxWorkers?: number };
   type Form = Omit<EditableConfig, "graph"> & { graphEnabled: boolean; graph: GraphForm };
 
   const SCALAR_KEYS = [
@@ -37,9 +37,7 @@
     "browserlessApiKeyEnv",
     "browserlessTimeoutSeconds",
   ] as const;
-  const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers"] as const;
   type FieldKey = Exclude<(typeof SCALAR_KEYS)[number], "embeddingProvider" | "crawlProvider"> | "maxPages" | "maxDepth";
-  type GraphKey = (typeof GRAPH_KEYS)[number];
 
   const providers: { value: Provider; label: string }[] = [
     { value: "transformers", label: "Built-in" },
@@ -177,8 +175,7 @@
 
   function toForm(d: ConfigDescription): Form {
     const values = JSON.parse(JSON.stringify(d.values)) as EditableConfig;
-    const graph: GraphForm = { ...(d.defaults.graph ?? { backend: "", model: "" }), ...(values.graph ?? {}), maxWorkers: values.graph?.maxWorkers ?? undefined };
-    return { ...values, graphEnabled: values.graph !== null, graph };
+    return { ...values, graphEnabled: values.graph !== null, graph: graphForm(d.defaults.graph, values.graph) };
   }
 
   function apply(d: ConfigDescription) {
@@ -199,16 +196,7 @@
     if (!form.graphEnabled) {
       if (before !== null) out.graph = null;
     } else {
-      const changed: Record<string, unknown> = {};
-      const effectiveBefore: GraphForm = { ...(desc.defaults.graph ?? { backend: "", model: "" }), ...(before ?? {}), maxWorkers: before?.maxWorkers ?? undefined };
-      for (const k of GRAPH_KEYS) {
-        const value = form.graph[k];
-        if (before === null) {
-          if (value !== undefined) changed[k] = value;
-        } else if (value !== effectiveBefore[k]) {
-          changed[k] = value ?? null;
-        }
-      }
+      const changed = graphChanges(form.graph, before === null ? null : graphForm(desc.defaults.graph, before));
       if (Object.keys(changed).length) out.graph = changed;
     }
     return out;
@@ -224,14 +212,7 @@
     for (const [key, min, max] of [["maxPages", 1, 100000], ["maxDepth", 0, 1000], ["maxTotalMb", 1, 1000]] as const) {
       if (!Number.isSafeInteger(form[key]) || form[key] < min || form[key] > max) e[key] = `enter a whole number from ${min} to ${max}`;
     }
-    if (form.graphEnabled) {
-      for (const key of ["tokenBudget", "apiTimeoutSeconds", "maxConcurrency", "timeoutSeconds"] as const) {
-        const value = form.graph[key];
-        if (value === undefined || !Number.isInteger(value) || value < 1) e[`graph.${key}`] = "enter a positive whole number";
-      }
-      const workers = form.graph.maxWorkers;
-      if (workers !== undefined && (!Number.isInteger(workers) || workers < 1)) e["graph.maxWorkers"] = "enter a positive whole number, or leave blank for automatic";
-    }
+    if (form.graphEnabled) Object.assign(e, graphErrors(form.graph));
     if (!e.strongVectorSim && !e.weakVectorSim && form.weakVectorSim > form.strongVectorSim) e.weakVectorSim = "must not be above strong match similarity";
     return e;
   });
@@ -402,7 +383,7 @@
   </Row>
 {/snippet}
 
-{#snippet graphField(g: GraphForm, key: GraphKey, label: string, opts: { sub?: string; number?: boolean; min?: string; step?: string; unit?: string; width?: string; env?: boolean })}
+{#snippet graphField(g: GraphForm, key: Exclude<GraphKey, "disableThinking">, label: string, opts: { sub?: string; number?: boolean; min?: string; max?: string; step?: string; unit?: string; width?: string; placeholder?: string; env?: boolean })}
   {@const k = `graph.${key}`}
   {@const err = fieldError(k)}
   <Row {label} sub={opts.sub} for={fieldId(k)}>
@@ -413,8 +394,11 @@
             id={fieldId(k)}
             type="number"
             min={opts.min}
+            max={opts.max}
             step={opts.step}
+            placeholder={opts.placeholder}
             aria-invalid={!!err}
+            aria-describedby={err ? `${fieldId(k)}-error` : undefined}
             class={input({ mono: true, invalid: !!err, class: "text-right" })}
             bind:value={g[key]}
           />
@@ -705,7 +689,18 @@
             </Row>
             {@render graphField(form.graph, "tokenBudget", "Token budget", { sub: "Default: 60000", number: true, min: "1", step: "1", width: "w-[140px]" })}
             {@render graphField(form.graph, "apiTimeoutSeconds", "API timeout", { sub: "Default: 600 seconds", number: true, min: "1", step: "1", unit: "seconds", width: "w-[140px]" })}
-            {@render graphField(form.graph, "maxWorkers", "Max workers", { sub: "Leave blank for automatic selection", number: true, min: "1", step: "1", width: "w-[140px]" })}
+            {@render graphField(form.graph, "maxWorkers", "Max workers", { sub: "Leave blank for automatic selection", number: true, min: "1", step: "1", placeholder: "Automatic", width: "w-[140px]" })}
+          </Group>
+          <Group title="Model requests" hint="Leave a field blank to use Graphify's default for the backend and model.">
+            {@render graphField(form.graph, "maxOutputTokens", "Max output tokens", { sub: "Upper limit for one reply. Raise it if replies are cut off", number: true, min: "1", step: "1", placeholder: "Default", width: "w-[140px]" })}
+            {@render graphField(form.graph, "temperature", "Temperature", { sub: "From 0 to 2. Lower is more repeatable", number: true, min: "0", max: "2", step: "0.1", placeholder: "Default", width: "w-[140px]" })}
+            <Row label="Disable thinking" sub="Steadier runs on reasoning models, at the cost of extraction quality">
+              <Switch bind:checked={form.graph.disableThinking} label="Disable thinking" hideLabel />
+            </Row>
+          </Group>
+          <Group title="Retries" hint="More retries finish more documents and can cost more.">
+            {@render graphField(form.graph, "maxRetries", "Request retries", { sub: "After a rate limit or network error. Default: 6", number: true, min: "0", max: "100", step: "1", width: "w-[140px]" })}
+            {@render graphField(form.graph, "maxRetryDepth", "Split depth", { sub: "How many times a cut-off chunk is halved and retried. 0 sends each chunk once. Default: 3", number: true, min: "0", max: "10", step: "1", width: "w-[140px]" })}
           </Group>
           <Group title="Limits">
             {@render graphField(form.graph, "maxConcurrency", "Max concurrency", { number: true, min: "1", step: "1", width: "w-[140px]" })}

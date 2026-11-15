@@ -19,6 +19,11 @@
     "mode": "standard",
     "tokenBudget": 60000,
     "apiTimeoutSeconds": 600,
-    "maxWorkers": null
+    "maxWorkers": null,
+    "maxOutputTokens": null,
+    "temperature": null,
+    "maxRetries": 6,
+    "maxRetryDepth": 3,
+    "disableThinking": false
   }
 }

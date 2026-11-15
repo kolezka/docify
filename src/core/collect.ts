@@ -39,7 +39,8 @@ const kb = (n: number) => n < 1000 ? `${n} B` : n < 1_000_000 ? `${Number((n / 1
 
 // Symlinks are followed only while they resolve inside the registered root, so a link
 // cannot pull files from elsewhere into the store (the UI only vets the root itself).
-export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS, log: CollectLog = stderrWarnings): RawDoc[] {
+// `ignore` patterns are tested against the document path, the one stored in the snapshot.
+export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS, log: CollectLog = stderrWarnings, ignore: RegExp[] = []): RawDoc[] {
   const abs = realpathSync(resolve(root));
   const st = statSync(abs);
   const files: string[] = [];
@@ -67,8 +68,14 @@ export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS,
   }
   if (skipped.length) log("warn", `Skipped ${skipped.length} symlink(s) pointing outside ${abs}: ${skipped.slice(0, 3).join(", ")}`);
   let total = 0;
+  let ignored = 0;
   const docs: RawDoc[] = [];
   for (const f of files) {
+    const path = st.isFile() ? relative(join(abs, ".."), f) : relative(abs, f);
+    if (ignore.some((pattern) => pattern.test(path))) {
+      ignored++;
+      continue;
+    }
     if (docs.length >= limits.maxPages * 40) throw new Error(`more than ${limits.maxPages * 40} documents under ${abs}`);
     const bytes = new Uint8Array(readFileSync(f));
     if (bytes.length > limits.maxBytesPerPage) {
@@ -77,9 +84,10 @@ export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS,
     }
     total += bytes.length;
     if (total > limits.maxTotalBytes) throw new Error(`source exceeds the ${kb(limits.maxTotalBytes)} total size limit`);
-    docs.push({ path: st.isFile() ? relative(join(abs, ".."), f) : relative(abs, f), url: null, kind: kindFromPath(f)!, bytes });
+    docs.push({ path, url: null, kind: kindFromPath(f)!, bytes });
   }
-  if (!docs.length) throw new Error(`no Markdown or HTML files found under ${abs}`);
+  if (ignored) log("info", `Ignored ${ignored} files matching the source's ignore patterns`);
+  if (!docs.length) throw new Error(`no Markdown or HTML files found under ${abs}${ignored ? ` (${ignored} ignored)` : ""}`);
   log("info", `Collected ${docs.length} files (${kb(total)}) from ${abs}`);
   return docs;
 }
@@ -95,6 +103,8 @@ export interface CrawlOptions {
   pdfFetcher?: Fetcher;
   onAcceptedPage?: (url: string) => void;
   log?: CollectLog;
+  // Document paths matching any of these are neither fetched nor stored.
+  ignore?: RegExp[];
 }
 
 // Breadth-first crawl limited to the start URL's origin and directory path.
@@ -111,6 +121,10 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     c.search = "";
     return c.toString();
   };
+  const docPath = (u: URL) => u.pathname.slice(scopePath.length) || "index.html";
+  const ignored = (u: URL) => !!options.ignore?.some((pattern) => pattern.test(docPath(u)));
+  // The crawl has nowhere else to begin, so say it instead of returning nothing.
+  if (ignored(startUrl)) throw new Error(`the start URL matches an ignore pattern: ${docPath(startUrl)}`);
 
   const fetchInScope = async (url: URL, selectedFetcher: Fetcher = fetcher) => {
     let res: Response | null = null;
@@ -128,6 +142,13 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
         res = null;
         break;
       }
+      // Checked before the next request, so an ignored page is never fetched.
+      if (ignored(next)) {
+        log("info", `Skipped ${current}: redirects to ${next}, which matches an ignore pattern`);
+        await res.body?.cancel();
+        res = null;
+        break;
+      }
       await res.body?.cancel();
       log("info", `Redirect ${current} -> ${next} (HTTP ${res.status})`);
       current = next;
@@ -141,14 +162,15 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
   const collected = new Set<string>();
   const docs: RawDoc[] = [];
   let total = 0;
+  let ignoredLinks = 0;
   log("info", `Crawl ${startUrl} within ${startUrl.origin}${scopePath}: up to ${limits.maxPages} pages, depth ${limits.maxDepth}`);
   while (queue.length && docs.length < limits.maxPages) {
     const { url, depth, preferMarkdown } = queue.shift()!;
     if (collected.has(canonical(url))) continue;
     let fetched = null;
-    if (preferMarkdown && options.markdownExports !== false) {
-      const markdownUrl = new URL(url);
-      markdownUrl.pathname += ".md";
+    const markdownUrl = new URL(url);
+    markdownUrl.pathname += ".md";
+    if (preferMarkdown && options.markdownExports !== false && !ignored(markdownUrl)) {
       try {
         fetched = await fetchInScope(markdownUrl);
       } catch (error) {
@@ -191,7 +213,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     }
     total += bytes.length;
     if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded the ${kb(limits.maxTotalBytes)} total size limit`);
-    const path = current.pathname.slice(scopePath.length) || "index.html";
+    const path = docPath(current);
     collected.add(canonical(current));
     let content = bytes;
     if (isPdf) {
@@ -224,6 +246,10 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
           || !/\.[^/]+$/.test(link.pathname);
         if (!inScope(link) || seen.has(key) || !documentPath) continue;
         seen.add(key);
+        if (ignored(link)) {
+          ignoredLinks++;
+          continue;
+        }
         const preferMarkdown = (kind === "html" || (kind === "markdown" && /\.md$/i.test(current.pathname)))
           && !link.pathname.endsWith("/") && !/\.[^/]+$/.test(link.pathname);
         queue.push({ url: link, depth: depth + 1, preferMarkdown });
@@ -233,6 +259,7 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     log("info", `Fetched ${current} (${docs.length}/${limits.maxPages}, ${isPdf ? "pdf" : kind}, ${kb(bytes.length)}, depth ${depth}, ${queued} new links, ${Math.round(performance.now() - started)} ms)`);
   }
   if (queue.length) log("warn", `Stopped at the ${limits.maxPages} page limit; ${queue.length} queued links were not fetched`);
+  if (ignoredLinks) log("info", `Ignored ${ignoredLinks} links matching the source's ignore patterns`);
   if (!docs.length) throw new Error(`no documents fetched from ${start}`);
   log("info", `Crawl finished: ${docs.length} pages, ${kb(total)}`);
   return docs;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { ChevronDown, ChevronRight, Circle, CircleCheck, CircleDot, ExternalLink, Link, X } from "@lucide/svelte";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
   import Group from "../components/Group.svelte";
@@ -8,11 +8,11 @@
   import StatusIcon from "../components/StatusIcon.svelte";
   import SourceTree from "../components/SourceTree.svelte";
   import Toolbar from "../components/Toolbar.svelte";
-  import { api, downloadArtifact, errorText, type SourceInfo } from "../lib/api.ts";
-  import { ago, fraction } from "../lib/format.ts";
+  import { api, ApiError, downloadArtifact, errorText, type SourceInfo } from "../lib/api.ts";
+  import { ago, fraction, graphCoverage } from "../lib/format.ts";
   import { nav } from "../lib/nav.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
-  import { button, capsule, capsuleButton, cn, footnote, input, notice, popup, sourceStateLabel, sourceTone } from "../lib/ui.ts";
+  import { button, capsule, capsuleButton, cn, footnote, input, isPatternField, notice, patternError, patternLines, popup, sourceStateLabel, sourceTone, textArea, type PatternField } from "../lib/ui.ts";
 
   type Crawl4aiSettings = NonNullable<SourceInfo["crawl4ai"]>;
 
@@ -23,7 +23,11 @@
 
   const s = $derived(sources.byId(nav.sourceId));
 
-  let busy = $state(false);
+  let actionBusy = $state(false);
+  // Summaries outlive a source switch, so they are tracked per source, not per page.
+  let summarizingIds = $state<string[]>([]);
+  const summarizing = $derived(!!nav.sourceId && summarizingIds.includes(nav.sourceId));
+  const busy = $derived(actionBusy || summarizing);
   let error = $state("");
   let menuOpen = $state(false);
   let confirmRemove = $state(false);
@@ -39,6 +43,10 @@
   let editingLimits = $state(false);
   let maxPages = $state("");
   let maxDepth = $state("");
+  let editingIgnore = $state(false);
+  let ignoreText = $state("");
+  let graphIgnoreText = $state("");
+  let ignoreError = $state<{ field: PatternField; message: string } | null>(null);
 
   // Page state belongs to one source; start fresh when another one is shown.
   $effect.pre(() => {
@@ -50,6 +58,8 @@
       showAllMissing = false;
       editingCrawl4ai = false;
       editingLimits = false;
+      editingIgnore = false;
+      ignoreError = null;
     });
   });
 
@@ -65,6 +75,7 @@
   const crawl4aiChanged = $derived(Object.keys(crawl4ai).length);
   const stat = (key: string): number | null => (typeof g?.stats[key] === "number" ? (g.stats[key] as number) : null);
   const graphMissing = $derived(Array.isArray(g?.stats.graphMissing) ? (g.stats.graphMissing as string[]) : []);
+  const graphIgnored = $derived(typeof g?.stats.graphIgnored === "number" ? g.stats.graphIgnored : 0);
   const artifacts = $derived(Array.isArray(g?.stats.artifacts) ? (g.stats.artifacts as string[]) : []);
   // With a per-source crawler the global one is not known here, so the option then reads just "Global default".
   const globalCrawlerLabel = $derived(
@@ -76,7 +87,7 @@
   const noGraphLabel = $derived(s?.state === "ready" ? "Update Without Graph" : "Prepare Without Graph");
 
   async function run(action: () => Promise<unknown>): Promise<boolean> {
-    busy = true;
+    actionBusy = true;
     error = "";
     let ok = false;
     try {
@@ -85,7 +96,7 @@
     } catch (err) {
       error = errorText(err);
     } finally {
-      busy = false;
+      actionBusy = false;
     }
     await sources.refresh();
     return ok;
@@ -94,6 +105,24 @@
   function prepare(graph: boolean) {
     menuOpen = false;
     run(() => api(`${path}/prepare`, { method: "POST", body: { graph } }));
+  }
+
+  async function generateSummary() {
+    const sourceId = s!.id;
+    const summaryPath = `${path}/summary`;
+    const force = !!s!.summary;
+    summarizingIds = [...summarizingIds, sourceId];
+    error = "";
+    try {
+      await api(summaryPath, { method: "POST", body: { force } });
+    } catch (err) {
+      // A cancel the user asked for is not an error, and neither is one for a page they left.
+      const cancelled = err instanceof ApiError && err.code === "cancelled";
+      if (!cancelled && nav.sourceId === sourceId) error = errorText(err);
+    } finally {
+      summarizingIds = summarizingIds.filter((id) => id !== sourceId);
+      await sources.refresh();
+    }
   }
 
   function cancel() {
@@ -120,6 +149,38 @@
       await api(path, { method: "PATCH", body: { crawl: { maxPages: maxPages === "" ? null : Number(maxPages), maxDepth: maxDepth === "" ? null : Number(maxDepth) } } });
       editingLimits = false;
     });
+  }
+
+  function editIgnore() {
+    ignoreText = (s?.ignore ?? []).join("\n");
+    graphIgnoreText = (s?.graphIgnore ?? []).join("\n");
+    ignoreError = null;
+    editingIgnore = true;
+  }
+
+  async function saveIgnore(event: SubmitEvent) {
+    event.preventDefault();
+    actionBusy = true;
+    error = "";
+    ignoreError = null;
+    let invalid: PatternField | null = null;
+    try {
+      await api(path, { method: "PATCH", body: { ignore: patternLines(ignoreText), graphIgnore: patternLines(graphIgnoreText) } });
+      editingIgnore = false;
+    } catch (err) {
+      // A bad pattern is shown at its field, and the form stays open with the text as typed.
+      if (err instanceof ApiError && isPatternField(err.field)) {
+        invalid = err.field;
+        ignoreError = { field: invalid, message: patternError(err.message) };
+      } else error = errorText(err);
+    } finally {
+      actionBusy = false;
+    }
+    if (invalid) {
+      await tick();
+      document.getElementById(invalid === "ignore" ? "source-ignore" : "source-graph-ignore")?.focus();
+    }
+    await sources.refresh();
   }
 
   function editCrawl4ai() {
@@ -172,6 +233,18 @@
 </script>
 
 <svelte:window onclick={closeMenuOutside} onkeydown={(e) => e.key === "Escape" && (menuOpen = false)} />
+
+{#snippet patterns(label: string, list: string[])}
+  <Row {label} class="items-start">
+    {#if list.length}
+      <ul class="flex max-w-[60%] min-w-0 flex-col items-end gap-0.5 pt-px">
+        {#each list as pattern (pattern)}<li class="max-w-full truncate font-mono text-[12px] leading-[18px] text-label2" title={pattern}>{pattern}</li>{/each}
+      </ul>
+    {:else}
+      <span class="text-[13px] text-label2">None</span>
+    {/if}
+  </Row>
+{/snippet}
 
 {#snippet onOff(id: string, label: string, value: string, set: (v: string) => void)}
   <Row {label} for={id} class="pl-9">
@@ -260,6 +333,24 @@
         {/if}
       </div>
 
+      <Group title="Collection summary" hint="A generated discovery hint, not cited evidence. Generation sends a documentation sample to the configured OpenAI-compatible graph provider.">
+        <div class="px-3.5 py-3">
+          {#if s.summary}
+            <p class="text-[13px] leading-5 break-words whitespace-pre-wrap">{s.summary.text}</p>
+            <p class="mt-2 text-[12px] text-label2" title={s.summary.generatedAt}>Generated {ago(s.summary.generatedAt)} · {s.summary.model} · generation #{s.summary.generation}</p>
+          {:else}
+            <p class="text-[13px] leading-5 text-label2">{g ? "No summary for this generation. Generate one to help agents discover what this collection covers." : "Prepare this source before generating a summary."}</p>
+          {/if}
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" class={button({ size: "xs" })} disabled={busy || preparing || !g} onclick={generateSummary}>{s.summary ? "Regenerate Summary" : "Generate Summary"}</button>
+            {#if summarizing}
+              <button type="button" class={button({ size: "xs" })} disabled={actionBusy} onclick={cancel}>Cancel</button>
+              <p class="text-[12px] text-label2" role="status">Generating summary…</p>
+            {/if}
+          </div>
+        </div>
+      </Group>
+
       {#if preparing}
         <section class="mt-6" aria-label="Preparation progress">
           <ol class="flex flex-wrap gap-x-4 gap-y-2">
@@ -316,7 +407,7 @@
           {#if passages !== null}<Row label="Passages"><span class="font-mono text-[13px] text-label2">{passages.toLocaleString()}</span></Row>{/if}
           <Row
             label="Semantic graph"
-            sub={g.graphStatus === "ok" ? "Every page has graph nodes" : g.graphStatus === "partial" ? `${graphMissing.length} ${graphMissing.length === 1 ? "page has" : "pages have"} no graph nodes` : undefined}
+            sub={graphCoverage(g.graphStatus, graphMissing.length, graphIgnored)}
           >
             <span class="flex items-center gap-2.5">
               {#if g.graphStatus === "ok"}
@@ -362,6 +453,39 @@
           {/if}
         </Group>
       {/if}
+
+      <Group title="Ignored paths" hint="Regular expressions matched against the document path, such as ^changelog/. Changes apply on the next update.">
+        {#if editingIgnore}
+          <form onsubmit={saveIgnore}>
+            <Row class="flex-col items-stretch gap-1.5">
+              <label for="source-ignore" class="text-[13px] text-label">Do not collect</label>
+              <textarea id="source-ignore" class={textArea({ invalid: ignoreError?.field === "ignore" })} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={ignoreError?.field === "ignore"} aria-describedby="source-ignore-note" bind:value={ignoreText} oninput={() => ignoreError?.field === "ignore" && (ignoreError = null)} disabled={busy || preparing}></textarea>
+              {#if ignoreError?.field === "ignore"}
+                <span id="source-ignore-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{ignoreError.message}</span>
+              {:else}
+                <span id="source-ignore-note" class={footnote}>Matching {s.kind === "url" ? "pages are not fetched" : "files are not read"} and cannot be searched.</span>
+              {/if}
+            </Row>
+            <Row class="flex-col items-stretch gap-1.5">
+              <label for="source-graph-ignore" class="text-[13px] text-label">Leave out of the graph</label>
+              <textarea id="source-graph-ignore" class={textArea({ invalid: ignoreError?.field === "graphIgnore" })} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={ignoreError?.field === "graphIgnore"} aria-describedby="source-graph-ignore-note" bind:value={graphIgnoreText} oninput={() => ignoreError?.field === "graphIgnore" && (ignoreError = null)} disabled={busy || preparing}></textarea>
+              {#if ignoreError?.field === "graphIgnore"}
+                <span id="source-graph-ignore-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{ignoreError.message}</span>
+              {:else}
+                <span id="source-graph-ignore-note" class={footnote}>Matching documents stay searchable but get no graph nodes.</span>
+              {/if}
+            </Row>
+            <Row class="justify-end">
+              <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingIgnore = false)}>Cancel</button>
+              <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy || preparing}>Save</button>
+            </Row>
+          </form>
+        {:else}
+          {@render patterns("Do not collect", s.ignore)}
+          {@render patterns("Leave out of the graph", s.graphIgnore)}
+          <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy || preparing} onclick={editIgnore}>Edit patterns</button></Row>
+        {/if}
+      </Group>
 
       {#if s.kind === "url"}
         <Group title="Crawl limits" hint="Leave a field blank to use the global setting. Changes apply on the next update.">

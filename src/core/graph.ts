@@ -66,6 +66,17 @@ export function providerEnv(provider: GraphProviderConfig): Record<string, strin
   return env;
 }
 
+// Graphify reads these from its environment only, and it starts with a clean one.
+export function runtimeEnv(provider: GraphProviderConfig): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (provider.maxOutputTokens != null) env.GRAPHIFY_MAX_OUTPUT_TOKENS = String(provider.maxOutputTokens);
+  if (provider.temperature != null) env.GRAPHIFY_LLM_TEMPERATURE = String(provider.temperature);
+  if (provider.maxRetries != null) env.GRAPHIFY_MAX_RETRIES = String(provider.maxRetries);
+  if (provider.maxRetryDepth != null) env.GRAPHIFY_MAX_RETRY_DEPTH = String(provider.maxRetryDepth);
+  if (provider.disableThinking) env.GRAPHIFY_DISABLE_THINKING = "1";
+  return env;
+}
+
 export async function runGraphify(
   config: DocifyConfig,
   sourceId: string,
@@ -116,7 +127,7 @@ export async function runGraphify(
     ...(force ? ["--force"] : []),
   ];
   const started = performance.now();
-  const proc = Bun.spawn(argv, { env: providerEnv(provider), stdout: "pipe", stderr: "pipe", cwd: work });
+  const proc = Bun.spawn(argv, { env: { ...providerEnv(provider), ...runtimeEnv(provider) }, stdout: "pipe", stderr: "pipe", cwd: work });
   // SIGTERM first; SIGKILL if Graphify ignores it, so a hung extraction cannot hold the lock forever.
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   const stop = () => {
