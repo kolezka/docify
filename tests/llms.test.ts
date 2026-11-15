@@ -20,8 +20,12 @@ for (const name of ["llm.txt", "llms.txt"]) {
 
 test("crawl follows Markdown index links including extensionless documentation pages", async () => {
   const index = `# Example\n- [Guide](guide.md)\n- [Setup](setup)\n- [HTML](usage.html)\n- [Titled](<options.md> "Options")\n`;
+  const requested: string[] = [];
+  // A site without Markdown exports: the route itself is the only copy of the page.
   const fetcher: Fetcher = async (url) => {
     const path = new URL(url).pathname;
+    requested.push(path.slice("/docs/".length));
+    if (path.endsWith("setup.md")) return new Response("missing", { status: 404 });
     return new Response(path.endsWith("llms.txt") ? index : markdown, {
       headers: { "content-type": path.endsWith("llms.txt") ? "text/plain" : "text/markdown" },
     });
@@ -29,6 +33,64 @@ test("crawl follows Markdown index links including extensionless documentation p
   const docs = await crawl(base + "llms.txt", DEFAULT_LIMITS, fetcher);
   expect(docs.map((d) => d.path)).toEqual(["llms.txt", "guide.md", "setup", "usage.html", "options.md"]);
   expect(new TextDecoder().decode(docs[1]!.bytes)).toContain("kestrelSpeed");
+  expect(requested).toEqual(["llms.txt", "guide.md", "setup.md", "setup", "usage.html", "options.md"]);
+});
+
+// An index such as docs.openclaw.ai/llm.txt lists routes without ".md" while the site serves each
+// page as Markdown at "<route>.md". The HTML copies are many times larger and hit the size limit.
+const htmlPage = `<html><body><nav>${"<a href=\"/docs/other\">menu</a>".repeat(400)}</nav><main><h1>Setup</h1><p>The kestrelSpeed setting.</p></main></body></html>`;
+const exportSite = (requested: string[], exports: Record<string, Response | (() => Response)>): Fetcher => async (url) => {
+  const path = new URL(url).pathname.slice("/docs/".length);
+  requested.push(path);
+  if (/^llms?\.txt$/.test(path)) return new Response("# Example\n- [Setup](setup)\n- [Section](section/)\n- [Usage](usage.html)\n", { headers: { "content-type": "text/plain" } });
+  const answer = exports[path];
+  if (answer) return typeof answer === "function" ? answer() : answer;
+  if (path.endsWith(".md")) return new Response("missing", { status: 404 });
+  return new Response(htmlPage, { headers: { "content-type": "text/html" } });
+};
+
+for (const name of ["llm.txt", "llms.txt"]) {
+  test(`a route listed in ${name} is collected from its Markdown export, not as HTML`, async () => {
+    const requested: string[] = [];
+    const fetcher = exportSite(requested, { "setup.md": () => new Response(markdown, { headers: { "content-type": "text/markdown" } }) });
+    // Room for the two pages that have no export, not for a third HTML page: it fits only because the export is used.
+    const docs = await crawl(base + name, { ...DEFAULT_LIMITS, maxDepth: 1, maxTotalBytes: htmlPage.length * 2 + 200 }, fetcher);
+    expect(docs.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: name, kind: "markdown" },
+      { path: "setup.md", kind: "markdown" },
+      { path: "section/", kind: "html" },
+      { path: "usage.html", kind: "html" },
+    ]);
+    expect(new TextDecoder().decode(docs[1]!.bytes)).toBe(markdown);
+    // The HTML route of an exported page is never downloaded; a directory or a named file gets no probe.
+    expect(requested).toEqual([name, "setup.md", "section/", "usage.html"]);
+  });
+}
+
+test("a route listed in llms.txt falls back to the route when its export is missing, not Markdown or fails", async () => {
+  for (const [what, answer] of [
+    ["missing", new Response("missing", { status: 404 })],
+    ["the same HTML page", new Response(htmlPage, { headers: { "content-type": "text/html" } })],
+    ["a failed request", () => { throw new Error("connection reset"); }],
+  ] as const) {
+    const requested: string[] = [];
+    const docs = await crawl(base + "llms.txt", { ...DEFAULT_LIMITS, maxDepth: 1 }, exportSite(requested, { "setup.md": answer as Response }), { log: () => {} });
+    expect(docs.map(({ path, kind }) => ({ path, kind })), what).toEqual([
+      { path: "llms.txt", kind: "markdown" },
+      { path: "setup", kind: "html" },
+      { path: "section/", kind: "html" },
+      { path: "usage.html", kind: "html" },
+    ]);
+    expect(requested, what).toEqual(["llms.txt", "setup.md", "setup", "section/", "usage.html"]);
+  }
+});
+
+test("a rendering provider gets no Markdown export probe for routes listed in llms.txt", async () => {
+  const requested: string[] = [];
+  const fetcher = exportSite(requested, { "setup.md": () => new Response(markdown, { headers: { "content-type": "text/markdown" } }) });
+  const docs = await crawl(base + "llms.txt", { ...DEFAULT_LIMITS, maxDepth: 1 }, fetcher, { markdownExports: false });
+  expect(docs.map((d) => d.path)).toEqual(["llms.txt", "setup", "section/", "usage.html"]);
+  expect(requested).toEqual(["llms.txt", "setup", "section/", "usage.html"]);
 });
 
 test("Markdown index crawling keeps scope, redirect, deduplication and asset guards", async () => {

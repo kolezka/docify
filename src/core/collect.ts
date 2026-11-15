@@ -1,5 +1,6 @@
 import { readdirSync, statSync, readFileSync, realpathSync, lstatSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { lazyPageContent } from "./lazy-content.ts";
 import { kindFromPath, type DocKind } from "./normalize.ts";
 import { extractPdfText } from "./pdf.ts";
 
@@ -211,11 +212,15 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
       log("warn", `Skipped ${current}: over the ${kb(limits.maxBytesPerPage)} page limit`);
       continue;
     }
-    total += bytes.length;
+    // A page that keeps its text in a lazy component is stored as that text alone, and only
+    // those bytes count: the rest is the component's data, twice, and the site navigation.
+    const pageText = isPdf ? "" : new TextDecoder().decode(bytes);
+    const lazy = kind === "html" ? lazyPageContent(pageText) : null;
+    let content = lazy === null ? bytes : new TextEncoder().encode(lazy);
+    total += lazy === null ? bytes.length : content.length;
     if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded the ${kb(limits.maxTotalBytes)} total size limit`);
     const path = docPath(current);
     collected.add(canonical(current));
-    let content = bytes;
     if (isPdf) {
       try {
         content = new TextEncoder().encode(await extractPdfText(bytes));
@@ -228,10 +233,9 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     let queued = 0;
     // Ordinary Markdown pages also contain navigation, not just llms.txt indexes.
     if (!isPdf && depth < limits.maxDepth) {
-      const text = new TextDecoder().decode(bytes);
       const links = kind === "html"
-        ? [...text.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((m) => m[1]!)
-        : [...text.matchAll(/(?<!!)\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"\n]*")?\s*\)/g)].map((m) => m[1] ?? m[2]!);
+        ? [...pageText.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((m) => m[1]!)
+        : [...pageText.matchAll(/(?<!!)\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"\n]*")?\s*\)/g)].map((m) => m[1] ?? m[2]!);
       for (const href of links) {
         let link: URL;
         try {
@@ -250,13 +254,14 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
           ignoredLinks++;
           continue;
         }
-        const preferMarkdown = (kind === "html" || (kind === "markdown" && /\.md$/i.test(current.pathname)))
+        // An llms.txt index mostly lists routes without ".md", on sites that export each as Markdown.
+        const preferMarkdown = (kind === "html" || (kind === "markdown" && (isMarkdownIndex || /\.md$/i.test(current.pathname))))
           && !link.pathname.endsWith("/") && !/\.[^/]+$/.test(link.pathname);
         queue.push({ url: link, depth: depth + 1, preferMarkdown });
         queued++;
       }
     }
-    log("info", `Fetched ${current} (${docs.length}/${limits.maxPages}, ${isPdf ? "pdf" : kind}, ${kb(bytes.length)}, depth ${depth}, ${queued} new links, ${Math.round(performance.now() - started)} ms)`);
+    log("info", `Fetched ${current} (${docs.length}/${limits.maxPages}, ${isPdf ? "pdf" : kind}, ${kb(bytes.length)}${lazy === null ? "" : `, kept ${kb(content.length)} of lazy-loaded content`}, depth ${depth}, ${queued} new links, ${Math.round(performance.now() - started)} ms)`);
   }
   if (queue.length) log("warn", `Stopped at the ${limits.maxPages} page limit; ${queue.length} queued links were not fetched`);
   if (ignoredLinks) log("info", `Ignored ${ignoredLinks} links matching the source's ignore patterns`);
