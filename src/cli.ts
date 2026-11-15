@@ -7,6 +7,7 @@ import { summarizeSource } from "./core/summary.ts";
 import { discoverSources, open, outline, read, renderSources, scope, search, searchMany, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
 import { exportStore, importStore } from "./core/backup.ts";
+import { compressSnapshots } from "./core/compress-snapshots.ts";
 import { VERSION, requireVersion } from "./version.ts";
 
 const USAGE = `docify <command> [options]
@@ -40,6 +41,8 @@ Backup (the database, settings and prepared snapshots; not models or the Graphif
                                 replace the store with a backup; --force when the store has
                                 sources (they are moved aside, not deleted); --keep-config keeps
                                 this machine's config.json. Restart running serve/mcp afterwards.
+  compress                      gzip the snapshot files of sources prepared before Docify stored
+                                them gzipped; frees disk space, changes no search result
 
 Servers:
   serve [--port 4747] [--host 127.0.0.1] [--allowed-host HOST]
@@ -255,6 +258,14 @@ async function main(argv: string[]) {
         if (r.movedAside) console.log(`the previous store is in ${r.movedAside}`);
         if (r.droppedConfigKeys.length) console.log(`kept this machine's ${r.droppedConfigKeys.join(", ")}; the backup's values were ignored`);
         console.log("restart running `docify serve` and `docify mcp` processes so they read the imported store");
+        break;
+      }
+      case "compress": {
+        const r = await compressSnapshots(docify);
+        const mb = (n: number) => (n / 1_000_000).toFixed(1);
+        console.log(r.files ? `gzipped ${r.files} snapshot file(s): ${mb(r.bytesBefore)} MB before, ${mb(r.bytesAfter)} MB now` : "no snapshot files left to gzip");
+        for (const s of r.skipped) console.error(`left as it is: ${s.sourceId} generation ${s.generationId} ${s.file}: ${s.reason}`);
+        if (r.skipped.length) process.exitCode = 1;
         break;
       }
       default:

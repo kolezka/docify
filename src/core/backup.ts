@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { sha256 } from "./hash.ts";
-import { snapshotContent } from "./snapshot-file.ts";
+import { snapshotContent, snapshotRel } from "./snapshot-file.ts";
 import { SCHEMA_VERSION, nowIso } from "./db.ts";
 import { Docify, DocifyError, PIPELINE_VERSION } from "./docify.ts";
 import { ConfigError, EDITABLE_KEYS, configFilePath, legacyMaxTotalMb, readConfigFile, validateConfigPatch } from "./config.ts";
@@ -66,13 +66,6 @@ function walkFiles(root: string, prefix = ""): string[] {
     else throw new DocifyError("export_failed", `unexpected non-file in the snapshot directory: ${join(root, rel)}`);
   }
   return out;
-}
-
-// Snapshot file of a document, relative to its generation directory, from the stored absolute path.
-function snapshotRel(snapshotDir: string, file: string): string | null {
-  const rel = relative(snapshotDir, file);
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
-  return rel.split(sep).join("/");
 }
 
 interface DocRow {
