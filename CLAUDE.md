@@ -43,6 +43,8 @@ One core, thin adapters. `src/core/docify.ts` (class `Docify`: sources, preparat
 
 - Graphify exits 0 when a chunk fails or the model leaves files out, and writes a graph of the rest. That graph activates as `graph_status = 'partial'` with the uncovered paths in `stats.graphMissing`; search uses it, and `partial` never counts as `unchanged`, so the next prepare retries the gaps from Graphify's cache. Throwing on those warnings instead failed the whole prepare, passages and vectors included. A graph with no grounded nodes still fails.
 
+- Graphify's raw output (`--no-cluster`) is not validated, so `graph.json` can hold an edge without `source`, a node object in the edge list or a hyperedge member that is not an id. `importGraph()` skips such records and counts them in `stats.graphDropped`; they do not make the graph `partial`, since Graphify would return the same cached records on a retry. Inserting them unchecked failed the whole prepare on the `NOT NULL` columns of `graph_edges`.
+
 - Bump `PIPELINE_VERSION` (`docify.ts`) when normalization, chunking or indexing output changes, so unchanged sources are rebuilt. Bump `SCHEMA_VERSION` (`db.ts`) for schema changes; an old store then refuses to open.
 - Passage ids are `p_` plus a hash of source, generation, snapshot, path, lines and content, so every generation has new ids. `read()` of an old id returns that snapshot marked `superseded`, then `unavailable` after cleanup. Never make an old id resolve to newer text.
 - Unknown library versions stay `null`; `downloaded_at` is separate.

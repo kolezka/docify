@@ -207,6 +207,8 @@ Graph extraction calls an LLM. The default provider is the LiteLLM proxy named b
 
 When the model leaves some documents out or a request fails, Graphify still returns a graph of the rest. Docify activates it with graph status `partial`, lists the documents without nodes in the generation stats (`graphMissing`) and warns in the `prepare` output. A partial graph is searched like a complete one. The next `prepare` rebuilds the source even if nothing changed, and Graphify sends only the missing documents again, because it caches the complete ones.
 
+The graph is model output, so a record can come back broken: an edge without a source or target, a node without a label, a group member that is not an id. Docify skips those records, imports the rest and counts them in the generation stats (`graphDropped`) and in Logs. They do not make the graph `partial`, because a retry would get the same cached records back.
+
 `graph.timeoutSeconds` (default 900) is an inactivity limit: Graphify is stopped only after that many seconds without any output, so a large source can take longer as long as chunks keep finishing. A stopped run fails the prepare and keeps the previous generation; Graphify has cached the finished chunks, so the next `prepare` continues from there.
 
 Five more `graph` keys tune the model requests. They are also in Settings, under Semantic Graph. Graphify runs with a clean environment, so a `GRAPHIFY_*` variable set in your shell does not reach it; use these keys instead.

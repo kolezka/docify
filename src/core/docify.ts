@@ -649,6 +649,7 @@ export class Docify {
         writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
         // Only documents sent to the graph can be missing from it.
         graphStats = this.importGraph(genId, result, graphDocs);
+        if (graphStats.graphDropped) this.logs.append(sourceId, `Skipped ${graphStats.graphDropped} malformed graph records (no usable id, label or relation)`, "system", "warn");
         // Partial still activates and is searchable; it never counts as unchanged, so the next prepare retries the gaps.
         graphStatus = (graphStats.graphMissing as string[]).length || result.incomplete.length ? "partial" : "ok";
         if (graphStatus === "partial") this.logs.append(sourceId, `Graph is partial: ${(graphStats.graphMissing as string[]).length} documents without nodes`, "system", "warn");
@@ -766,14 +767,24 @@ export class Docify {
     using insertEdge = this.db.prepare("INSERT INTO graph_edges (generation_id, src, dst, relation, confidence) VALUES (?, ?, ?, ?, ?)");
     using insertGround = this.db.prepare("INSERT OR IGNORE INTO node_passages (generation_id, node_id, passage_rowid) VALUES (?, ?, ?)");
     let grounded = 0;
+    let nodes = 0;
     let edges = 0;
+    // graph.json is model output that Graphify's raw mode does not validate: a record without
+    // a usable id is skipped and counted, so it cannot fail the prepare (NOT NULL on graph_edges).
+    let dropped = 0;
+    const text = (v: unknown): v is string => typeof v === "string" && v !== "";
     const covered = new Set<string>();
     this.db.transaction(() => {
       for (const n of result.graph.nodes) {
-        const path = n.source_file ? result.fileToPath.get(n.source_file.split("/").pop()!) : undefined;
+        if (!n || !text(n.id) || !text(n.label)) {
+          dropped++;
+          continue;
+        }
+        nodes++;
+        const path = text(n.source_file) ? result.fileToPath.get(n.source_file.split("/").pop()!) : undefined;
         const doc = path ? byPath.get(path) : undefined;
         if (doc) covered.add(doc.path);
-        insertNode.run(genId, n.id, n.label, (n.norm_label ?? n.label).toLowerCase(), n.file_type ?? null, doc?.docId ?? null);
+        insertNode.run(genId, n.id, n.label, (text(n.norm_label) ? n.norm_label : n.label).toLowerCase(), text(n.file_type) ? n.file_type : null, doc?.docId ?? null);
         const pool = doc ? doc.passages : docs.flatMap((d) => d.passages);
         const terms = groundingTerms(n.label);
         const scored = pool
@@ -794,11 +805,21 @@ export class Docify {
         if (scored.length) grounded++;
       }
       for (const e of result.graph.links) {
-        insertEdge.run(genId, e.source, e.target, e.relation, e.confidence ?? null);
+        if (!e || !text(e.source) || !text(e.target) || !text(e.relation)) {
+          dropped++;
+          continue;
+        }
+        insertEdge.run(genId, e.source, e.target, e.relation, text(e.confidence) ? e.confidence : null);
         edges++;
       }
       for (const h of result.graph.hyperedges ?? []) {
-        const [hub, ...rest] = h.nodes;
+        if (!h || !text(h.label) || !Array.isArray(h.nodes)) {
+          dropped++;
+          continue;
+        }
+        const members = h.nodes.filter(text);
+        dropped += h.nodes.length - members.length;
+        const [hub, ...rest] = members;
         for (const m of rest) {
           insertEdge.run(genId, hub!, m, `group:${h.label}`, "HYPEREDGE");
           edges++;
@@ -806,9 +827,10 @@ export class Docify {
       }
     })();
     return {
-      graphNodes: result.graph.nodes.length,
+      graphNodes: nodes,
       groundedNodes: grounded,
       graphEdges: edges,
+      graphDropped: dropped,
       graphMs: result.durationMs,
       graphTokensIn: result.tokensIn,
       graphTokensOut: result.tokensOut,
