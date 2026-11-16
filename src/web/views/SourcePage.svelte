@@ -102,9 +102,10 @@
     return ok;
   }
 
-  function prepare(graph: boolean, graphOnly = false) {
+  function prepare(graph: boolean, graphOnly = false, force = false) {
     menuOpen = false;
-    run(() => api(`${path}/prepare`, { method: "POST", body: graphOnly ? { graphOnly } : { graph } }));
+    const body = graphOnly ? { graphOnly, ...(force ? { force } : {}) } : { graph };
+    run(() => api(`${path}/prepare`, { method: "POST", body }));
   }
 
   async function generateSummary() {
@@ -305,6 +306,13 @@
                 title="Builds the graph from the {s.graphRetry.documents.toLocaleString()} documents the failed attempt already collected and indexed"
                 class="flex h-7 w-full items-center rounded-md px-2.5 text-left text-[13px] text-label hover:bg-accent hover:text-white"
                 onclick={() => prepare(true, true)}>Retry Graph Only</button
+              >
+              <button
+                type="button"
+                role="menuitem"
+                title="Reuses the collected documents and embeddings, but calls the model again without Graphify's extraction cache. May incur additional costs. Keeps the incomplete-graph protection."
+                class="flex min-h-7 w-full items-center rounded-md px-2.5 py-1 text-left text-[13px] text-label hover:bg-accent hover:text-white"
+                onclick={() => prepare(true, true, true)}>Retry Graph Only without Cache</button
               >
             {/if}
           </div>
