@@ -102,9 +102,9 @@
     return ok;
   }
 
-  function prepare(graph: boolean) {
+  function prepare(graph: boolean, graphOnly = false) {
     menuOpen = false;
-    run(() => api(`${path}/prepare`, { method: "POST", body: { graph } }));
+    run(() => api(`${path}/prepare`, { method: "POST", body: graphOnly ? { graphOnly } : { graph } }));
   }
 
   async function generateSummary() {
@@ -298,6 +298,15 @@
             <button type="button" role="menuitem" class="flex h-7 w-full items-center rounded-md px-2.5 text-left text-[13px] text-label hover:bg-accent hover:text-white" onclick={() => prepare(false)}
               >{noGraphLabel}</button
             >
+            {#if s.graphRetry}
+              <button
+                type="button"
+                role="menuitem"
+                title="Builds the graph from the {s.graphRetry.documents.toLocaleString()} documents the failed attempt already collected and indexed"
+                class="flex h-7 w-full items-center rounded-md px-2.5 text-left text-[13px] text-label hover:bg-accent hover:text-white"
+                onclick={() => prepare(true, true)}>Retry Graph Only</button
+              >
+            {/if}
           </div>
         {/if}
       {/if}

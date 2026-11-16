@@ -211,6 +211,14 @@ The graph is model output, so a record can come back broken: an edge without a s
 
 `graph.timeoutSeconds` (default 900) is an inactivity limit: Graphify is stopped only after that many seconds without any output, so a large source can take longer as long as chunks keep finishing. A stopped run fails the prepare and keeps the previous generation; Graphify has cached the finished chunks, so the next `prepare` continues from there.
 
+When a prepare fails in the graph phase (provider down, timeout, cancel), the documents it collected, its passages and its vectors are kept, unserved. Retry only the graph from them, without crawling or embedding again:
+
+```bash
+docify prepare mylib@unknown --graph-only
+```
+
+In the web UI this is **Retry Graph Only** in the prepare menu; `docify sources --json` shows such an attempt as `graphRetry`. Only the newest failed attempt is kept, and a successful prepare or a change of embedding model discards it; then run a full `prepare`. Failures before the graph phase keep nothing. Backups never include a kept attempt.
+
 Five more `graph` keys tune the model requests. They are also in Settings, under Semantic Graph. Graphify runs with a clean environment, so a `GRAPHIFY_*` variable set in your shell does not reach it; use these keys instead.
 
 | Key | Default | What it does |

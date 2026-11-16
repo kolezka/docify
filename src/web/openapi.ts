@@ -145,6 +145,7 @@ export function openApiSpec() {
             type: "object",
             properties: {
               graph: { type: "boolean", default: true, description: "Build the Graphify graph" },
+              graphOnly: { type: "boolean", default: false, description: "Retry only the graph of the last attempt that failed in the graph phase, from its saved snapshot. `GET /api/sources` reports such an attempt as `graphRetry`." },
               force: { type: "boolean", default: false, description: "Rebuild even when unchanged" },
             },
           }),

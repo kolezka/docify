@@ -1,5 +1,5 @@
 import type { Docify, GenerationRow, SourceRow } from "./docify.ts";
-import { Docify as DocifyClass, DocifyError, effectiveGeneration, isInterrupted } from "./docify.ts";
+import { Docify as DocifyClass, DocifyError, effectiveGeneration, graphResumeOf, isInterrupted } from "./docify.ts";
 import { embedQuery, embeddingIdentity } from "./embed.ts";
 import { countTokens, TOKENIZER } from "./tokens.ts";
 import { extractSymbols, methodToken, squash } from "./symbols.ts";
@@ -897,7 +897,8 @@ export function read(docify: Docify, id: string, maxTokens = 3000): ReadResult {
   const p = loadPassages(docify, [row.rowid]).get(row.rowid)!;
   const gen = docify.getGeneration(p.generation_id)!;
   // Recovery deletes the rows of an interrupted generation; report them as already gone.
-  if (isInterrupted(gen, docify.getSource(gen.source_id))) return unavailable();
+  // A failed generation keeps its passages only for a graph-only retry; they were never served.
+  if (gen.status === "failed" || isInterrupted(gen, docify.getSource(gen.source_id))) return unavailable();
   const status = gen.status === "active" ? "ok" : "superseded";
   const note = status === "superseded" ? `This passage belongs to generation ${gen.id}, which was replaced. The content is shown as it was in that snapshot and may be outdated.` : undefined;
   const citation = citationOf(p);
@@ -1325,6 +1326,8 @@ export interface SourceInfo {
   ignore: string[];
   graphIgnore: string[];
   state: "ready" | "stale" | "preparing" | "failed" | "not_indexed";
+  // A failed attempt whose index was kept, so prepare with graphOnly can retry just its graph.
+  graphRetry: null | { generation: number; documents: number; passages: number; downloadedAt: string };
   activeGeneration: null | {
     id: number;
     activatedAt: string | null;
@@ -1335,6 +1338,12 @@ export interface SourceInfo {
     stats: Record<string, unknown>;
   };
   latest: null | { id: number; status: string; phase: string | null; progress: string | null; error: string | null; startedAt: string; finishedAt: string | null };
+}
+
+function graphRetryOf(docify: Docify, sourceId: string): SourceInfo["graphRetry"] {
+  const gen = docify.resumableGeneration(sourceId);
+  const resume = gen && graphResumeOf(gen);
+  return gen && resume ? { generation: gen.id, documents: resume.base.documents, passages: resume.base.passages, downloadedAt: resume.downloadedAt } : null;
 }
 
 export function sources(docify: Docify): SourceInfo[] {
@@ -1360,6 +1369,7 @@ export function sources(docify: Docify): SourceInfo[] {
       ignore: JSON.parse(s.options).ignore ?? [],
       graphIgnore: JSON.parse(s.options).graphIgnore ?? [],
       state,
+      graphRetry: graphRetryOf(docify, s.id),
       activeGeneration: active
         ? {
             id: active.id,
