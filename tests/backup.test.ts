@@ -245,3 +245,26 @@ test("export fails loudly when a snapshot file is missing", async () => {
   await rejects(exportStore(d), "export_failed", /missing or changed/);
   rmSync(home, { recursive: true, force: true });
 });
+
+test("a failed attempt kept for a graph-only retry stays out of the backup", async () => {
+  const home = tempDir();
+  const d = fresh(home);
+  const dir = writeDocs(join(tempDir("docify-src-"), "lib"), { "guide.md": guide });
+  d.addSource({ library: "lib", version: "1", kind: "local", locator: dir });
+  await d.prepare("lib@1", { graphRunner: fakeGraph });
+  writeFileSync(join(dir, "guide.md"), guide + "\n## Extra\n\nThe quokka flag.\n");
+  await d.prepare("lib@1", { graphRunner: async () => Promise.reject(new Error("provider down")) }).catch(() => {});
+  const kept = d.resumableGeneration("lib@1")!;
+  expect(kept).not.toBeNull();
+
+  const bytes = (await exportStore(d)).bytes;
+  const dst = fresh();
+  await importStore(dst, bytes);
+  expect(dst.resumableGeneration("lib@1")).toBeNull();
+  const count = (table: string) => (dst.db.query(`SELECT count(*) AS n FROM ${table} WHERE generation_id = ?`).get(kept.id) as { n: number }).n;
+  expect([count("passages"), count("vectors"), count("documents")]).toEqual([0, 0, 0]);
+  expect((dst.db.query("SELECT count(*) AS n FROM passages_fts").get() as { n: number }).n).toBe((dst.db.query("SELECT count(*) AS n FROM passages").get() as { n: number }).n);
+  expect((await search(dst, { query: "frobnicate function", library: "lib" })).status).toBe("ok");
+  // The source store still has its kept attempt.
+  expect(d.resumableGeneration("lib@1")?.id).toBe(kept.id);
+});

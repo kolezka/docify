@@ -330,7 +330,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
           const controller = new AbortController();
           running.set(id, controller);
           docify
-            .prepare(id, { graph: b.graph !== false, force: b.force === true, signal: controller.signal })
+            .prepare(id, { graph: b.graph !== false, graphOnly: b.graphOnly === true, force: b.force === true, signal: controller.signal })
             .catch((err) => console.error(`prepare ${id} failed: ${err instanceof Error ? err.message : err}`))
             .finally(() => running.delete(id));
           return json({ started: id }, 202);

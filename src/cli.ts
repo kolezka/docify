@@ -25,6 +25,9 @@ Preparation (may use the network or the configured graph provider):
                                 Applies at the next prepare.
   summarize <source-id> [--force] generate and save a collection summary using the configured OpenAI graph provider
   prepare <source-id> [--no-graph] [--force] [--summary]
+  prepare <source-id> --graph-only [--force]
+                                retry only the graph after a prepare failed in the graph phase,
+                                from that attempt's saved snapshot, passages and vectors (no collecting)
   remove <source-id>
 
 Queries (local and offline only):
@@ -82,6 +85,7 @@ async function main(argv: string[]) {
       path: { type: "string" },
       json: { type: "boolean" },
       "no-graph": { type: "boolean" },
+      "graph-only": { type: "boolean" },
       summary: { type: "boolean" },
       force: { type: "boolean" },
       "keep-config": { type: "boolean" },
@@ -164,7 +168,8 @@ async function main(argv: string[]) {
           if (g?.status === "staging") console.error(`  ${g.phase} ${g.progress ?? ""}`);
         }, 2000);
         try {
-          const r = await docify.prepare(id, { graph: !values["no-graph"], force: values.force, signal: controller.signal });
+          if (values["graph-only"] && values["no-graph"]) throw new DocifyError("invalid_input", "use either --graph-only or --no-graph");
+          const r = await docify.prepare(id, { graph: !values["no-graph"], graphOnly: values["graph-only"], force: values.force, signal: controller.signal });
           console.log(`${r.status} ${r.sourceId} generation ${r.generationId}: ${JSON.stringify(r.stats)}`);
           const missing = (r.stats.graphMissing as string[] | undefined) ?? [];
           const warned = ((r.stats.graphWarnings as string[] | undefined) ?? []).length > 0;
