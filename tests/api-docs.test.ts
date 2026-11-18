@@ -1,8 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { startServer } from "../src/web/server.ts";
-import { openApiSpec } from "../src/web/openapi.ts";
+import { createApi, openApiSpec } from "../src/web/api.ts";
 import { newDocify, tempDir } from "./helpers.ts";
 
 const cleanup: (() => void)[] = [];
@@ -45,12 +43,20 @@ test("the docs refuse an unknown Host like the rest of the server", async () => 
   expect(res.status).toBe(403);
 });
 
-test("the spec lists every /api route in server.ts, and nothing else", () => {
-  const source = readFileSync(join(import.meta.dir, "..", "src", "web", "server.ts"), "utf8");
-  const routes = [...source.matchAll(/^\s+"(\/api\/[^"]+)":/gm)]
-    .map((m) => m[1]!)
-    .filter((path) => !path.startsWith("/api/docs"))
-    .map((path) => path.replace(/:(\w+)/g, "{$1}"));
-  expect(routes.length).toBeGreaterThan(5);
-  expect(Object.keys(openApiSpec().paths).sort()).toEqual(routes.sort());
+test("the spec documents every /api route the app serves, and nothing else", () => {
+  const app = createApi({ docify: null as never, project: "", sourceRoots: [], guard: () => null, noTimeout: () => {} });
+  const served = app.routes
+    .filter((r) => r.path.startsWith("/api/") && r.path !== "/api/*")
+    .map((r) => `${r.method.toLowerCase()} ${r.path.replace(/:(\w+)/g, "{$1}")}`);
+  const documented = Object.entries(openApiSpec().paths).flatMap(([path, ops]) => Object.keys(ops).map((m) => `${m} ${path}`));
+  expect(served.length).toBeGreaterThan(20);
+  expect([...new Set(served)].sort()).toEqual(documented.sort());
+});
+
+test("every documented operation names its errors and the token scheme", () => {
+  const spec = openApiSpec() as unknown as { components: { securitySchemes: Record<string, unknown> }; paths: Record<string, Record<string, { responses: Record<string, unknown> }>> };
+  expect(spec.components.securitySchemes.docifyToken).toEqual({ type: "apiKey", in: "header", name: "X-Docify-Token" });
+  for (const [path, ops] of Object.entries(spec.paths)) {
+    for (const [method, op] of Object.entries(ops)) expect([path, method, Object.keys(op.responses)]).toEqual([path, method, expect.arrayContaining(["401", "403", "503"])]);
+  }
 });

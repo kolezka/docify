@@ -1,26 +1,19 @@
 import { homedir } from "node:os";
-import { delimiter, join, resolve, sep } from "node:path";
-import { existsSync, realpathSync } from "node:fs";
+import { delimiter, resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
-import { Docify, DocifyError, validateIgnorePatterns } from "../core/docify.ts";
-import { ConfigError, describeConfig } from "../core/config.ts";
-import { read, search, sources, type Mode } from "../core/search.ts";
-import { graphView } from "../core/graph-view.ts";
-import { summarizeSource } from "../core/summary.ts";
-import { exportStore, importStore } from "../core/backup.ts";
-import { readSnapshotFile } from "../core/snapshot-file.ts";
+import { Docify } from "../core/docify.ts";
 import { uiAssets } from "./bundle.ts";
-import { LogReadError } from "../core/logs.ts";
 import { LOOPBACK_HOSTS, hostAllowed, hostGuard, originAllowed, parseAllowedHosts, splitList } from "../http/host.ts";
 import { bearerAuth, parseBearerClients, type BearerClient } from "../http/auth.ts";
 import { RateLimiter, parseRate, rateLimit, type RateLimit } from "../http/rate-limit.ts";
 import { chain } from "../http/guard.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { mcpHttpHandler } from "../mcp/http.ts";
-import { DOCS_INIT, DOCS_PAGE, openApiSpec } from "./openapi.ts";
+import { DOCS_INIT, DOCS_PAGE } from "./openapi.ts";
+import { IMPORT_MAX_BYTES, createApi, openApiSpec, withinSourceRoots } from "./api.ts";
 import { VERSION } from "../version.ts";
 
-const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404, generation_changed: 409, summary_failed: 502, invalid_summary: 502 };
+export { IMPORT_MAX_BYTES, withinSourceRoots };
 
 // Documentation excerpts are untrusted. The page renders them as text; this policy is the second line.
 const PAGE_HEADERS = {
@@ -35,17 +28,6 @@ const PAGE_HEADERS = {
 export function parseSourceRoots(value = process.env.DOCIFY_SOURCE_ROOTS): string[] {
   const parts = (value ?? "").split(delimiter).map((s) => s.trim()).filter(Boolean);
   return (parts.length ? parts : [homedir()]).map((p) => p.replace(/^~(?=$|\/)/, homedir()));
-}
-
-export function withinSourceRoots(realPath: string, roots: string[]): boolean {
-  return roots.some((root) => {
-    try {
-      const realRoot = realpathSync(root);
-      return realPath === realRoot || realPath.startsWith(realRoot + sep);
-    } catch {
-      return false;
-    }
-  });
 }
 
 export interface StartServerOptions {
@@ -64,8 +46,6 @@ export interface StartServerOptions {
 }
 
 const MCP_MAX_BODY_BYTES = 1024 * 1024;
-// A store backup is uploaded whole; a real store is around 100 MB before compression.
-export const IMPORT_MAX_BYTES = 1024 * 1024 * 1024;
 
 function mcpSettings(opts: StartServerOptions) {
   const env = process.env;
@@ -83,7 +63,6 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   docify.recoverInterrupted();
   // The directory whose .docify.json pins apply, as for `docify search` run there.
   const project = resolve(opts.project ?? process.cwd());
-  const running = new Map<string, AbortController>();
   const sourceRoots = parseSourceRoots();
   const host = opts.host ?? process.env.DOCIFY_HOST ?? "127.0.0.1";
   let boundPort = port;
@@ -103,10 +82,6 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
 
   const json = (data: unknown, status = 200) => Response.json(data, { status });
   const fail = (err: unknown) => {
-    if (err instanceof LogReadError) return json({ error: err.message, code: "logs_unavailable" }, 500);
-    if (err instanceof ConfigError) return json({ error: err.message, code: "invalid_input", field: err.field ?? null }, 400);
-    if (err instanceof DocifyError) return json({ error: err.message, code: err.code, ...(err.field ? { field: err.field } : {}) }, STATUS_BY_CODE[err.code] ?? 400);
-    docify.logs.append("docify", err instanceof Error ? err.message : String(err), "system", "error");
     console.error(err);
     return json({ error: String(err instanceof Error ? err.message : err), code: "internal" }, 500);
   };
@@ -131,36 +106,6 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     if (!allowAnyHost && !hostAllowed(req.headers.get("host") ?? "", allowedHosts)) return json({ error: "forbidden host", code: "forbidden" }, 403);
     return new Response(body(), { headers: { "content-type": type, "x-content-type-options": "nosniff", ...extra } });
   };
-
-  // Set while an import swaps the store files; the database is closed for that moment.
-  let importing = false;
-  const api =
-    (handler: (req: Request & { params: Record<string, string> }) => Promise<Response> | Response, bodyType?: string) =>
-    async (req: Request & { params: Record<string, string> }) => {
-      const blocked = guard(req, bodyType);
-      if (blocked) return blocked;
-      if (importing) return json({ error: "a store import is running; try again in a moment", code: "busy" }, 503);
-      try {
-        return await handler(req);
-      } catch (err) {
-        return fail(err);
-      }
-    };
-
-  const body = async (req: Request) => {
-    try {
-      return (await req.json()) as Record<string, unknown>;
-    } catch {
-      throw new DocifyError("invalid_input", "invalid JSON body");
-    }
-  };
-  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-  const crawlProvider = (value: unknown, allowNull: boolean): "builtin" | "crawl4ai" | "browserless" | null => {
-    if (value === null && allowNull) return null;
-    if (value === "builtin" || value === "crawl4ai" || value === "browserless") return value;
-    throw new DocifyError("invalid_input", "invalid crawlProvider");
-  };
-  const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
 
   // The IP limit runs before auth so guessing tokens is slow; the client limit runs after it.
   const mcp = mcpSettings(opts);
@@ -197,243 +142,11 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       "/api/docs/init.js": { GET: docs(() => DOCS_INIT, "text/javascript; charset=utf-8") },
       "/api/docs/swagger-ui.css": { GET: docs(() => swaggerFile("swagger-ui.css"), "text/css; charset=utf-8") },
       "/api/docs/swagger-ui-bundle.js": { GET: docs(() => swaggerFile("swagger-ui-bundle.js"), "text/javascript; charset=utf-8") },
-      "/api/logs": {
-        GET: api((req) => {
-          const params = new URL(req.url).searchParams;
-          const integer = (key: string, fallback: number, min: number, max: number) => {
-            const raw = params.get(key);
-            if (raw === null) return fallback;
-            const value = Number(raw);
-            if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min || value > max) throw new DocifyError("invalid_input", `invalid ${key}`);
-            return value;
-          };
-          return json(docify.logs.read(integer("after", 0, 0, Number.MAX_SAFE_INTEGER), integer("limit", 1000, 1, 1000)));
-        }),
-      },
-      "/api/sources": {
-        GET: api(() => json(sources(docify))),
-        POST: api(async (req) => {
-          const b = await body(req);
-          const kind = b.kind === "url" ? "url" : "local";
-          const locator = str(b.locator);
-          const library = str(b.library);
-          if (!locator || !library) throw new DocifyError("invalid_input", "library and locator are required");
-          const provider = b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, false)!;
-          const ignore = b.ignore === undefined ? undefined : validateIgnorePatterns(b.ignore, "ignore");
-          const graphIgnore = b.graphIgnore === undefined ? undefined : validateIgnorePatterns(b.graphIgnore, "graphIgnore");
-          if (kind === "local") {
-            if (provider !== undefined || b.crawl !== undefined) throw new DocifyError("invalid_input", "crawler settings are only valid for URL sources");
-            // The UI may only register paths inside DOCIFY_SOURCE_ROOTS.
-            let real: string;
-            try {
-              real = realpathSync(resolve(locator.replace(/^~(?=$|\/)/, homedir())));
-            } catch {
-              throw new DocifyError("invalid_input", `path does not exist: ${locator}`);
-            }
-            if (!withinSourceRoots(real, sourceRoots)) {
-              throw new DocifyError("invalid_input", `local sources must be inside DOCIFY_SOURCE_ROOTS (${sourceRoots.join(delimiter)})`);
-            }
-            return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator: real, ignore, graphIgnore }), 201);
-          }
-          if (b.crawl !== undefined) {
-            const crawl = b.crawl;
-            if (!crawl || typeof crawl !== "object" || Array.isArray(crawl) || Object.keys(crawl).some((key) => key !== "maxPages" && key !== "maxDepth")) throw new DocifyError("invalid_input", "crawl must contain only maxPages and maxDepth");
-          }
-          return json(docify.addSource({ library, version: str(b.version) ?? null, kind, locator, crawlProvider: provider, crawl: b.crawl as never, ignore, graphIgnore }), 201);
-        }),
-      },
-      "/api/sources/:id": {
-        PATCH: api(async (req) => {
-          const b = await body(req);
-          const crawler = b.crawlProvider !== undefined || b.crawl4ai !== undefined || b.crawl !== undefined;
-          const ignoring = b.ignore !== undefined || b.graphIgnore !== undefined;
-          if (!crawler && !ignoring) throw new DocifyError("invalid_input", "crawler settings or ignore patterns are required");
-          const id = decodeURIComponent(req.params.id!);
-          // Checked before anything is written, so a bad pattern cannot leave half of the request applied.
-          for (const name of ["ignore", "graphIgnore"] as const) {
-            if (b[name] !== undefined && b[name] !== null) validateIgnorePatterns(b[name], name);
-          }
-          if (crawler) docify.updateSourceCrawler(id, b.crawlProvider === undefined ? undefined : crawlProvider(b.crawlProvider, true), b.crawl4ai, b.crawl);
-          if (ignoring) docify.updateSourceIgnore(id, { ignore: b.ignore, graphIgnore: b.graphIgnore });
-          return json({ ok: true });
-        }),
-        DELETE: api((req) => {
-          if (running.has(req.params.id!)) throw new DocifyError("busy", "cancel the running operation first");
-          docify.removeSource(decodeURIComponent(req.params.id!));
-          return json({ ok: true });
-        }),
-      },
-      "/api/sources/:id/artifacts/:kind": {
-        GET: api((req) => {
-          const missing = () => json({ error: "artifact not found", code: "unavailable" }, 404);
-          const id = decodeURIComponent(req.params.id!);
-          const kind = req.params.kind;
-          if (!/^[a-z0-9][a-z0-9._@-]{0,80}$/.test(id) || (kind !== "screenshot" && kind !== "pdf")) return missing();
-          const source = docify.getSource(id);
-          const generation = source?.active_generation;
-          if (!generation || !Number.isSafeInteger(generation) || generation < 1) return missing();
-          const filename = kind === "screenshot" ? "screenshot.png" : "page.pdf";
-          let file: string;
-          try {
-            const root = realpathSync(join(docify.config.home, "snapshots"));
-            file = join(root, id, String(generation), "artifacts", filename);
-            if (realpathSync(file) !== file) return missing();
-          } catch {
-            return missing();
-          }
-          return new Response(Bun.file(file), { headers: {
-            "content-type": kind === "screenshot" ? "image/png" : "application/pdf",
-            "content-disposition": `attachment; filename="${filename}"`,
-            "x-content-type-options": "nosniff",
-            "cache-control": "no-store",
-          } });
-        }),
-      },
-      "/api/sources/:id/documents": {
-        GET: api((req) => json(docify.db.transaction(() => {
-          const source = docify.requireSource(decodeURIComponent(req.params.id!));
-          const generation = source.active_generation ? docify.getGeneration(source.active_generation) : null;
-          if (!generation || generation.status !== "active") return { source: source.id, generation: null, paths: [] };
-          const rows = docify.db.query<{ path: string }, [number]>(
-            "SELECT path FROM documents WHERE generation_id = ? ORDER BY path",
-          ).all(generation.id);
-          return { source: source.id, generation: generation.id, paths: rows.map((row) => row.path) };
-        })())),
-      },
-      "/api/sources/:id/graph": { GET: api((req) => json(graphView(docify, decodeURIComponent(req.params.id!)))) },
-      "/api/sources/:id/summary": {
-        POST: api(async (req) => {
-          const id = decodeURIComponent(req.params.id!);
-          docify.requireSource(id);
-          const b = await body(req);
-          if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((key) => key !== "force") || (b.force !== undefined && typeof b.force !== "boolean")) {
-            throw new DocifyError("invalid_input", "summary body accepts only a boolean force");
-          }
-          if (running.has(id)) throw new DocifyError("busy", `${id} already has a running operation`);
-          const controller = new AbortController();
-          running.set(id, controller);
-          server.timeout(req, 0);
-          try {
-            // A client that went away cannot cancel, so its request must not keep the source busy.
-            return json(await summarizeSource(docify, id, { force: b.force === true, signal: AbortSignal.any([controller.signal, req.signal]) }));
-          } finally {
-            running.delete(id);
-          }
-        }),
-      },
-      "/api/sources/:id/prepare": {
-        POST: api(async (req) => {
-          const id = decodeURIComponent(req.params.id!);
-          docify.requireSource(id);
-          if (running.has(id)) throw new DocifyError("busy", `${id} is already being prepared`);
-          const b = await body(req);
-          const controller = new AbortController();
-          running.set(id, controller);
-          docify
-            .prepare(id, { graph: b.graph !== false, graphOnly: b.graphOnly === true, force: b.force === true, signal: controller.signal })
-            .catch((err) => console.error(`prepare ${id} failed: ${err instanceof Error ? err.message : err}`))
-            .finally(() => running.delete(id));
-          return json({ started: id }, 202);
-        }),
-      },
-      "/api/sources/:id/cancel": {
-        POST: api((req) => {
-          const c = running.get(decodeURIComponent(req.params.id!));
-          if (!c) return json({ error: "nothing running", code: "not_running" }, 409);
-          c.abort();
-          return json({ cancelled: true });
-        }),
-      },
-      "/api/search": {
-        POST: api(async (req) => {
-          const b = await body(req);
-          const query = str(b.query);
-          if (!query) throw new DocifyError("invalid_input", "query is required");
-          const modes = ["combined", "lexical", "vector", "graph"];
-          return json(
-            await search(docify, {
-              query,
-              library: str(b.library),
-              version: str(b.version),
-              sources: Array.isArray(b.sources) ? b.sources.filter((s): s is string => typeof s === "string") : undefined,
-              mode: modes.includes(String(b.mode)) ? (b.mode as Mode) : "combined",
-              maxTokens: typeof b.maxTokens === "number" ? b.maxTokens : undefined,
-              graphWeight: typeof b.graphWeight === "number" ? b.graphWeight : undefined,
-              project,
-            }),
-          );
-        }),
-      },
-      "/api/read/:id": { GET: api((req) => json(read(docify, req.params.id!))) },
-      // Raw source is served only for stored passages, and only from the snapshot directory.
-      "/api/raw/:id": {
-        GET: api((req) => {
-          const row = docify.db
-            .query<{ raw_file: string; raw_sha256: string }, [string]>("SELECT d.raw_file, d.raw_sha256 FROM passages p JOIN documents d ON d.id = p.document_id WHERE p.id = ?")
-            .get(req.params.id!);
-          if (!row) return json({ error: "unknown passage", code: "unavailable" }, 404);
-          const root = realpathSync(join(docify.config.home, "snapshots"));
-          const file = realpathSync(row.raw_file);
-          if (!file.startsWith(root + sep)) return json({ error: "forbidden", code: "forbidden" }, 403);
-          // Stored gzipped or plain; either way only the content the database recorded is served.
-          const content = readSnapshotFile(file, row.raw_sha256);
-          if (!content) return json({ error: "the preserved source no longer matches its recorded hash", code: "unavailable" }, 404);
-          return new Response(content, { headers: { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" } });
-        }),
-      },
-      "/api/config": {
-        GET: api(() => json(describeConfig(docify.config))),
-        PUT: api(async (req) => {
-          const b = await body(req);
-          if (running.size) throw new DocifyError("busy", `cannot change settings while ${[...running.keys()].join(", ")} has a running operation; wait or cancel first`);
-          docify.saveConfig(b);
-          return json(describeConfig(docify.config));
-        }),
-      },
-      "/api/export": {
-        GET: api(async () => {
-          const { bytes, manifest } = await exportStore(docify);
-          const name = `docify-backup-${manifest.createdAt.slice(0, 19).replace(/[:T]/g, "-")}.tar.gz`;
-          return new Response(bytes, { headers: { "content-type": "application/gzip", "content-disposition": `attachment; filename="${name}"`, "cache-control": "no-store" } });
-        }),
-      },
-      "/api/import": {
-        POST: api(async (req) => {
-          const size = Number(req.headers.get("content-length") ?? "0");
-          if (size > IMPORT_MAX_BYTES) throw new DocifyError("invalid_input", "the backup is larger than the upload limit; use docify import on the server");
-          const data = new Uint8Array(await req.arrayBuffer());
-          if (!data.length) throw new DocifyError("invalid_input", "empty upload");
-          const q = new URL(req.url).searchParams;
-          // Like adding one, an imported local source must be inside DOCIFY_SOURCE_ROOTS.
-          const checkLocalSource = (path: string) => {
-            const real = existsSync(path) ? realpathSync(path) : resolve(path);
-            if (!withinSourceRoots(real, sourceRoots)) throw new DocifyError("invalid_input", `the backup has a local source outside DOCIFY_SOURCE_ROOTS: ${path}`);
-          };
-          if (running.size) throw new DocifyError("busy", "wait for running source operations before importing");
-          importing = true;
-          try {
-            const r = await importStore(docify, data, { force: q.get("force") === "1", keepConfig: q.get("keepConfig") === "1", checkLocalSource });
-            return json(r);
-          } finally {
-            importing = false;
-          }
-        }, "application/octet-stream"),
-      },
-      "/api/pins": {
-        GET: api(() => json(pinsView())),
-        PUT: api(async (req) => {
-          const b = await body(req);
-          const library = str(b.library);
-          if (!library) throw new DocifyError("invalid_input", "library is required");
-          if (b.version !== null && b.version !== undefined && typeof b.version !== "string") throw new DocifyError("invalid_input", "version must be text or null");
-          Docify.setPin(project, library, str(b.version) ?? null);
-          return json(pinsView());
-        }),
-      },
     },
     fetch: async (req) => {
       const path = new URL(req.url).pathname;
-      if (req.method !== "GET" || path.startsWith("/api/")) return new Response("not found", { status: 404 });
+      if (path.startsWith("/api/")) return api.fetch(req);
+      if (req.method !== "GET") return new Response("not found", { status: 404 });
       let assets;
       try {
         assets = await uiAssets();
@@ -447,6 +160,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       return new Response(asset.body, { headers: path === "/" ? { ...headers, ...PAGE_HEADERS, "cache-control": "no-store" } : headers });
     },
   });
+  const api = createApi({ docify, project, sourceRoots, guard, noTimeout: (req) => server.timeout(req, 0) });
   boundPort = server.port!;
   for (const loopback of LOOPBACK_HOSTS) allowedHosts.add(`${loopback}:${boundPort}`);
   if (!opts.quiet) {
