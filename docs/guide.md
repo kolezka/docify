@@ -162,6 +162,8 @@ docify search "useEffect cleanup" --group frontend
 
 A group name is lowercase letters, digits, `.`, `_` and `-` (no `@`, so it cannot look like a source id); names are matched case-insensitively. A source holds at most 20 groups, and a title is at most 120 characters. A group exists while at least one source is in it; removing a source drops its memberships. `docify group` checks every id before changing anything.
 
+In the web UI, once any source has a group, the sidebar lists sources under a collapsible heading per group, with ungrouped sources under Other. A source in two groups appears under both. The browser remembers which groups are collapsed.
+
 Agents pass a group name in `groups` to `docs_search` or `docs_scope`; the group expands to its sources, and `groups` plus `sources` search their union. An unknown name returns `source_unknown` and lists the registered groups. `docs_sources` lists the groups first, then each source with its title and groups. Titles and groups take effect at once, also while a source prepares.
 
 In the web UI, set both in the New Source sheet or under Name and groups on a source page; the search scope menu lists groups above sources. The API takes `title` and `groups` on `POST /api/sources` and `PATCH /api/sources/{id}` (`null` removes them), `groups` on `POST /api/search`, and lists groups at `GET /api/groups`. A rejected value answers 400 with `field` set to `title` or `groups`, and nothing in the request is saved.
