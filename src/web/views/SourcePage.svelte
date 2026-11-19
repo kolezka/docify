@@ -47,6 +47,10 @@
   let ignoreText = $state("");
   let graphIgnoreText = $state("");
   let ignoreError = $state<{ field: PatternField; message: string } | null>(null);
+  let editingLabels = $state(false);
+  let titleText = $state("");
+  let groupsText = $state("");
+  let labelError = $state<{ field: "title" | "groups"; message: string } | null>(null);
 
   // Page state belongs to one source; start fresh when another one is shown.
   $effect.pre(() => {
@@ -60,6 +64,8 @@
       editingLimits = false;
       editingIgnore = false;
       ignoreError = null;
+      editingLabels = false;
+      labelError = null;
     });
   });
 
@@ -180,6 +186,39 @@
     if (invalid) {
       await tick();
       document.getElementById(invalid === "ignore" ? "source-ignore" : "source-graph-ignore")?.focus();
+    }
+    await sources.refresh();
+  }
+
+  function editLabels() {
+    titleText = s?.title ?? "";
+    groupsText = (s?.groups ?? []).join(", ");
+    labelError = null;
+    editingLabels = true;
+  }
+
+  async function saveLabels(event: SubmitEvent) {
+    event.preventDefault();
+    actionBusy = true;
+    error = "";
+    labelError = null;
+    let invalid: "title" | "groups" | null = null;
+    try {
+      const groups = groupsText.split(/[\s,]+/).filter(Boolean);
+      await api(path, { method: "PATCH", body: { title: titleText.trim() || null, groups } });
+      editingLabels = false;
+    } catch (err) {
+      // A bad value is shown at its field, and the form stays open with the text as typed.
+      if (err instanceof ApiError && (err.field === "title" || err.field === "groups")) {
+        invalid = err.field;
+        labelError = { field: invalid, message: err.message.replace(/^(?:title|groups): /, "") };
+      } else error = errorText(err);
+    } finally {
+      actionBusy = false;
+    }
+    if (invalid) {
+      await tick();
+      document.getElementById(invalid === "title" ? "source-title" : "source-groups")?.focus();
     }
     await sources.refresh();
   }
@@ -337,7 +376,7 @@
       {/if}
 
       <h1 class="flex flex-wrap items-baseline gap-x-2 text-[26px] leading-8 font-bold break-all">
-        {s.library}{#if s.version}<span class="font-mono text-[17px] font-normal text-label2">{s.version}</span>{/if}
+        {#if s.title}{s.title}<span class="font-mono text-[17px] font-normal text-label2">{s.id}</span>{:else}{s.library}{#if s.version}<span class="font-mono text-[17px] font-normal text-label2">{s.version}</span>{/if}{/if}
       </h1>
       <div class="mt-1.5 flex min-w-0 items-center gap-2 text-[13px] text-label2">
         <StatusChip tone={sourceTone(s.state)} label={sourceStateLabel(s.state)} />
@@ -349,6 +388,40 @@
           <span class="truncate font-mono text-[12px]" title={s.locator}>{s.locator}</span>
         {/if}
       </div>
+
+      <Group title="Name and groups" hint="The name is a label; agents and citations keep using the id. A group lets agents search all its sources at once by passing its name.">
+        {#if editingLabels}
+          <form onsubmit={saveLabels}>
+            <Row class="flex-col items-stretch gap-1.5">
+              <label for="source-title" class="text-[13px] text-label">Name</label>
+              <input id="source-title" class={input({ invalid: labelError?.field === "title" })} maxlength="120" autocomplete="off" placeholder={`${s.library}${s.version ? ` ${s.version}` : ""}`} aria-invalid={labelError?.field === "title"} aria-describedby="source-title-note" bind:value={titleText} oninput={() => labelError?.field === "title" && (labelError = null)} disabled={busy} />
+              {#if labelError?.field === "title"}
+                <span id="source-title-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{labelError.message}</span>
+              {:else}
+                <span id="source-title-note" class={footnote}>Leave blank to show the library and version.</span>
+              {/if}
+            </Row>
+            <Row class="flex-col items-stretch gap-1.5">
+              <label for="source-groups" class="text-[13px] text-label">Groups</label>
+              <input id="source-groups" class={input({ mono: true, invalid: labelError?.field === "groups" })} autocomplete="off" spellcheck="false" placeholder="frontend, apple" aria-invalid={labelError?.field === "groups"} aria-describedby="source-groups-note" bind:value={groupsText} oninput={() => labelError?.field === "groups" && (labelError = null)} disabled={busy} />
+              {#if labelError?.field === "groups"}
+                <span id="source-groups-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{labelError.message}</span>
+              {:else}
+                <span id="source-groups-note" class={footnote}>Separate names with commas. Lowercase letters, digits, dots, dashes and underscores.</span>
+              {/if}
+            </Row>
+            <Row class="justify-end">
+              <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingLabels = false)}>Cancel</button>
+              <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy}>Save</button>
+            </Row>
+          </form>
+        {:else}
+          <Row label="Id"><span class="font-mono text-[13px] text-label2 break-all">{s.id}</span></Row>
+          <Row label="Name"><span class="text-[13px] text-label2">{s.title ?? "Not set"}</span></Row>
+          <Row label="Groups"><span class="font-mono text-[13px] text-label2">{s.groups.length ? s.groups.join(", ") : "None"}</span></Row>
+          <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy} onclick={editLabels}>Edit</button></Row>
+        {/if}
+      </Group>
 
       <Group title="Collection summary" hint="A generated discovery hint, not cited evidence. Generation sends a documentation sample to the configured OpenAI-compatible graph provider.">
         <div class="px-3.5 py-3">

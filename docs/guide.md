@@ -147,6 +147,25 @@ Each `--ignore` or `--graph-ignore` option given to `docify ignore` replaces tha
 
 Changes apply on the next prepare and are refused while the source is preparing. A link that redirects to an ignored path is skipped before the target is requested, and a start URL that matches `ignore` fails the prepare. Documents left out by `graphIgnore` do not count as missing from the graph, so they do not make it partial. If every document matches `graphIgnore`, no graph is built.
 
+### Titles and groups
+
+A source can carry a display title and belong to groups. Neither changes its id, so citations, pins, snapshots and backups keep working.
+
+```bash
+docify add bun ~/docs/bun --version 1.4 --title "Bun runtime" --group backend
+docify title bun@1.4 Bun runtime docs   # set the title; --clear removes it
+docify group frontend add react@19 svelte@5
+docify group frontend remove svelte@5
+docify groups                            # every group with its sources
+docify search "useEffect cleanup" --group frontend
+```
+
+A group name is lowercase letters, digits, `.`, `_` and `-` (no `@`, so it cannot look like a source id); names are matched case-insensitively. A source holds at most 20 groups, and a title is at most 120 characters. A group exists while at least one source is in it; removing a source drops its memberships. `docify group` checks every id before changing anything.
+
+Agents pass a group name in `groups` to `docs_search` or `docs_scope`; the group expands to its sources, and `groups` plus `sources` search their union. An unknown name returns `source_unknown` and lists the registered groups. `docs_sources` lists the groups first, then each source with its title and groups. Titles and groups take effect at once, also while a source prepares.
+
+In the web UI, set both in the New Source sheet or under Name and groups on a source page; the search scope menu lists groups above sources. The API takes `title` and `groups` on `POST /api/sources` and `PATCH /api/sources/{id}` (`null` removes them), `groups` on `POST /api/search`, and lists groups at `GET /api/groups`. A rejected value answers 400 with `field` set to `title` or `groups`, and nothing in the request is saved.
+
 ### Choose a crawler
 
 URL sources can use `builtin`, `crawl4ai` or `browserless`. Select one when registering a source, or change it later:
@@ -244,9 +263,9 @@ docify serve             # one-screen UI; open the printed http://127.0.0.1:4747
 docify mcp               # MCP server on stdio: docs_search, docs_read, docs_outline, docs_open, docs_sources, docs_scope
 ```
 
-`search` also takes `--version`, `--source` (repeatable), `--mode` and `--graph-weight`; `search`, `read`, `outline` and `open` take `--json` for the full result. `outline` (MCP `docs_outline`) lists the documents of a source's active generation with the passage id of each section, for browsing when search finds nothing; `--path` keeps documents under a path prefix and `--max-tokens` caps the output (default 2000). `open` (MCP `docs_open`) returns a whole document, or one section with its subsections when `--heading` is given, from the active generation, cut at a passage boundary to fit `--max-tokens` (default 3000) with the passage id to continue from. Its statuses are `ok`, `not_found`, `not_indexed` and `source_unknown`. `docify search --query A --query B` runs up to 8 queries in one call.
+`search` also takes `--version`, `--source` (repeatable), `--group` (repeatable, see Titles and groups), `--mode` and `--graph-weight`; `search`, `read`, `outline` and `open` take `--json` for the full result. `outline` (MCP `docs_outline`) lists the documents of a source's active generation with the passage id of each section, for browsing when search finds nothing; `--path` keeps documents under a path prefix and `--max-tokens` caps the output (default 2000). `open` (MCP `docs_open`) returns a whole document, or one section with its subsections when `--heading` is given, from the active generation, cut at a passage boundary to fit `--max-tokens` (default 3000) with the passage id to continue from. Its statuses are `ok`, `not_found`, `not_indexed` and `source_unknown`. `docify search --query A --query B` runs up to 8 queries in one call.
 
-The MCP tool `docs_search` takes `query` or `queries` (1 to 8, exactly one of the two), plus `library`, `version`, `sources`, `mode`, `max_tokens` and `graph_weight`. With `queries`, every query runs with the same filters and keeps its own status line, all of them share `max_tokens`, and a passage found by several queries is shown once with the query numbers that hit it. Each query first gets an equal share of the budget, then the leftover goes to the remaining hits round-robin by rank (`docs/evaluation.md`, "Several queries in one call"). Without `max_tokens`, several queries get 1400 tokens each (2800 for two, 4200 for three, at most 20000); one query keeps the 2000 default. A single `query` returns the same text as before. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
+The MCP tool `docs_search` takes `query` or `queries` (1 to 8, exactly one of the two), plus `library`, `version`, `sources`, `groups`, `mode`, `max_tokens` and `graph_weight`. With `queries`, every query runs with the same filters and keeps its own status line, all of them share `max_tokens`, and a passage found by several queries is shown once with the query numbers that hit it. Each query first gets an equal share of the budget, then the leftover goes to the remaining hits round-robin by rank (`docs/evaluation.md`, "Several queries in one call"). Without `max_tokens`, several queries get 1400 tokens each (2800 for two, 4200 for three, at most 20000); one query keeps the 2000 default. A single `query` returns the same text as before. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
 
 Search statuses: `ok`, `weak_match` (hits with a low-confidence warning), `no_match`, `not_indexed`, `version_unavailable`, `source_unknown`, `update_failed`. Modes: `combined` (default: lexical, vector and exact-symbol fusion), `lexical`, `vector`, `graph`. `--graph-weight` adds graph hits to combined fusion; it defaults to 0 because it lowered recall on the evaluation corpus (`docs/evaluation.md`). `lexicalWeight` in `config.json` (default 1) sets the weight of word matches in that fusion. With bge-m3, `0.5` measured better: pages that only share words with a question, common with non-English questions, no longer push the vector's answer down.
 
