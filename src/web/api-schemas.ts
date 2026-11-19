@@ -47,6 +47,12 @@ const MaxTokensQuery = queryInt(200, 20000, "Output budget in o200k tokens");
 const Mode = z.enum(["combined", "lexical", "vector", "graph"]);
 const CrawlProvider = z.enum(["builtin", "crawl4ai", "browserless"]);
 const PatternList = z.array(z.string().min(1).max(500)).max(100);
+// Shape only; validateTitle() and validateGroups() in the core check the content and name the field.
+const Title = z.string().max(200).openapi({ description: "Display name shown next to the id, up to 120 characters; the id itself never changes" });
+const GroupList = z
+  .array(z.string().max(100))
+  .max(20)
+  .openapi({ description: "Source group names: lowercase letters, digits, dot, underscore and hyphen (pattern ^[a-z0-9][a-z0-9._-]{0,60}$), matched case-insensitively" });
 const CrawlLimits = z
   .object({
     maxPages: z.number().int().min(1).max(100_000).nullable().optional(),
@@ -83,6 +89,8 @@ export const SourceInfo = z
     crawl4ai: Crawl4aiOptions.optional(),
     ignore: z.array(z.string()),
     graphIgnore: z.array(z.string()),
+    title: z.string().nullable().openapi({ description: "Display name; null when the source has none" }),
+    groups: z.array(z.string()).openapi({ description: "Groups this source belongs to" }),
     summary: z.object({}).passthrough().nullable(),
     graphRetry: z
       .object({ generation: z.number(), documents: z.number(), passages: z.number(), downloadedAt: z.string() })
@@ -141,6 +149,8 @@ export const AddSourceBody = z
     crawl: CrawlLimits.optional().openapi({ description: "URL sources only: page and depth limits" }),
     ignore: PatternList.optional().openapi({ description: "Regular expressions over document paths; matches are not collected" }),
     graphIgnore: PatternList.optional().openapi({ description: "Regular expressions over document paths; matches stay searchable but stay out of the graph" }),
+    title: Title.optional(),
+    groups: GroupList.optional(),
   })
   .openapi("AddSource");
 
@@ -151,6 +161,8 @@ export const PatchSourceBody = z
     crawl: CrawlLimits.optional(),
     ignore: PatternList.nullable().optional().openapi({ description: "Replaces the list; null or [] removes it" }),
     graphIgnore: PatternList.nullable().optional().openapi({ description: "Replaces the list; null or [] removes it" }),
+    title: Title.nullable().optional().openapi({ description: "Display name; null or an empty string removes it" }),
+    groups: GroupList.nullable().optional().openapi({ description: "Replaces the source's groups; null or [] removes it from every group" }),
   })
   .openapi("PatchSource");
 
@@ -171,6 +183,7 @@ export const SearchBody = z
     library: z.string().optional(),
     version: z.string().optional().openapi({ description: "Omit to use the project pin from .docify.json" }),
     sources: z.array(z.string()).optional().openapi({ description: "Restrict to these source ids" }),
+    groups: z.array(z.string()).optional().openapi({ description: "Source group names; each adds all its sources to the scope" }),
     mode: Mode.default("combined"),
     maxTokens: z.number().nullable().optional().openapi({ description: "Output budget, clamped to 200..20000; default 2000" }),
     graphWeight: z.number().nullable().optional().openapi({ description: "Weight of graph hits in combined mode, clamped to 0..1; default 0" }),
@@ -220,6 +233,10 @@ export const ScopeQuery = z.object({
     .union([z.string(), z.array(z.string())])
     .optional()
     .openapi({ description: "Source id; repeat to restrict to several", type: "array", items: { type: "string" } }),
+  group: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .openapi({ description: "Source group name; repeat for several. Each adds all its sources", type: "array", items: { type: "string" } }),
 });
 
 export const ReadQuery = z.object({ maxTokens: MaxTokensQuery });
@@ -357,6 +374,9 @@ export const ServerStatus = z
   .openapi("ServerStatus");
 
 export const Ok = z.object({ ok: z.literal(true) });
+export const Groups = z
+  .array(z.object({ name: z.string(), sources: z.array(z.string()) }))
+  .openapi("Groups", { description: "Each group with the ids of its sources. A group exists while at least one source is in it." });
 export const GraphView = z.object({}).passthrough().openapi("GraphView", {
   description:
     "Nodes with their page and best grounding passage, one edge per connected node pair (indexes into `nodes`) and hyperedge groups. `nodes` is empty when the source is not prepared or has no graph; `graphStatus` says which.",

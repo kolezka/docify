@@ -11,7 +11,7 @@
 
   type Kind = "url" | "local";
   const CRAWLER_LABELS: Record<string, string> = { builtin: "Built-in", crawl4ai: "Crawl4AI", browserless: "Browserless" };
-  const FIELDS = ["locator", "library", "version", "crawlProvider", "ignore", "graphIgnore"] as const;
+  const FIELDS = ["locator", "library", "version", "crawlProvider", "ignore", "graphIgnore", "title", "groups"] as const;
   type FieldName = (typeof FIELDS)[number];
 
   let kind = $state<Kind>("url");
@@ -23,6 +23,8 @@
   let crawlProvider = $state("");
   let ignoreText = $state("");
   let graphIgnoreText = $state("");
+  let titleText = $state("");
+  let groupsText = $state("");
   let prepareAfter = $state(true);
   let buildGraph = $state(true);
   let submitting = $state(false);
@@ -91,7 +93,7 @@
   const errorFor = (field: FieldName) => (fieldError?.field === field ? fieldError.message : null);
 
   function reset() {
-    locator = library = version = crawlProvider = ignoreText = graphIgnoreText = "";
+    locator = library = version = crawlProvider = ignoreText = graphIgnoreText = titleText = groupsText = "";
     libraryEdited = versionEdited = false;
     prepareAfter = buildGraph = true;
   }
@@ -107,6 +109,8 @@
     const shouldPrepare = prepareAfter;
     const ignore = patternLines(ignoreText);
     const graphIgnore = patternLines(graphIgnoreText);
+    const title = titleText.trim();
+    const groups = groupsText.split(/[\s,]+/).filter(Boolean);
     const body = {
       library: libraryValue.trim(),
       version: versionValue.trim(),
@@ -115,6 +119,8 @@
       ...(kind === "url" && crawlProvider ? { crawlProvider } : {}),
       ...(ignore.length ? { ignore } : {}),
       ...(graphIgnore.length ? { graphIgnore } : {}),
+      ...(title ? { title } : {}),
+      ...(groups.length ? { groups } : {}),
     };
     let id: string;
     try {
@@ -237,6 +243,26 @@
       <div class={row()}>
         <div class="min-w-0 flex-1 text-[13px] text-label">Source ID</div>
         {#if sourceId}<span class="font-mono text-[13px] text-label2">{sourceId}</span>{:else}<span class="text-[13px] text-label2">Needs a library name</span>{/if}
+      </div>
+      <div class={row()}>
+        <div class="min-w-0 flex-1">
+          <label for="add-title" class="block text-[13px] text-label">Name</label>
+          <div class="mt-px text-[11px] leading-[14px] text-label2">Optional. A label; the ID stays the same.</div>
+        </div>
+        <div class="flex w-[200px] flex-col gap-1">
+          <input id="add-title" class={input({ invalid: !!errorFor("title") })} maxlength="120" autocomplete="off" placeholder="Bun runtime docs" aria-invalid={!!errorFor("title")} bind:value={titleText} disabled={submitting} />
+          {#if errorFor("title")}<p class="text-[11px] leading-[14px] font-medium text-bad-text" role="alert">{errorFor("title")}</p>{/if}
+        </div>
+      </div>
+      <div class={row()}>
+        <div class="min-w-0 flex-1">
+          <label for="add-groups" class="block text-[13px] text-label">Groups</label>
+          <div class="mt-px text-[11px] leading-[14px] text-label2">Optional. Comma-separated; agents can search a whole group.</div>
+        </div>
+        <div class="flex w-[200px] flex-col gap-1">
+          <input id="add-groups" class={input({ mono: true, invalid: !!errorFor("groups") })} autocomplete="off" spellcheck="false" placeholder="frontend" aria-invalid={!!errorFor("groups")} bind:value={groupsText} disabled={submitting} />
+          {#if errorFor("groups")}<p class="text-[11px] leading-[14px] font-medium text-bad-text" role="alert">{errorFor("groups")}</p>{/if}
+        </div>
       </div>
       {#if kind === "url"}
         <div class={row()}>

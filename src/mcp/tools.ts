@@ -24,13 +24,14 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     {
       title: "Search local documentation",
       description:
-        "Search prepared local documentation and get cited excerpts within a token budget. Status tells apart no_match, not_indexed, version_unavailable, source_unknown and update_failed. Project pins in .docify.json apply when version is omitted. Pass queries instead of query to check up to 8 questions or symbols in one call: each keeps its own status and they share max_tokens.",
+        "Search prepared local documentation and get cited excerpts within a token budget. Status tells apart no_match, not_indexed, version_unavailable, source_unknown and update_failed. Project pins in .docify.json apply when version is omitted. Pass groups to search a named set of sources at once. Pass queries instead of query to check up to 8 questions or symbols in one call: each keeps its own status and they share max_tokens.",
       inputSchema: {
         query: z.string().min(1).optional().describe("Question, API symbol or error message; give this or queries"),
         queries: z.array(z.string().min(1)).min(1).max(MAX_QUERIES).optional().describe("1 to 8 queries searched with the same filters; give this or query"),
         library: z.string().optional().describe("Library name, e.g. bun"),
         version: z.string().optional().describe("Library version; omit to use the project pin"),
         sources: z.array(z.string()).optional().describe("Restrict to source ids from docs_sources"),
+        groups: z.array(z.string()).optional().describe("Search every source in these groups from docs_sources, together with any sources given"),
         mode: z.enum(["combined", "lexical", "vector", "graph"]).optional().describe("Retrieval mode, default combined"),
         max_tokens: z.number().int().min(200).max(20000).optional().describe("Output budget; default 2000, or 1400 per query with several queries"),
         graph_weight: z.number().min(0).max(1).optional().describe("Weight of graph-related passages in combined mode, default 0"),
@@ -46,6 +47,7 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
             library: args.library,
             version: args.version,
             sources: args.sources,
+            groups: args.groups,
             mode: args.mode,
             maxTokens: args.max_tokens,
             graphWeight: args.graph_weight,
@@ -58,6 +60,7 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
           library: args.library,
           version: args.version,
           sources: args.sources,
+          groups: args.groups,
           mode: args.mode,
           maxTokens: args.max_tokens,
           graphWeight: args.graph_weight,
@@ -139,7 +142,7 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     "docs_sources",
     {
       title: "List documentation sources",
-      description: "Find documentation collections by topic, e.g. query 'docs for Apple', or list all registered sources when query is omitted. Matches source identity and saved automatically generated summaries. Returns source ids to use in docs_search, docs_outline or docs_open. Discovery is local and read-only; it never generates summaries.",
+      description: "Find documentation collections by topic, e.g. query 'docs for Apple', or list all registered sources when query is omitted. Matches source identity and saved automatically generated summaries. Returns source ids and titles to use in docs_search, docs_outline or docs_open, and the source groups docs_search accepts in groups. Discovery is local and read-only; it never generates summaries.",
       inputSchema: { query: z.string().trim().min(1).max(500).optional().describe("Topic or collection to find, e.g. docs for Apple") },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -161,17 +164,18 @@ export function createMcpServer(docify: Docify, project = process.env.DOCIFY_PRO
     {
       title: "Show what a search would search",
       description:
-        "Resolve library, version and source filters the way docs_search does, without searching: status, the .docify.json pins used, the version chosen per library and why, the selected sources with their active generation, and the warnings search would give. Use it after version_unavailable, source_unknown or a mixed-version warning.",
+        "Resolve library, version, source and group filters the way docs_search does, without searching: status, the .docify.json pins used, the version chosen per library and why, the selected sources with their active generation, and the warnings search would give. Use it after version_unavailable, source_unknown or a mixed-version warning.",
       inputSchema: {
         library: z.string().optional().describe("Library name, e.g. bun"),
         version: z.string().optional().describe("Library version; omit to use the project pin"),
         sources: z.array(z.string()).optional().describe("Restrict to source ids from docs_sources"),
+        groups: z.array(z.string()).optional().describe("Search every source in these groups from docs_sources, together with any sources given"),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return { content: [{ type: "text", text: scope(docify, { library: args.library, version: args.version, sources: args.sources, project }).text }] };
+        return { content: [{ type: "text", text: scope(docify, { library: args.library, version: args.version, sources: args.sources, groups: args.groups, project }).text }] };
       } catch (err) {
         return fail(err);
       }

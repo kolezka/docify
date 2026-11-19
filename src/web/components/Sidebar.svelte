@@ -69,11 +69,11 @@
         {#each sources.list as s (s.id)}
           {@const active = nav.view === "source" && nav.sourceId === s.id}
           <li>
-            <button type="button" class={cn(itemClass(active), "h-10")} aria-current={active ? "page" : undefined} onclick={() => nav.openSource(s.id)} data-source={s.id}>
+            <button type="button" class={cn(itemClass(active), "h-10")} aria-current={active ? "page" : undefined} onclick={() => nav.openSource(s.id)} data-source={s.id} title={s.title ? s.id : undefined}>
               <StatusDot tone={sourceTone(s.state)} class={active ? "ring-2 ring-white" : ""} />
               <span class="min-w-0 flex-1">
                 <span class="block truncate font-medium"
-                  >{s.library}{#if s.version}<span class="ml-1 text-[11px] font-normal">{s.version}</span>{/if}</span
+                  >{#if s.title}{s.title}{:else}{s.library}{#if s.version}<span class="ml-1 text-[11px] font-normal">{s.version}</span>{/if}{/if}</span
                 >
                 <span class={cn("block truncate text-[11px] leading-[13px]", active ? "text-white" : "text-label2")}>{subline(s)}</span>
               </span>

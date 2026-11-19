@@ -6,7 +6,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { OpenAPIHono, createRoute, z, type RouteConfig } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { Docify, DocifyError, effectiveGeneration, validateIgnorePatterns } from "../core/docify.ts";
+import { Docify, DocifyError, effectiveGeneration, validateGroups, validateIgnorePatterns, validateTitle } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
 import { discoverSources, open, outline, read, scope, search, searchMany, sources } from "../core/search.ts";
 import { graphView } from "../core/graph-view.ts";
@@ -56,6 +56,15 @@ function invalidInput(result: { success: boolean; error?: z.ZodError; target: st
     // The core's message names the bad pattern; the forms show it next to the field.
     try {
       validateIgnorePatterns((result.data as Record<string, unknown>)[field], field);
+    } catch (err) {
+      if (err instanceof DocifyError) return json({ error: err.message, code: "invalid_input", field }, 400);
+    }
+  }
+  if (field === "title" || field === "groups") {
+    try {
+      const value = (result.data as Record<string, unknown>)[field];
+      if (field === "title") validateTitle(value);
+      else validateGroups(value);
     } catch (err) {
       if (err instanceof DocifyError) return json({ error: err.message, code: "invalid_input", field }, 400);
     }
@@ -160,6 +169,10 @@ export function createApi(deps: ApiDeps) {
 
   // ---- Sources ----
   add(
+    { method: "get", path: "/api/groups", tags: ["Sources"], summary: "List source groups", description: "Pass a group name in `groups` to search or scope all its sources.", responses: { 200: s.json(s.Groups, "Groups"), ...s.errors() } },
+    () => json(docify.listGroups()),
+  );
+  add(
     {
       method: "get",
       path: "/api/sources",
@@ -187,6 +200,7 @@ export function createApi(deps: ApiDeps) {
     (c) => {
       const b = valid(c, "json", s.AddSourceBody);
       const version = str(b.version) ?? null;
+      const labels = { title: b.title === undefined ? undefined : validateTitle(b.title), groups: b.groups === undefined ? undefined : validateGroups(b.groups) };
       if (b.kind === "local") {
         if (b.crawlProvider !== undefined || b.crawl !== undefined) throw new DocifyError("invalid_input", "crawler settings are only valid for URL sources");
         // The API may only register paths inside DOCIFY_SOURCE_ROOTS.
@@ -197,9 +211,9 @@ export function createApi(deps: ApiDeps) {
           throw new DocifyError("invalid_input", `path does not exist: ${b.locator}`);
         }
         if (!withinSourceRoots(real, sourceRoots)) throw new DocifyError("invalid_input", `local sources must be inside DOCIFY_SOURCE_ROOTS (${sourceRoots.join(delimiter)})`);
-        return json(docify.addSource({ library: b.library, version, kind: "local", locator: real, ignore: b.ignore, graphIgnore: b.graphIgnore }), 201);
+        return json(docify.addSource({ library: b.library, version, kind: "local", locator: real, ignore: b.ignore, graphIgnore: b.graphIgnore, ...labels }), 201);
       }
-      return json(docify.addSource({ library: b.library, version, kind: "url", locator: b.locator, crawlProvider: b.crawlProvider, crawl: b.crawl as never, ignore: b.ignore, graphIgnore: b.graphIgnore }), 201);
+      return json(docify.addSource({ library: b.library, version, kind: "url", locator: b.locator, crawlProvider: b.crawlProvider, crawl: b.crawl as never, ignore: b.ignore, graphIgnore: b.graphIgnore, ...labels }), 201);
     },
   );
   add(
@@ -215,8 +229,8 @@ export function createApi(deps: ApiDeps) {
       method: "patch",
       path: "/api/sources/{id}",
       tags: ["Sources"],
-      summary: "Change crawler settings or ignore patterns",
-      description: "Every pattern is checked before anything is written, so a bad list leaves the whole request unapplied. Takes effect on the next prepare.",
+      summary: "Change title, groups, crawler settings or ignore patterns",
+      description: "Every value is checked before anything is written, so a bad one leaves the whole request unapplied. Crawler settings and ignore patterns take effect on the next prepare; title and groups at once, also while the source prepares. The id never changes.",
       request: { params: s.SourceIdParam, body: s.jsonBody(s.PatchSourceBody) },
       responses: { 200: s.json(s.Ok, "Saved"), ...s.errors(400, 404, 415) },
     },
@@ -225,11 +239,15 @@ export function createApi(deps: ApiDeps) {
       const b = valid(c, "json", s.PatchSourceBody);
       const crawler = b.crawlProvider !== undefined || b.crawl4ai !== undefined || b.crawl !== undefined;
       const ignoring = b.ignore !== undefined || b.graphIgnore !== undefined;
-      if (!crawler && !ignoring) throw new DocifyError("invalid_input", "crawler settings or ignore patterns are required");
-      // Checked before anything is written, so a bad pattern cannot leave half of the request applied.
+      const labelling = b.title !== undefined || b.groups !== undefined;
+      if (!crawler && !ignoring && !labelling) throw new DocifyError("invalid_input", "crawler settings, ignore patterns, title or groups are required");
+      // Checked before anything is written, so a bad value cannot leave half of the request applied.
       for (const name of ["ignore", "graphIgnore"] as const) {
         if (b[name] !== undefined && b[name] !== null) validateIgnorePatterns(b[name], name);
       }
+      if (b.title !== undefined) validateTitle(b.title);
+      if (b.groups !== undefined) validateGroups(b.groups);
+      if (labelling) docify.updateSourceLabels(id, { title: b.title, groups: b.groups });
       if (crawler) docify.updateSourceCrawler(id, b.crawlProvider, b.crawl4ai, b.crawl);
       if (ignoring) docify.updateSourceIgnore(id, { ignore: b.ignore, graphIgnore: b.graphIgnore });
       return json({ ok: true });
@@ -444,6 +462,7 @@ export function createApi(deps: ApiDeps) {
         library: str(b.library),
         version: str(b.version),
         sources: b.sources,
+        groups: b.groups,
         mode: b.mode,
         maxTokens: b.maxTokens ?? undefined,
         graphWeight: b.graphWeight ?? undefined,
@@ -465,7 +484,8 @@ export function createApi(deps: ApiDeps) {
     (c) => {
       const q = valid(c, "query", s.ScopeQuery);
       const list = q.source === undefined ? undefined : Array.isArray(q.source) ? q.source : [q.source];
-      return json(scope(docify, { library: str(q.library), version: str(q.version), sources: list, project }));
+      const groups = q.group === undefined ? undefined : Array.isArray(q.group) ? q.group : [q.group];
+      return json(scope(docify, { library: str(q.library), version: str(q.version), sources: list, groups, project }));
     },
   );
   add(

@@ -137,6 +137,10 @@ export interface AddSourceInput {
   ignore?: string[];
   // Paths that stay searchable but are left out of the graph.
   graphIgnore?: string[];
+  // Display name; the id is unchanged by it.
+  title?: string | null;
+  // Named groups an agent can search together.
+  groups?: string[];
 }
 
 export interface PrepareOptions {
@@ -195,6 +199,47 @@ export class DocifyError extends Error {
 const ID_RE = /^[a-z0-9][a-z0-9._@-]{0,80}$/;
 const LIBRARY_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/;
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/;
+// Group names share no namespace with source ids: no "@", so "bun@1" can never be a group.
+export const GROUP_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/;
+export const MAX_TITLE_LENGTH = 120;
+export const MAX_SOURCE_GROUPS = 20;
+
+// A display name only; the id stays the key for citations, snapshots and pins.
+export function validateTitle(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") throw new DocifyError("invalid_input", "title must be text", "title");
+  const title = value.replace(/\s+/g, " ").trim();
+  if (!title) return null;
+  if (title.length > MAX_TITLE_LENGTH) throw new DocifyError("invalid_input", `title is limited to ${MAX_TITLE_LENGTH} characters`, "title");
+  return title;
+}
+
+export function validateGroups(value: unknown): string[] {
+  const invalid = (message: string) => new DocifyError("invalid_input", `groups: ${message}`, "groups");
+  if (value === null) return [];
+  if (!Array.isArray(value)) throw invalid("must be a list of group names");
+  if (value.length > MAX_SOURCE_GROUPS) throw invalid(`a source can be in at most ${MAX_SOURCE_GROUPS} groups`);
+  const groups = value.map((g) => (typeof g === "string" ? g.trim().toLowerCase() : g));
+  for (const g of groups) {
+    if (typeof g !== "string" || !GROUP_RE.test(g)) throw invalid(`${JSON.stringify(g)} is not a valid group name (lowercase letters, digits, ".", "_" and "-")`);
+  }
+  return [...new Set(groups as string[])].sort();
+}
+
+export interface SourceLabels {
+  title: string | null;
+  groups: string[];
+}
+
+// Absent values read as unset. A malformed stored value is an error, never an empty list:
+// silently dropping a group would quietly narrow what a group search covers.
+export function sourceLabels(source: Pick<SourceRow, "id" | "options">): SourceLabels {
+  const options = JSON.parse(source.options) as { title?: unknown; groups?: unknown };
+  const broken = (what: string) => new DocifyError("invalid_store", `source ${source.id} has a malformed stored ${what}`);
+  if (options.title !== undefined && (typeof options.title !== "string" || !options.title)) throw broken("title");
+  if (options.groups !== undefined && (!Array.isArray(options.groups) || options.groups.some((g) => typeof g !== "string" || !GROUP_RE.test(g)))) throw broken("group list");
+  return { title: (options.title as string | undefined) ?? null, groups: (options.groups as string[] | undefined) ?? [] };
+}
 
 // Bump when normalization, chunking or indexing changes, so identical raw snapshots are rebuilt.
 export const PIPELINE_VERSION = 5;
@@ -304,6 +349,8 @@ export class Docify {
     }
     const ignore = input.ignore === undefined ? [] : validateIgnorePatterns(input.ignore, "ignore");
     const graphIgnore = input.graphIgnore === undefined ? [] : validateIgnorePatterns(input.graphIgnore, "graphIgnore");
+    const title = input.title === undefined ? null : validateTitle(input.title);
+    const groups = input.groups === undefined ? [] : validateGroups(input.groups);
     let locator = input.locator.trim();
     if (input.kind === "local") {
       locator = resolve(locator.replace(/^~(?=$|\/)/, homedir()));
@@ -331,6 +378,8 @@ export class Docify {
         ...(input.crawlProvider === undefined ? {} : { crawlProvider: input.crawlProvider }),
         ...(ignore.length ? { ignore } : {}),
         ...(graphIgnore.length ? { graphIgnore } : {}),
+        ...(title ? { title } : {}),
+        ...(groups.length ? { groups } : {}),
       }), nowIso()],
     );
     this.logs.append(id, `Source registered (${input.kind})`);
@@ -380,6 +429,45 @@ export class Docify {
       this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
       return this.requireSource(id);
     }).immediate();
+  }
+
+  // Title and groups only label a source: they change no snapshot or index, so they apply at once
+  // and are allowed while the source prepares. null or an empty value removes them.
+  updateSourceLabels(id: string, patch: { title?: unknown; groups?: unknown }): SourceRow {
+    if (patch.title === undefined && patch.groups === undefined) throw new DocifyError("invalid_input", "title or groups is required");
+    const title = patch.title === undefined ? undefined : validateTitle(patch.title);
+    const groups = patch.groups === undefined ? undefined : validateGroups(patch.groups);
+    return this.db.transaction(() => {
+      const source = this.requireSource(id);
+      const options = JSON.parse(source.options);
+      if (title !== undefined) {
+        if (title) options.title = title;
+        else delete options.title;
+      }
+      if (groups !== undefined) {
+        if (groups.length) options.groups = groups;
+        else delete options.groups;
+      }
+      this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
+      return this.requireSource(id);
+    }).immediate();
+  }
+
+  // Adds or removes one source in one group; returns the source's groups after the change.
+  setSourceGroup(id: string, group: string, member: boolean): string[] {
+    const [name] = validateGroups([group]);
+    return this.db.transaction(() => {
+      const current = sourceLabels(this.requireSource(id)).groups;
+      const next = member ? [...current, name!] : current.filter((g) => g !== name);
+      return sourceLabels(this.updateSourceLabels(id, { groups: next })).groups;
+    }).immediate();
+  }
+
+  // Every group with its member ids, sorted by name.
+  listGroups(): { name: string; sources: string[] }[] {
+    const groups = new Map<string, string[]>();
+    for (const s of this.listSourceRows()) for (const g of sourceLabels(s).groups) (groups.get(g) ?? groups.set(g, []).get(g)!).push(s.id);
+    return [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, sources]) => ({ name, sources }));
   }
 
   removeSource(id: string) {

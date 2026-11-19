@@ -33,6 +33,10 @@
   ];
   const prepared = $derived((sources.list ?? []).filter((s) => s.activeGeneration));
   const scopeSource = $derived(prepared.find((s) => s.id === scope));
+  // Group values carry a prefix; a source id cannot contain ":".
+  const groupNames = $derived([...new Set((sources.list ?? []).flatMap((s) => s.groups))].sort());
+  const scopeGroup = $derived(scope.startsWith("group:") && groupNames.includes(scope.slice(6)) ? scope.slice(6) : null);
+  const sourceLabel = (s: { title: string | null; library: string; version: string | null }) => s.title ?? `${s.library}${s.version ? ` ${s.version}` : ""}`;
   const noPrepared = $derived(sources.list !== null && prepared.length === 0);
   const usage = $derived(result ? Math.min(1, result.tokens / Math.max(1, result.maxTokens)) : 0);
   const totalMs = $derived(result ? Math.round(result.timings.totalMs ?? 0) : 0);
@@ -46,6 +50,7 @@
     // A scope names one source by id, which is exact even when two sources share a library and version.
     const body: Record<string, unknown> = { query, mode, maxTokens: Number(maxTokens), graphWeight: Number(graphWeight) };
     if (scopeSource) body.sources = [scopeSource.id];
+    if (scopeGroup) body.groups = [scopeGroup];
     try {
       result = await api<SearchResult>("/api/search", { method: "POST", body });
       selected = null;
@@ -103,7 +108,16 @@
     </form>
     <select class={popup({ class: "h-[30px] max-w-48 rounded-full" })} aria-label="Search scope" bind:value={scope}>
       <option value="">All Sources</option>
-      {#each prepared as s (s.id)}<option value={s.id}>{s.library}{s.version ? ` ${s.version}` : ""}</option>{/each}
+      {#if groupNames.length}
+        <optgroup label="Groups">
+          {#each groupNames as name (name)}<option value={`group:${name}`}>{name}</option>{/each}
+        </optgroup>
+        <optgroup label="Sources">
+          {#each prepared as s (s.id)}<option value={s.id}>{sourceLabel(s)}</option>{/each}
+        </optgroup>
+      {:else}
+        {#each prepared as s (s.id)}<option value={s.id}>{sourceLabel(s)}</option>{/each}
+      {/if}
     </select>
     <span class="flex-1"></span>
     <span class={capsule()}>
