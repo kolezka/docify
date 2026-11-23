@@ -59,6 +59,14 @@ test("wrong types and out-of-range values are errors, never coerced or dropped",
   rejects(() => validateConfigPatch({ graph: { maxRetries: -1 } }), "graph.maxRetries", /between 0 and 100/);
   rejects(() => validateConfigPatch({ graph: { maxRetryDepth: 11 } }), "graph.maxRetryDepth", /between 0 and 10/);
   rejects(() => validateConfigPatch({ graph: { disableThinking: "yes" } }), "graph.disableThinking", /true or false/);
+  rejects(() => validateConfigPatch({ graph: { allowPartial: 1 } }), "graph.allowPartial", /true or false/);
+  for (const key of ["timing", "debug", "noBackup", "parallelLocal"]) rejects(() => validateConfigPatch({ graph: { [key]: "on" } }), `graph.${key}`, /true or false/);
+  rejects(() => validateConfigPatch({ graph: { ollamaNumCtx: 512 } }), "graph.ollamaNumCtx", /between 1024 and 1048576/);
+  rejects(() => validateConfigPatch({ graph: { ollamaNumCtx: 4096.5 } }), "graph.ollamaNumCtx", /whole number/);
+  rejects(() => validateConfigPatch({ graph: { ollamaKeepAlive: "forever" } }), "graph.ollamaKeepAlive", /duration/);
+  rejects(() => validateConfigPatch({ graph: { ollamaKeepAlive: 30 } }), "graph.ollamaKeepAlive", /must be text/);
+  rejects(() => validateConfigPatch({ graph: { ollamaKeepAlive: "" } }), "graph.ollamaKeepAlive", /duration/);
+  rejects(() => validateConfigPatch({ graph: { maxGraphMb: 0 } }), "graph.maxGraphMb", /between 1 and 1048576/);
   expect(validateConfigPatch({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434/", graph: null })).toEqual({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434", graph: null });
 });
 
@@ -97,6 +105,18 @@ test("graph request settings round-trip, keep zero and can return to the Graphif
   expect(loadConfig(home).graph).toMatchObject({ maxOutputTokens: 32000, temperature: 0, maxRetries: 0, maxRetryDepth: 0, disableThinking: true });
   saveConfig(home, { graph: { maxOutputTokens: null, temperature: null, disableThinking: false } }, {});
   expect(loadConfig(home).graph).toMatchObject({ maxOutputTokens: null, temperature: null, maxRetries: 0, disableThinking: false });
+  saveConfig(home, { graph: { allowPartial: true } }, {});
+  expect(loadConfig(home).graph).toMatchObject({ allowPartial: true, maxRetries: 0 });
+});
+
+test("diagnostic, local-backend and limit settings round-trip and can return to Graphify's default", () => {
+  const home = tempDir();
+  const on = { timing: true, debug: true, noBackup: true, parallelLocal: true, ollamaNumCtx: 32768, ollamaKeepAlive: "1h30m", maxGraphMb: 1024 };
+  saveConfig(home, { graph: on }, {});
+  expect(loadConfig(home).graph).toMatchObject(on);
+  saveConfig(home, { graph: { ollamaNumCtx: null, ollamaKeepAlive: null, maxGraphMb: null } }, {});
+  expect(loadConfig(home).graph).toMatchObject({ ollamaNumCtx: null, ollamaKeepAlive: null, maxGraphMb: null, timing: true });
+  for (const keep of ["-1", "0", "300", "5m", "1h30m", "90s"]) expect(validateConfigPatch({ graph: { ollamaKeepAlive: keep } })).toEqual({ graph: { ollamaKeepAlive: keep } });
 });
 
 test("cross-field rules use the merged values", () => {

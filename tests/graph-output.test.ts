@@ -121,3 +121,64 @@ test("Graphify preserves streamed output and failure diagnostics on nonzero exit
     expect(lines).toContain("WARNING: fixture stderr");
   } finally { d.close(); }
 });
+
+test("allowPartial passes --allow-partial to Graphify, and only when it is on", async () => {
+  const { d, release } = fixture();
+  writeFileSync(release, "go");
+  const argvOf = (id: string) => JSON.parse(readFileSync(join(d.config.home, "graphify", id, "argv.json"), "utf8")) as string[];
+  try {
+    await runGraphify(d.config, "strict", []);
+    expect(argvOf("strict")).not.toContain("--allow-partial");
+    d.config.graph!.allowPartial = true;
+    await runGraphify(d.config, "lenient", []);
+    expect(argvOf("lenient")).toContain("--allow-partial");
+  } finally { d.close(); }
+});
+
+test("a refused shrink points at allowPartial, not at --force", async () => {
+  const dir = tempDir("docify-shrink-");
+  const bin = join(dir, "graphify");
+  writeFileSync(bin, `#!/bin/sh
+echo "[graphify extract] error: extraction was incomplete and the resulting --no-cluster graph is smaller than the existing graph.json (505 < 4000 nodes). Refusing to overwrite a complete graph with a partial one." >&2
+exit 1
+`);
+  chmodSync(bin, 0o755);
+  const d = newDocify(tempDir(), { graphifyBin: bin, graph: { backend: "ollama", model: "fake", timeoutSeconds: 10 } });
+  try {
+    const error = await runGraphify(d.config, "shrink", []).then(() => null, (e: Error) => e);
+    expect(error?.message).toContain("allowPartial");
+    expect(error?.message).not.toContain("--force");
+  } finally { d.close(); }
+});
+
+test("diagnostic, local-backend and limit settings reach Graphify as flags and variables", async () => {
+  const { d, release } = fixture();
+  Object.assign(d.config.graph!, { timing: true, debug: true, noBackup: true, parallelLocal: true, ollamaNumCtx: 32768, ollamaKeepAlive: "5m", maxGraphMb: 2048 });
+  writeFileSync(release, "go");
+  try {
+    await runGraphify(d.config, "extras", []);
+    const argv = JSON.parse(readFileSync(join(d.config.home, "graphify", "extras", "argv.json"), "utf8")) as string[];
+    expect(argv).toContain("--timing");
+    expect(graphifyEnv(d, "extras")).toEqual({
+      GRAPHIFY_DEBUG: "1",
+      GRAPHIFY_NO_BACKUP: "1",
+      GRAPHIFY_OLLAMA_PARALLEL: "1",
+      GRAPHIFY_CLAUDE_CLI_PARALLEL: "1",
+      GRAPHIFY_OLLAMA_NUM_CTX: "32768",
+      GRAPHIFY_OLLAMA_KEEP_ALIVE: "5m",
+      GRAPHIFY_MAX_GRAPH_BYTES: "2048MB",
+    });
+  } finally { d.close(); }
+});
+
+test("the extra settings stay out of argv and the environment when off or unset", async () => {
+  const { d, release } = fixture();
+  Object.assign(d.config.graph!, { timing: false, debug: false, noBackup: false, parallelLocal: false, ollamaNumCtx: null, ollamaKeepAlive: null, maxGraphMb: null });
+  writeFileSync(release, "go");
+  try {
+    await runGraphify(d.config, "extras-off", []);
+    const argv = JSON.parse(readFileSync(join(d.config.home, "graphify", "extras-off", "argv.json"), "utf8")) as string[];
+    expect(argv).not.toContain("--timing");
+    expect(graphifyEnv(d, "extras-off")).toEqual({});
+  } finally { d.close(); }
+});

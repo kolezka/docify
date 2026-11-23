@@ -48,3 +48,29 @@ test("turning the graph on sends every set value and leaves blank ones out", () 
   expect(changes).toMatchObject({ backend: "openai", maxRetries: 6, maxRetryDepth: 3, disableThinking: false });
   for (const key of ["maxWorkers", "maxOutputTokens", "temperature"]) expect(changes).not.toHaveProperty(key);
 });
+
+test("accept partial graph starts off and is sent only when it changes", () => {
+  const before = graphForm(DEFAULT_GRAPH, null);
+  expect(before.allowPartial).toBe(false);
+  expect(graphChanges(before, before)).toEqual({});
+  expect(graphChanges({ ...before, allowPartial: true }, before)).toEqual({ allowPartial: true });
+  expect(graphForm(DEFAULT_GRAPH, { ...DEFAULT_GRAPH, allowPartial: true }).allowPartial).toBe(true);
+});
+
+test("the extra switches start off and blank optional fields are saved as null", () => {
+  const before = graphForm(DEFAULT_GRAPH, null);
+  for (const key of ["timing", "debug", "noBackup", "parallelLocal"] as const) expect(before[key]).toBe(false);
+  expect(graphErrors(before)).toEqual({});
+  const set = { ...before, parallelLocal: true, ollamaNumCtx: 16384, ollamaKeepAlive: "10m", maxGraphMb: 1024 };
+  expect(graphChanges(set, before)).toEqual({ parallelLocal: true, ollamaNumCtx: 16384, ollamaKeepAlive: "10m", maxGraphMb: 1024 });
+  // An emptied text field binds to "", which means "use Graphify's default", not an empty duration.
+  const cleared = graphChanges({ ...set, ollamaNumCtx: null, ollamaKeepAlive: "", maxGraphMb: null }, set);
+  expect(cleared).toEqual({ ollamaNumCtx: null, ollamaKeepAlive: null, maxGraphMb: null });
+  expect(validateConfigPatch({ graph: cleared })).toEqual({ graph: cleared });
+  expect(graphChanges({ ...before, ollamaKeepAlive: "" }, before)).toEqual({});
+});
+
+test("out-of-range local-backend and limit values are reported at their field", () => {
+  const form = { ...graphForm(DEFAULT_GRAPH, null), ollamaNumCtx: 100, ollamaKeepAlive: "soon", maxGraphMb: 0 };
+  expect(Object.keys(graphErrors(form)).sort()).toEqual(["graph.maxGraphMb", "graph.ollamaKeepAlive", "graph.ollamaNumCtx"]);
+});
