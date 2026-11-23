@@ -17,6 +17,7 @@ export const GRAPH_KEYS = [
   "maxRetries",
   "maxRetryDepth",
   "disableThinking",
+  "allowPartial",
 ] as const;
 export type GraphKey = (typeof GRAPH_KEYS)[number];
 
@@ -38,11 +39,12 @@ export type GraphForm = {
   maxRetries?: number | null;
   maxRetryDepth?: number | null;
   disableThinking?: boolean;
+  allowPartial?: boolean;
 };
 
 export function graphForm(defaults: GraphProviderConfig | null, saved: GraphProviderConfig | null): GraphForm {
   const merged = { ...(defaults ?? { backend: "", model: "" }), ...(saved ?? {}) };
-  return { ...merged, disableThinking: merged.disableThinking ?? false };
+  return { ...merged, disableThinking: merged.disableThinking ?? false, allowPartial: merged.allowPartial ?? false };
 }
 
 const whole = (v: unknown, min: number, max = Infinity) => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;

@@ -231,6 +231,8 @@ Five more `graph` keys tune the model requests. They are also in Settings, under
 
 Graphify caches finished chunks, so a changed setting reaches documents that already have nodes only on a forced prepare.
 
+When the model leaves some documents without nodes, Graphify calls the extraction incomplete and refuses to write a graph smaller than the one an earlier run left in its work directory. The prepare then fails with `Refusing to overwrite a complete graph with a partial one` and the previous generation keeps serving. `--force` does not get past this check. Set `"allowPartial": true` in `graph` (Settings, Semantic Graph, **Accept partial graph**) to pass `--allow-partial` and keep the smaller graph; it activates as `partial` and the next prepare retries the missing documents. It is off by default because a smaller graph can also mean the extraction got worse.
+
 ## Query
 
 ```bash

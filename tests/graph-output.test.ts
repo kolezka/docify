@@ -121,3 +121,32 @@ test("Graphify preserves streamed output and failure diagnostics on nonzero exit
     expect(lines).toContain("WARNING: fixture stderr");
   } finally { d.close(); }
 });
+
+test("allowPartial passes --allow-partial to Graphify, and only when it is on", async () => {
+  const { d, release } = fixture();
+  writeFileSync(release, "go");
+  const argvOf = (id: string) => JSON.parse(readFileSync(join(d.config.home, "graphify", id, "argv.json"), "utf8")) as string[];
+  try {
+    await runGraphify(d.config, "strict", []);
+    expect(argvOf("strict")).not.toContain("--allow-partial");
+    d.config.graph!.allowPartial = true;
+    await runGraphify(d.config, "lenient", []);
+    expect(argvOf("lenient")).toContain("--allow-partial");
+  } finally { d.close(); }
+});
+
+test("a refused shrink points at allowPartial, not at --force", async () => {
+  const dir = tempDir("docify-shrink-");
+  const bin = join(dir, "graphify");
+  writeFileSync(bin, `#!/bin/sh
+echo "[graphify extract] error: extraction was incomplete and the resulting --no-cluster graph is smaller than the existing graph.json (505 < 4000 nodes). Refusing to overwrite a complete graph with a partial one." >&2
+exit 1
+`);
+  chmodSync(bin, 0o755);
+  const d = newDocify(tempDir(), { graphifyBin: bin, graph: { backend: "ollama", model: "fake", timeoutSeconds: 10 } });
+  try {
+    const error = await runGraphify(d.config, "shrink", []).then(() => null, (e: Error) => e);
+    expect(error?.message).toContain("allowPartial");
+    expect(error?.message).not.toContain("--force");
+  } finally { d.close(); }
+});

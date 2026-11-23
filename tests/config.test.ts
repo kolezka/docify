@@ -59,6 +59,7 @@ test("wrong types and out-of-range values are errors, never coerced or dropped",
   rejects(() => validateConfigPatch({ graph: { maxRetries: -1 } }), "graph.maxRetries", /between 0 and 100/);
   rejects(() => validateConfigPatch({ graph: { maxRetryDepth: 11 } }), "graph.maxRetryDepth", /between 0 and 10/);
   rejects(() => validateConfigPatch({ graph: { disableThinking: "yes" } }), "graph.disableThinking", /true or false/);
+  rejects(() => validateConfigPatch({ graph: { allowPartial: 1 } }), "graph.allowPartial", /true or false/);
   expect(validateConfigPatch({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434/", graph: null })).toEqual({ lexicalWeight: 0.5, embeddingUrl: "http://gpu:11434", graph: null });
 });
 
@@ -97,6 +98,8 @@ test("graph request settings round-trip, keep zero and can return to the Graphif
   expect(loadConfig(home).graph).toMatchObject({ maxOutputTokens: 32000, temperature: 0, maxRetries: 0, maxRetryDepth: 0, disableThinking: true });
   saveConfig(home, { graph: { maxOutputTokens: null, temperature: null, disableThinking: false } }, {});
   expect(loadConfig(home).graph).toMatchObject({ maxOutputTokens: null, temperature: null, maxRetries: 0, disableThinking: false });
+  saveConfig(home, { graph: { allowPartial: true } }, {});
+  expect(loadConfig(home).graph).toMatchObject({ allowPartial: true, maxRetries: 0 });
 });
 
 test("cross-field rules use the merged values", () => {

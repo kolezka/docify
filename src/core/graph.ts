@@ -125,6 +125,7 @@ export async function runGraphify(
     work,
     // --force skips Graphify's semantic cache, which keeps a bad partial extraction otherwise.
     ...(force ? ["--force"] : []),
+    ...(provider.allowPartial ? ["--allow-partial"] : []),
   ];
   const started = performance.now();
   const proc = Bun.spawn(argv, { env: { ...providerEnv(provider), ...runtimeEnv(provider) }, stdout: "pipe", stderr: "pipe", cwd: work });
@@ -196,7 +197,10 @@ export async function runGraphify(
     if (timedOut) {
       throw new GraphProviderError(`graphify extract stopped after ${idleSeconds} s without output (graph timeoutSeconds). Finished chunks are cached, so the next prepare resumes; raise timeoutSeconds if the provider is slow. Last output: ${tail}`);
     }
-    const hint = /semantic shrink|Refusing to overwrite/.test(log) ? " The provider returned a partial graph and Graphify cached it; rerun prepare with --force to re-extract." : "";
+    // --force does not help here: Graphify checks the size of an incomplete graph with or without it.
+    const hint = /semantic shrink|Refusing to overwrite/.test(log) && !provider.allowPartial
+      ? " Graphify kept the larger graph from an earlier run because this extraction was incomplete. Prepare again to retry the missing documents, or turn on graph allowPartial (Settings, Semantic Graph, Accept partial graph) to replace it with the smaller one."
+      : "";
     throw new GraphProviderError(`graphify extract exited ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}: ${tail}${hint}`);
   }
   // A failed chunk or a file the model left out still exits 0 with a graph of the rest. Keep it:

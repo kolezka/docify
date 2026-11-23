@@ -383,7 +383,7 @@
   </Row>
 {/snippet}
 
-{#snippet graphField(g: GraphForm, key: Exclude<GraphKey, "disableThinking">, label: string, opts: { sub?: string; number?: boolean; min?: string; max?: string; step?: string; unit?: string; width?: string; placeholder?: string; env?: boolean })}
+{#snippet graphField(g: GraphForm, key: Exclude<GraphKey, "disableThinking" | "allowPartial">, label: string, opts: { sub?: string; number?: boolean; min?: string; max?: string; step?: string; unit?: string; width?: string; placeholder?: string; env?: boolean })}
   {@const k = `graph.${key}`}
   {@const err = fieldError(k)}
   <Row {label} sub={opts.sub} for={fieldId(k)}>
@@ -701,6 +701,9 @@
           <Group title="Retries" hint="More retries finish more documents and can cost more.">
             {@render graphField(form.graph, "maxRetries", "Request retries", { sub: "After a rate limit or network error. Default: 6", number: true, min: "0", max: "100", step: "1", width: "w-[140px]" })}
             {@render graphField(form.graph, "maxRetryDepth", "Split depth", { sub: "How many times a cut-off chunk is halved and retried. 0 sends each chunk once. Default: 3", number: true, min: "0", max: "10", step: "1", width: "w-[140px]" })}
+            <Row label="Accept partial graph" sub="When some documents get no nodes, save the smaller graph anyway. Off keeps a larger graph from an earlier run">
+              <Switch bind:checked={form.graph.allowPartial} label="Accept partial graph" hideLabel />
+            </Row>
           </Group>
           <Group title="Limits">
             {@render graphField(form.graph, "maxConcurrency", "Max concurrency", { number: true, min: "1", step: "1", width: "w-[140px]" })}

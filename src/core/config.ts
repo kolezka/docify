@@ -21,6 +21,8 @@ export interface GraphProviderConfig {
   maxRetries?: number;
   maxRetryDepth?: number;
   disableThinking?: boolean;
+  // Passes --allow-partial: an incomplete extraction may replace a larger graph from an earlier run.
+  allowPartial?: boolean;
 }
 
 export interface DocifyConfig {
@@ -80,6 +82,7 @@ export const DEFAULT_GRAPH: GraphProviderConfig = {
   maxRetries: 6,
   maxRetryDepth: 3,
   disableThinking: false,
+  allowPartial: false,
 };
 
 export class ConfigError extends Error {
@@ -208,7 +211,7 @@ const LOCKED_KEYS: Record<string, string> = { home: "DOCIFY_HOME", graphifyBin: 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 // Model names reach argv and the model loader: no leading dash, no path traversal.
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
-const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers", "maxOutputTokens", "temperature", "maxRetries", "maxRetryDepth", "disableThinking"];
+const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers", "maxOutputTokens", "temperature", "maxRetries", "maxRetryDepth", "disableThinking", "allowPartial"];
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -307,6 +310,10 @@ function graphField(v: unknown): Partial<GraphProviderConfig> | null {
       case "disableThinking":
         if (typeof value !== "boolean") throw new ConfigError(`${field} must be true or false`, field);
         out.disableThinking = value;
+        break;
+      case "allowPartial":
+        if (typeof value !== "boolean") throw new ConfigError(`${field} must be true or false`, field);
+        out.allowPartial = value;
         break;
       default:
         throw new ConfigError(`unknown graph setting: ${k} (known: ${GRAPH_KEYS.join(", ")})`, field);

@@ -48,3 +48,11 @@ test("turning the graph on sends every set value and leaves blank ones out", () 
   expect(changes).toMatchObject({ backend: "openai", maxRetries: 6, maxRetryDepth: 3, disableThinking: false });
   for (const key of ["maxWorkers", "maxOutputTokens", "temperature"]) expect(changes).not.toHaveProperty(key);
 });
+
+test("accept partial graph starts off and is sent only when it changes", () => {
+  const before = graphForm(DEFAULT_GRAPH, null);
+  expect(before.allowPartial).toBe(false);
+  expect(graphChanges(before, before)).toEqual({});
+  expect(graphChanges({ ...before, allowPartial: true }, before)).toEqual({ allowPartial: true });
+  expect(graphForm(DEFAULT_GRAPH, { ...DEFAULT_GRAPH, allowPartial: true }).allowPartial).toBe(true);
+});
