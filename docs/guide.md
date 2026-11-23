@@ -219,7 +219,7 @@ docify prepare mylib@unknown --graph-only
 
 In the web UI this is **Retry Graph Only** in the prepare menu; `docify sources --json` shows such an attempt as `graphRetry`. Only the newest failed attempt is kept, and a successful prepare or a change of embedding model discards it; then run a full `prepare`. Failures before the graph phase keep nothing. Backups never include a kept attempt.
 
-Five more `graph` keys tune the model requests. They are also in Settings, under Semantic Graph. Graphify runs with a clean environment, so a `GRAPHIFY_*` variable set in your shell does not reach it; use these keys instead.
+More `graph` keys tune the model requests, local backends and diagnostics. They are also in Settings, under Semantic Graph. Graphify runs with a clean environment, so a `GRAPHIFY_*` variable set in your shell does not reach it; use these keys instead.
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -228,6 +228,13 @@ Five more `graph` keys tune the model requests. They are also in Settings, under
 | `maxRetries` | `6` | How many times a request is retried after a rate limit or network error. 0 turns retries off. |
 | `maxRetryDepth` | `3` | How many times a cut-off chunk is halved and sent again. Each level can double the requests for that chunk. 0 sends every chunk once. |
 | `disableThinking` | `false` | Asks a reasoning model not to think. Runs get steadier, but Graphify measured lower extraction quality and more cut-off replies. |
+| `parallelLocal` | `false` | Graphify sends one request at a time to the `ollama` and `claude-cli` backends. `true` lets `maxConcurrency` apply to them too. Use it only when the server can hold several requests: on one GPU parallel Ollama requests can come back empty. |
+| `ollamaNumCtx` | `null` | Ollama context window in tokens (1024 to 1048576). `null` sizes it from each chunk. A value smaller than the chunk makes Ollama cut the prompt and return empty replies; lower `tokenBudget` instead. |
+| `ollamaKeepAlive` | `null` | How long Ollama keeps the model loaded between requests: seconds, a duration such as `30m` or `1h30m`, or `-1` for always. `null` keeps Graphify's `30m`. |
+| `maxGraphMb` | `null` | Largest `graph.json` Graphify accepts, in MiB. `null` keeps its 512 MiB limit. Raise it only when a very large source fails on that limit. |
+| `timing` | `false` | Passes `--timing`: Graphify prints how long each stage took to Logs. |
+| `debug` | `false` | Adds a traceback to Logs when Graphify skips a file because its extractor failed. |
+| `noBackup` | `false` | Graphify keeps a dated copy of the previous `graph.json` in its work directory (`graphify/<source>/graphify-out/<date>/`) before each overwrite. `true` skips those copies. |
 
 Graphify caches finished chunks, so a changed setting reaches documents that already have nodes only on a forced prepare.
 

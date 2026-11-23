@@ -9,7 +9,7 @@
   import Switch from "../components/Switch.svelte";
   import Toolbar from "../components/Toolbar.svelte";
   import { api, ApiError, downloadBackup, errorText, uploadBackup, type ConfigDescription, type EditableConfig, type PathSetting, type PinsView } from "../lib/api.ts";
-  import { graphChanges, graphErrors, graphForm, type GraphForm, type GraphKey } from "../lib/graph-settings.ts";
+  import { graphChanges, graphErrors, graphForm, type GraphForm, type GraphKey, type GraphSwitch } from "../lib/graph-settings.ts";
   import { button, cn, footnote, input, notice as noticeStyle, popup } from "../lib/ui.ts";
 
   type Provider = EditableConfig["embeddingProvider"];
@@ -383,7 +383,7 @@
   </Row>
 {/snippet}
 
-{#snippet graphField(g: GraphForm, key: Exclude<GraphKey, "disableThinking" | "allowPartial">, label: string, opts: { sub?: string; number?: boolean; min?: string; max?: string; step?: string; unit?: string; width?: string; placeholder?: string; env?: boolean })}
+{#snippet graphField(g: GraphForm, key: Exclude<GraphKey, GraphSwitch>, label: string, opts: { sub?: string; number?: boolean; min?: string; max?: string; step?: string; unit?: string; width?: string; placeholder?: string; env?: boolean })}
   {@const k = `graph.${key}`}
   {@const err = fieldError(k)}
   <Row {label} sub={opts.sub} for={fieldId(k)}>
@@ -708,6 +708,25 @@
           <Group title="Limits">
             {@render graphField(form.graph, "maxConcurrency", "Max concurrency", { number: true, min: "1", step: "1", width: "w-[140px]" })}
             {@render graphField(form.graph, "timeoutSeconds", "Idle timeout", { sub: "Stops Graphify after this long without output. Default: 900 seconds", number: true, min: "1", unit: "seconds", width: "w-[140px]" })}
+            {@render graphField(form.graph, "maxGraphMb", "Max graph size", { sub: "Largest graph file Graphify accepts. Default: 512 MB", number: true, min: "1", step: "1", unit: "MB", placeholder: "Default", width: "w-[140px]" })}
+          </Group>
+          <Group title="Local backends" hint="Used only by the ollama and claude-cli backends.">
+            <Row label="Parallel requests" sub="Graphify sends one request at a time to these backends. On lets Max concurrency apply">
+              <Switch bind:checked={form.graph.parallelLocal} label="Parallel requests" hideLabel />
+            </Row>
+            {@render graphField(form.graph, "ollamaNumCtx", "Ollama context window", { sub: "Leave blank to size it from each chunk", number: true, min: "1024", step: "1", unit: "tokens", placeholder: "Automatic", width: "w-[140px]" })}
+            {@render graphField(form.graph, "ollamaKeepAlive", "Ollama keep alive", { sub: "How long the model stays loaded, such as 30m or -1. Default: 30m", placeholder: "30m", width: "w-[140px]" })}
+          </Group>
+          <Group title="Diagnostics" hint="Output goes to Logs.">
+            <Row label="Stage timing" sub="Prints how long each extraction stage took">
+              <Switch bind:checked={form.graph.timing} label="Stage timing" hideLabel />
+            </Row>
+            <Row label="Debug output" sub="Adds tracebacks when Graphify skips a file">
+              <Switch bind:checked={form.graph.debug} label="Debug output" hideLabel />
+            </Row>
+            <Row label="Skip graph backups" sub="Graphify keeps a dated copy of the old graph before each overwrite. On saves disk space">
+              <Switch bind:checked={form.graph.noBackup} label="Skip graph backups" hideLabel />
+            </Row>
           </Group>
         {/if}
       {:else if section === "storage"}

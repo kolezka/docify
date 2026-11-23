@@ -25,6 +25,13 @@
     "maxRetries": 6,
     "maxRetryDepth": 3,
     "disableThinking": false,
-    "allowPartial": false
+    "allowPartial": false,
+    "timing": false,
+    "debug": false,
+    "noBackup": false,
+    "parallelLocal": false,
+    "ollamaNumCtx": null,
+    "ollamaKeepAlive": null,
+    "maxGraphMb": null
   }
 }

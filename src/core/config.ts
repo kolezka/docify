@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { OLLAMA_DURATION } from "./ollama-duration.ts";
 
 export interface GraphProviderConfig {
   backend: string; // Graphify --backend value
@@ -23,6 +24,18 @@ export interface GraphProviderConfig {
   disableThinking?: boolean;
   // Passes --allow-partial: an incomplete extraction may replace a larger graph from an earlier run.
   allowPartial?: boolean;
+  // Diagnostics: --timing prints stage times, debug adds tracebacks to extractor warnings.
+  timing?: boolean;
+  debug?: boolean;
+  // Skips the dated graph.json copies Graphify keeps in its work directory.
+  noBackup?: boolean;
+  // ollama and claude-cli run one request at a time unless this is on.
+  parallelLocal?: boolean;
+  // ollama only. null lets Graphify size the context window from each chunk.
+  ollamaNumCtx?: number | null;
+  ollamaKeepAlive?: string | null;
+  // Largest graph.json Graphify accepts. null keeps its 512 MiB default.
+  maxGraphMb?: number | null;
 }
 
 export interface DocifyConfig {
@@ -83,6 +96,13 @@ export const DEFAULT_GRAPH: GraphProviderConfig = {
   maxRetryDepth: 3,
   disableThinking: false,
   allowPartial: false,
+  timing: false,
+  debug: false,
+  noBackup: false,
+  parallelLocal: false,
+  ollamaNumCtx: null,
+  ollamaKeepAlive: null,
+  maxGraphMb: null,
 };
 
 export class ConfigError extends Error {
@@ -211,7 +231,7 @@ const LOCKED_KEYS: Record<string, string> = { home: "DOCIFY_HOME", graphifyBin: 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 // Model names reach argv and the model loader: no leading dash, no path traversal.
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
-const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers", "maxOutputTokens", "temperature", "maxRetries", "maxRetryDepth", "disableThinking", "allowPartial"];
+const GRAPH_KEYS = ["backend", "model", "baseUrlEnv", "baseUrlSuffix", "apiKeyEnv", "maxConcurrency", "timeoutSeconds", "mode", "tokenBudget", "apiTimeoutSeconds", "maxWorkers", "maxOutputTokens", "temperature", "maxRetries", "maxRetryDepth", "disableThinking", "allowPartial", "timing", "debug", "noBackup", "parallelLocal", "ollamaNumCtx", "ollamaKeepAlive", "maxGraphMb"];
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -312,8 +332,21 @@ function graphField(v: unknown): Partial<GraphProviderConfig> | null {
         out.disableThinking = value;
         break;
       case "allowPartial":
+      case "timing":
+      case "debug":
+      case "noBackup":
+      case "parallelLocal":
         if (typeof value !== "boolean") throw new ConfigError(`${field} must be true or false`, field);
-        out.allowPartial = value;
+        out[k] = value;
+        break;
+      case "ollamaNumCtx":
+        out.ollamaNumCtx = value === null ? null : numberField(field, value, 1024, 1_048_576, true);
+        break;
+      case "ollamaKeepAlive":
+        out.ollamaKeepAlive = value === null ? null : stringField(field, value, 20, OLLAMA_DURATION, "must be a duration such as 30m, 1h30m, 300 or -1");
+        break;
+      case "maxGraphMb":
+        out.maxGraphMb = value === null ? null : numberField(field, value, 1, 1_048_576, true);
         break;
       default:
         throw new ConfigError(`unknown graph setting: ${k} (known: ${GRAPH_KEYS.join(", ")})`, field);
