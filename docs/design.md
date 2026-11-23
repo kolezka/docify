@@ -13,6 +13,27 @@ The current session produces a handoff only. Product implementation begins in a 
 These are design defaults, not choices the user previously made between offline, source, or automation options. The implementation prompt adopts them unless the user changes them:
 
 - One-screen local web UI, backed by the same core as the CLI and MCP server.
+  Amendment 2026-11-14: a hosted web UI may have user accounts. By default, setting both
+  `DOCIFY_GITHUB_CLIENT_ID` and `DOCIFY_GITHUB_CLIENT_SECRET` enables GitHub sign-in.
+  `DOCIFY_ACCOUNTS_ENABLED=false` ignores those credentials; `true` requires them. The store stays one shared store: administrators (named in `DOCIFY_ADMINS`) manage
+  sources, settings, logs, backups and accounts, members search and read, and a new sign-up
+  waits for an administrator's approval. Accounts and sessions are kept in `accounts.sqlite`,
+  outside `docify.sqlite`, so backups never carry them and imports never replace them. The CLI
+  is unchanged; signing in is the only step that calls GitHub, and queries still do not.
+  Second amendment, same day: Docify is meant for use inside a company. Each approved person
+  makes personal MCP keys in the web UI (only the hash is stored) and `/mcp` accepts them next
+  to the shared `DOCIFY_MCP_TOKENS`. With accounts on, a search made by a signed-in person or
+  through a personal key is noted in `accounts.sqlite` (query, scope, status, number of
+  passages; the newest 200 per person, readable only by that person). That note is the one
+  write a query causes. It never touches `docify.sqlite`, snapshots or `config.json`, a failed
+  note never fails the search, and without accounts, on stdio and in the CLI queries write
+  nothing, as before.
+  Third amendment, same day: administrators decide who gets in. An access list in
+  `accounts.sqlite` holds GitHub organizations, logins and email addresses; a person who matches
+  is a member from sign-in, and everyone else waits for approval or is refused, as the
+  administrators choose. Sign-in asks GitHub for organization membership or verified addresses
+  only when the list has such an entry, uses the answer for the match and keeps neither. The
+  match is repeated at every sign-in, so access given by an entry ends with it.
 - Queries run entirely locally and offline once sources, models, and indices are prepared.
   Amendment 2026-11-04: the optional Ollama embedding provider embeds each query on its server.
   With the bundled `docker-compose.yml` that server is on `127.0.0.1`, so queries stay local.
@@ -68,7 +89,7 @@ These are design defaults, not choices the user previously made between offline,
 
 If no adequate local model is available, continue independent work and ask one focused question about provider and budget before remote or paid semantic processing. Model downloads belong to explicit preparation, never a query side effect.
 
-The original MVP deferred remote Git cloning, PDFs, authenticated sources, other browser-rendered crawling, terminal or native desktop interfaces, multiuser access, and deployment. The Crawl4AI PDF input exception is described above. A graph canvas was not required for the first UI.
+The original MVP deferred remote Git cloning, PDFs, authenticated sources, other browser-rendered crawling, terminal or native desktop interfaces, multiuser access, and deployment. The Crawl4AI PDF input exception is described above. Optional user accounts for a hosted UI were added on 2026-11-14 (see the amendment above). A graph canvas was not required for the first UI.
 
 ## Repository starting point
 

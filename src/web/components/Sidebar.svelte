@@ -1,20 +1,31 @@
 <script lang="ts">
-  import { ChevronRight, Logs, Network, Plus, Search, Settings } from "@lucide/svelte";
+  import { ChevronRight, CircleUser, Logs, Network, Plus, Search, Settings, Users } from "@lucide/svelte";
   import StatusDot from "./StatusDot.svelte";
   import ThemeSwitch from "./ThemeSwitch.svelte";
   import type { SourceInfo } from "../lib/api.ts";
-  import { nav, shortcuts } from "../lib/nav.svelte.ts";
+  import { ADMIN_VIEWS, nav, shortcuts } from "../lib/nav.svelte.ts";
+  import { session } from "../lib/session.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
+  import { users } from "../lib/users.svelte.ts";
   import { cn, sourceStateLabel, sourceTone } from "../lib/ui.ts";
   import { UNGROUPED_KEY, loadCollapsed, saveCollapsed, sidebarSections } from "../lib/sidebar-groups.ts";
 
   // Glass sidebar: the navigation layer above content (HIG Materials > Liquid Glass).
-  const items = [
+  const ALL_ITEMS = [
     { view: "search", label: "Search", icon: Search, key: "⌥1" },
     { view: "graph", label: "Graph", icon: Network, key: "⌥2" },
     { view: "logs", label: "Logs", icon: Logs, key: "⌥3" },
     { view: "settings", label: "Settings", icon: Settings, key: "⌥4" },
+    { view: "users", label: "Users", icon: Users, key: "⌥5" },
+    { view: "account", label: "Account", icon: CircleUser, key: "⌥6" },
   ] as const;
+  // Members get Search, Graph and their own Account; Users and Account exist only on a server with accounts.
+  const items = $derived(
+    ALL_ITEMS.filter((it) => (session.admin || !ADMIN_VIEWS.includes(it.view)) && (it.view !== "users" || session.accounts) && (it.view !== "account" || !!session.user)),
+  );
+
+  let signOutError = $state("");
+  const signOut = () => session.signOut().catch((err) => (signOutError = err instanceof Error ? err.message : String(err)));
 
   function subline(s: SourceInfo): string {
     if (s.state === "preparing") return [s.latest?.phase, s.latest?.progress].filter(Boolean).join(" ") || "Starting";
@@ -48,7 +59,7 @@
 {#snippet sourceList(list: SourceInfo[], id?: string)}
   <ul class="flex flex-col gap-px" {id}>
     {#each list as s (s.id)}
-      {@const active = nav.view === "source" && nav.sourceId === s.id}
+      {@const active = nav.shown === "source" && nav.sourceId === s.id}
       <li>
         <button type="button" class={cn(itemClass(active), "h-10")} aria-current={active ? "page" : undefined} onclick={() => nav.openSource(s.id)} data-source={s.id} title={s.title ? s.id : undefined}>
           <StatusDot tone={sourceTone(s.state)} class={active ? "ring-2 ring-white" : ""} />
@@ -72,11 +83,17 @@
   <nav class="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Views">
     <ul class="flex flex-col gap-px pt-1">
       {#each items as it (it.view)}
-        {@const active = nav.view === it.view}
+        {@const active = nav.shown === it.view}
+        {@const waiting = it.view === "users" ? users.pending : 0}
         <li>
           <button type="button" class={cn(itemClass(active), "h-7")} aria-current={active ? "page" : undefined} onclick={() => nav.go(it.view)}>
             <it.icon size={15} strokeWidth={1.75} class={active ? "text-white" : "text-accent-text"} aria-hidden="true" />
             <span class="flex-1">{it.label}</span>
+            {#if waiting}
+              <span class={cn("rounded-full px-1.5 text-[11px] leading-4 font-semibold", active ? "bg-white/25 text-white" : "bg-fill text-label")}
+                >{waiting}<span class="sr-only"> waiting for approval</span></span
+              >
+            {/if}
             <span class={cn("text-[11px]", active ? "text-white" : "text-label2")} aria-hidden="true">{it.key}</span>
           </button>
         </li>
@@ -85,13 +102,15 @@
 
     <div class="flex items-center justify-between px-2 pt-4 pb-1">
       <h2 class="text-[11px] leading-[14px] font-semibold text-label2">Sources</h2>
-      <button
-        type="button"
-        class="grid size-6 place-items-center rounded-md text-accent-text hover:bg-fill/70 focus-visible:ring-[3px] focus-visible:ring-accent-soft focus-visible:outline-none"
-        title={`New source (${shortcuts.find((s) => s.code === "KeyN")?.label})`}
-        aria-label="New source"
-        onclick={() => (nav.addingSource = true)}><Plus size={15} strokeWidth={2} aria-hidden="true" /></button
-      >
+      {#if session.admin}
+        <button
+          type="button"
+          class="grid size-6 place-items-center rounded-md text-accent-text hover:bg-fill/70 focus-visible:ring-[3px] focus-visible:ring-accent-soft focus-visible:outline-none"
+          title={`New source (${shortcuts.find((s) => s.code === "KeyN")?.label})`}
+          aria-label="New source"
+          onclick={() => (nav.addingSource = true)}><Plus size={15} strokeWidth={2} aria-hidden="true" /></button
+        >
+      {/if}
     </div>
     {#if sources.list === null}
       <p class="px-2 py-1 text-[11px] text-label2">{sources.error || "Loading sources…"}</p>
@@ -124,6 +143,18 @@
       {/if}
     {/if}
   </nav>
+  <!-- Who is signed in, and the way out (HIG Managing accounts: show the signed-in state). -->
+  {#if session.user}
+    <div class="flex items-center gap-2 border-t border-sep/60 px-3 py-2">
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-[13px] font-medium" title={session.user.login}>{session.user.login}</span>
+        <span class="block truncate text-[11px] leading-[13px] text-label2">{signOutError || (session.user.role === "admin" ? "Administrator" : "Member")}</span>
+      </span>
+      <button type="button" class="shrink-0 rounded-md px-1.5 py-0.5 text-[12px] text-accent-text hover:bg-fill/70 focus-visible:ring-[3px] focus-visible:ring-accent-soft focus-visible:outline-none" onclick={signOut}
+        >Sign Out</button
+      >
+    </div>
+  {/if}
   <div class="flex items-center justify-between border-t border-sep/60 px-3 py-2.5">
     <span class="text-[11px] text-label2">Appearance</span>
     <ThemeSwitch />

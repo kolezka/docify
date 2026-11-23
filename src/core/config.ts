@@ -252,8 +252,14 @@ function stringField(field: string, v: unknown, max: number, pattern?: RegExp, h
   return s;
 }
 
-const envNameField = (field: string, v: unknown) =>
-  stringField(field, v, 128, ENV_NAME, "must be an environment variable name (letters, digits, underscore)");
+// A credential variable is read and sent to a server the same settings name. Docify's own
+// secrets must never be reachable that way.
+const OWN_SECRETS = new Set(["DOCIFY_GITHUB_CLIENT_SECRET", "DOCIFY_GITHUB_CLIENT_ID", "DOCIFY_MCP_TOKENS", "DOCIFY_WEB_TOKEN", "DOCIFY_ADMINS"]);
+const envNameField = (field: string, v: unknown) => {
+  const name = stringField(field, v, 128, ENV_NAME, "must be an environment variable name (letters, digits, underscore)");
+  if (OWN_SECRETS.has(name.toUpperCase())) throw new ConfigError(`${field} cannot be ${name}; that variable belongs to Docify itself`, field);
+  return name;
+};
 
 function modelField(field: string, v: unknown): string {
   const s = stringField(field, v, 200, MODEL_NAME, "must be a model name such as bge-m3 or org/model");
@@ -520,6 +526,10 @@ export function describeConfig(config: DocifyConfig, env: Env = process.env): Co
     ["DOCIFY_GRAPHIFY_BIN", "Graphify executable, unless config.json sets graphifyBin"],
     ["DOCIFY_EMBED_URL", "Ollama URL, unless config.json sets embeddingUrl"],
     ["DOCIFY_PROJECT", "project whose .docify.json pins apply in CLI search and MCP"],
+    ["DOCIFY_ACCOUNTS_ENABLED", "require (true) or disable (false) GitHub sign-in; unset follows credentials"],
+    ["DOCIFY_GITHUB_CLIENT_ID", "GitHub OAuth app for user accounts"],
+    ["DOCIFY_ADMINS", "GitHub logins of the administrators"],
+    ["DOCIFY_PUBLIC_URL", "public address, for the GitHub callback and the Secure cookie"],
   ];
   const credentials = new Map<string, string[]>();
   const addCredential = (name: string | undefined, purpose: string) => {
@@ -531,6 +541,7 @@ export function describeConfig(config: DocifyConfig, env: Env = process.env): Co
   addCredential(config.graph?.apiKeyEnv, "graph API key");
   addCredential(config.crawl4aiApiKeyEnv, "Crawl4AI token");
   addCredential(config.browserlessApiKeyEnv, "Browserless token");
+  addCredential("DOCIFY_GITHUB_CLIENT_SECRET", "GitHub sign-in client secret");
   return {
     values: pick(config),
     defaults: pick(defaultConfig(config.home, env)),

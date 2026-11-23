@@ -7,9 +7,9 @@ export const ErrorBody = z
 
 const ERROR_TEXT: Record<number, string> = {
   400: "Invalid input",
-  401: "Missing or wrong access token",
-  403: "Forbidden host, origin or path",
-  404: "Unknown source, passage or artifact",
+  401: "Missing or wrong access token, or not signed in",
+  403: "Forbidden host, origin, path or account role/status",
+  404: "Unknown resource, or accounts are disabled",
   409: "Busy, already exists or nothing running",
   415: "JSON body required (raw bytes for /api/import)",
   500: "Internal error",
@@ -324,7 +324,7 @@ export const ScopeResult = z
   .openapi("ScopeResult");
 
 export const Pins = z
-  .object({ project: z.string(), file: z.string().nullable(), pins: z.record(z.string(), z.string().nullable()) })
+  .object({ project: z.string().nullable(), file: z.string().nullable(), pins: z.record(z.string(), z.string().nullable()) })
   .openapi("Pins");
 export const PinBody = z.object({
   library: z.string().trim().min(1),
@@ -381,3 +381,19 @@ export const GraphView = z.object({}).passthrough().openapi("GraphView", {
   description:
     "Nodes with their page and best grounding passage, one edge per connected node pair (indexes into `nodes`) and hyperedge groups. `nodes` is empty when the source is not prepared or has no graph; `graphStatus` says which.",
 });
+
+const Role = z.enum(["admin", "member"]);
+const StatusOfUser = z.enum(["pending", "active", "disabled"]);
+const KindOfRule = z.enum(["org", "login", "email"]);
+const Identity = z.object({ id: z.number().int(), login: z.string(), name: z.string().nullable(), role: Role, status: StatusOfUser });
+export const Session = z.object({ accounts: z.boolean(), user: Identity.nullable(), asks: z.object({ orgs: z.boolean(), emails: z.boolean() }).optional() });
+export const NewRule = z.object({ kind: KindOfRule, value: z.string() });
+export const AccessRule = NewRule.extend({ id: z.number().int(), createdAt: z.string(), createdBy: z.string().nullable(), people: z.number().int(), bound: z.boolean() }).openapi("AccessRule");
+export const Outsiders = z.object({ outsiders: z.enum(["pending", "refuse"]) });
+export const User = Identity.extend({ createdAt: z.string(), approvedAt: z.string().nullable(), lastLoginAt: z.string().nullable(), named: z.boolean(), self: z.boolean(), rule: NewRule.nullable() }).openapi("User");
+export const UpdateUser = z.object({ role: Role.optional(), status: z.enum(["active", "disabled"]).optional() });
+export const KeyName = z.object({ name: z.string() });
+export const Key = KeyName.extend({ id: z.number().int(), prefix: z.string(), createdAt: z.string(), lastUsedAt: z.string().nullable() }).openapi("Key");
+export const AccountId = z.object({ id: z.string().openapi({ param: { name: "id", in: "path" } }) });
+export const HistoryQuery = z.object({ limit: z.string().regex(/^\d{1,4}$/).transform(Number).pipe(z.number().int().min(1).max(200)).optional().openapi({ type: "integer", minimum: 1, maximum: 200 }) });
+export const HistoryEntry = z.object({ id: z.number().int(), at: z.string(), via: z.enum(["web", "mcp"]), keyName: z.string().nullable(), query: z.string(), scope: z.string().nullable(), status: z.string(), hits: z.number().int() }).openapi("Query");

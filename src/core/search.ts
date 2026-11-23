@@ -1412,7 +1412,7 @@ export function sources(docify: Docify): SourceInfo[] {
 }
 
 // Discovery searches saved collection metadata, not passages, and never generates summaries.
-export function discoverSources(docify: Docify, query: string): SourceInfo[] {
+export function discoverSources(docify: Docify, query: string, projectSources?: (list: SourceInfo[]) => SourceInfo[]): SourceInfo[] {
   if (typeof query !== "string" || !query.trim() || query.length > 500) {
     throw new DocifyError("invalid_input", "source query must contain 1 to 500 characters");
   }
@@ -1420,7 +1420,8 @@ export function discoverSources(docify: Docify, query: string): SourceInfo[] {
   const stop = new Set(["docs", "doc", "documentation", "collection", "collections", "sources", "source", "for", "about", "the", "a", "an", "find", "show", "me", "get", "of", "on", "please"]);
   const terms = words.filter((word) => !stop.has(word));
   if (!terms.length) return [];
-  return sources(docify)
+  const all = sources(docify);
+  return (projectSources ? projectSources(all) : all)
     .map((source) => {
       const identity = new Set(`${source.id} ${source.title ?? ""} ${source.groups.join(" ")} ${source.library} ${source.locator}`.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
       const summary = new Set(source.summary?.text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);

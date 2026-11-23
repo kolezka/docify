@@ -64,7 +64,10 @@ Servers:
   serve [--port 4747] [--host 127.0.0.1] [--allowed-host HOST]
                                 web UI; optional DOCIFY_WEB_TOKEN, DOCIFY_ALLOWED_HOSTS
                                 and DOCIFY_SOURCE_ROOTS are read from the environment;
-                                DOCIFY_MCP_TOKENS also serves MCP over HTTP at /mcp
+                                DOCIFY_MCP_TOKENS also serves MCP over HTTP at /mcp;
+                                DOCIFY_GITHUB_CLIENT_ID, DOCIFY_GITHUB_CLIENT_SECRET and
+                                DOCIFY_ADMINS configure GitHub sign-in; DOCIFY_ACCOUNTS_ENABLED
+                                can require (true) or disable (false) accounts
   mcp [--require X.Y.Z]         MCP server on stdio; refuses to start when docify is older than X.Y.Z
 
   --version                     print the docify version
@@ -129,7 +132,7 @@ async function main(argv: string[]) {
   if (command === "serve") {
     const port = Number(values.port ?? process.env.DOCIFY_PORT ?? 4747);
     const host = values.host ?? process.env.DOCIFY_HOST;
-    await import("./web/server.ts").then((m) => m.startServer(port, { host, allowedHosts: values["allowed-host"] }));
+    await import("./web/server.ts").then((m) => m.startServer(port, { host, allowedHosts: values["allowed-host"], accounts: m.accountsFromEnv() }));
     return;
   }
   const docify = new Docify();

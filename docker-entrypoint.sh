@@ -10,7 +10,8 @@ unset_empty() {
     if [ -z "$value" ]; then unset "$name"; fi
   done
 }
-unset_empty DOCIFY_WEB_TOKEN DOCIFY_ALLOWED_HOSTS DOCIFY_SOURCE_ROOTS LITELLM_BASE_URL LITELLM_API_KEY
+unset_empty DOCIFY_WEB_TOKEN DOCIFY_ALLOWED_HOSTS DOCIFY_SOURCE_ROOTS LITELLM_BASE_URL LITELLM_API_KEY \
+  DOCIFY_GITHUB_CLIENT_ID DOCIFY_GITHUB_CLIENT_SECRET DOCIFY_ADMINS DOCIFY_PUBLIC_URL
 
 # A bind-mounted host directory keeps its host owner. Fail with a clear message instead of
 # a sqlite error deep in startup.

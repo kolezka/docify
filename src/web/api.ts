@@ -1,14 +1,14 @@
 // The /api routes as a Hono app. Each route is declared with zod schemas, which validate the
 // request and generate the OpenAPI document served at /api/docs/openapi.json.
 import { homedir } from "node:os";
-import { delimiter, join, resolve, sep } from "node:path";
+import { basename, delimiter, join, resolve, sep } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { OpenAPIHono, createRoute, z, type RouteConfig } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { Docify, DocifyError, effectiveGeneration, validateGroups, validateIgnorePatterns, validateTitle } from "../core/docify.ts";
 import { ConfigError, describeConfig } from "../core/config.ts";
-import { discoverSources, open, outline, read, scope, search, searchMany, sources } from "../core/search.ts";
+import { discoverSources, open, outline, read, scope, search, searchMany, sources, renderScope, type SourceInfo, type ScopeResult } from "../core/search.ts";
 import { graphView } from "../core/graph-view.ts";
 import { summarizeSource } from "../core/summary.ts";
 import { exportStore, importStore } from "../core/backup.ts";
@@ -16,18 +16,38 @@ import { compressSnapshots } from "../core/compress-snapshots.ts";
 import { readSnapshotFile } from "../core/snapshot-file.ts";
 import { LogReadError } from "../core/logs.ts";
 import { VERSION } from "../version.ts";
+import { AccountStore, MAX_ACCESS_RULES, MAX_KEYS_PER_USER, MAX_ORG_RULES, MAX_QUERIES_PER_USER, type AccessRule, type KeyRow, type QueryRecord, type UserRow } from "../core/accounts.ts";
+import { scopeText } from "../mcp/tools.ts";
 import * as s from "./api-schemas.ts";
 
-const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404, generation_changed: 409, summary_failed: 502, invalid_summary: 502 };
+const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404, generation_changed: 409, summary_failed: 502, invalid_summary: 502, user_unknown: 404, key_unknown: 404, rule_unknown: 404, accounts_off: 404, conflict: 409, not_invited: 403 };
 // A store backup is uploaded whole; a real store is around 100 MB before compression.
 export const IMPORT_MAX_BYTES = 1024 * 1024 * 1024;
+
+export type Access = "admin" | "member" | "open";
+export const memberView = (list: SourceInfo[]): SourceInfo[] => list.map((source) => ({
+  ...source, locator: source.kind === "local" ? basename(source.locator) : source.locator,
+  latest: source.latest && { ...source.latest, error: null },
+}));
+
+export function memberScope(result: ScopeResult): ScopeResult {
+  const view = { ...result, project: null, pins: result.pins && { ...result.pins, file: null } };
+  return { ...view, text: renderScope(view) };
+}
 
 export interface ApiDeps {
   docify: Docify;
   project: string;
   sourceRoots: string[];
   // Host, token, content type and Origin; null lets the request through.
-  guard: (req: Request, bodyType: string) => Response | null;
+  guard: (req: Request, bodyType: string, access: Access) => Response | null;
+  accounts?: {
+    store: AccountStore | null;
+    actor: (req: Request) => UserRow | undefined;
+    session: (req: Request) => UserRow | null;
+    signOut: (req: Request) => string;
+    remember: (user: UserRow, record: QueryRecord) => void;
+  };
   // Lifts the idle timeout for a request that waits on a slow provider.
   noTimeout: (req: Request) => void;
 }
@@ -43,7 +63,7 @@ export function withinSourceRoots(realPath: string, roots: string[]): boolean {
   });
 }
 
-const json = (data: unknown, status = 200) => Response.json(data, { status });
+const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 
 // zod failures answer like the core's own validation: invalid_input, and the body field when there is one.
@@ -95,27 +115,198 @@ export function createApi(deps: ApiDeps) {
 
   const app = new OpenAPIHono({ defaultHook: invalidInput });
   app.onError((err) => fail(err));
-  app.notFound(() => new Response("not found", { status: 404 }));
+  app.notFound((c) => deps.guard(c.req.raw, "application/json", "admin") ?? new Response("not found", { status: 404 }));
 
   // Guards run before routing and validation, so a refused request learns nothing about the input.
-  const guards: MiddlewareHandler = async (c, next) => {
-    const blocked = deps.guard(c.req.raw, c.req.path === "/api/import" ? "application/octet-stream" : "application/json");
+  const guards = (access: Access, requiresAccounts: boolean): MiddlewareHandler => async (c, next) => {
+    const blocked = deps.guard(c.req.raw, c.req.path === "/api/import" ? "application/octet-stream" : "application/json", access);
     if (blocked) return blocked;
     if (importing) return json({ error: "a store import is running; try again in a moment", code: "busy" }, 503);
+    if (requiresAccounts && !deps.accounts?.store) throw new DocifyError("accounts_off", "accounts are not enabled on this server");
     await next();
   };
-  app.use("/api/*", guards);
 
   app.openAPIRegistry.registerComponent("securitySchemes", "docifyToken", { type: "apiKey", in: "header", name: "X-Docify-Token" });
 
-  // Handlers return plain Responses; the declared responses document them.
-  const add = <R extends RouteConfig>(route: R, handler: (c: Context) => Response | Promise<Response>) => app.openapi(createRoute(route), handler as never);
+  app.openAPIRegistry.registerComponent("securitySchemes", "docifySession", { type: "apiKey", in: "cookie", name: "docify_session" });
+
+  // New routes are admin-only unless registered with member or publicRoute.
+  const register = (access: Access, requiresAccounts = false) => <R extends RouteConfig>(route: R, handler: (c: Context) => Response | Promise<Response>) =>
+    app.openapi(createRoute({ ...route, middleware: [guards(access, requiresAccounts)] }), handler as never);
+  const add = register("admin"), member = register("member"), publicRoute = register("open");
+  const accountAdmin = register("admin", true), accountMember = register("member", true);
+  const isMember = (c: Context) => deps.accounts?.actor(c.req.raw)?.role === "member";
   const valid = <T extends z.ZodType>(c: Context, target: "json" | "query" | "param", _schema: T) => (c.req.valid as (t: string) => unknown)(target) as z.output<T>;
   const sourceId = (c: Context) => valid(c, "param", s.SourceIdParam).id;
   const busyGuard = (id: string, what = "a running operation") => {
     if (running.has(id)) throw new DocifyError("busy", `${id} already has ${what}`);
   };
   const pinsView = () => ({ project, file: Docify.pinFile(project), pins: Docify.readPins(project) });
+
+  // ---- Accounts ----
+  const store = deps.accounts?.store;
+  const actorOf = (c: Context) => deps.accounts?.actor(c.req.raw);
+  const ruleView = (r: AccessRule) => ({ id: r.id, kind: r.kind, value: r.value, createdAt: r.created_at, createdBy: r.created_by, people: r.people, bound: r.bound });
+  const userView = (u: UserRow, self?: UserRow) => {
+    const rule = u.rule_id === null ? null : store!.getRule(u.rule_id);
+    return {
+      id: u.id,
+      login: u.login,
+      name: u.name,
+      role: u.role,
+      status: u.status,
+      createdAt: u.created_at,
+      approvedAt: u.approved_at,
+      lastLoginAt: u.last_login_at,
+      named: store!.isNamedAdmin(u),
+      self: self?.id === u.id,
+      // The access-list entry that let this person in; null when an administrator approved them.
+      rule: rule && { kind: rule.kind, value: rule.value },
+    };
+  };
+
+  const requireStore = () => {
+    if (!store) throw new DocifyError("accounts_off", "accounts are not enabled on this server");
+    return store;
+  };
+  const accountId = (c: Context, code: string, message: string) => {
+    const { id } = valid(c, "param", s.AccountId);
+    if (!/^\d{1,15}$/.test(id)) throw new DocifyError(code, message);
+    return Number(id);
+  };
+  const me = (c: Context) => {
+    const accountStore = requireStore();
+    const user = actorOf(c);
+    if (!user) throw new DocifyError("accounts_off", "accounts are not enabled on this server");
+    return { accountStore, user };
+  };
+  const keyView = (k: KeyRow) => ({ id: k.id, name: k.name, prefix: k.prefix, createdAt: k.created_at, lastUsedAt: k.last_used_at });
+
+  publicRoute(
+    { method: "get", path: "/api/session", tags: ["Accounts"], summary: "Who is signed in", description: "Needs no token or session. `accounts` says whether GitHub sign-in is on; `user` is null when nobody is signed in. With accounts on, `asks` says what sign-in will ask GitHub for beyond the public profile, which depends on the access list.", security: [], responses: { 200: s.json(s.Session, "Who is signed in"), ...s.errors() } },
+    (c) => {
+      const user = deps.accounts?.session(c.req.raw) ?? null;
+      const session = { accounts: !!store, user: user && { id: user.id, login: user.login, name: user.name, role: user.role, status: user.status } };
+      if (!store) return json(session);
+      // The sign-in page says what GitHub will be asked for before the person goes there.
+      const needs = store.accessNeeds();
+      return json({ ...session, asks: { orgs: needs.orgs.length > 0, emails: needs.emails } });
+    },
+  );
+  publicRoute(
+    { method: "delete", path: "/api/session", tags: ["Accounts"], summary: "Sign out", security: [], responses: { 200: s.json(s.Ok, "Sign out"), ...s.errors(409, 415) } },
+    (c) => {
+      if (!deps.accounts) return json({ ok: true });
+      const expired = deps.accounts.signOut(c.req.raw);
+      return Response.json({ ok: true }, { headers: { "set-cookie": expired, "cache-control": "no-store" } });
+    },
+  );
+  accountAdmin(
+    { method: "get", path: "/api/users", tags: ["Accounts"], summary: "List accounts", description: "Administrators only. Accounts waiting for approval come first. 404 when GitHub sign-in is off.", responses: { 200: s.json(z.object({ users: z.array(s.User) }), "List accounts"), ...s.errors(404) } },
+    (c) => json({ users: requireStore().listUsers().map((u) => userView(u, actorOf(c))) }),
+  );
+  accountAdmin(
+    { method: "patch", path: "/api/users/{id}", tags: ["Accounts"], summary: "Approve, disable or change the role of an account", description: "Administrators only. `status: active` approves a pending account or re-enables a disabled one; `disabled` also ends the person's sessions and MCP keys. Your own account and accounts named in DOCIFY_ADMINS are refused with 409.", request: { params: s.AccountId, body: s.jsonBody(s.UpdateUser) }, responses: { 200: s.json(s.User, "Approve, disable or change the role of an account"), ...s.errors(404, 400, 409, 415) } },
+    (c) => {
+      const accountStore = requireStore();
+      const b = valid(c, "json", s.UpdateUser);
+      const actor = actorOf(c);
+      const user = accountStore.updateUser(accountId(c, "user_unknown", "unknown user"), { role: b.role, status: b.status }, actor?.id ?? null);
+      docify.logs.append("accounts", `${actor?.login ?? "?"} set ${user.login} to ${user.role}, ${user.status}`);
+      return json(userView(user, actor));
+    },
+  );
+  accountAdmin(
+    { method: "delete", path: "/api/users/{id}", tags: ["Accounts"], summary: "Remove an account", description: "Administrators only. If the person signs in again, the access list decides whether they get in, wait or are refused.", request: { params: s.AccountId }, responses: { 200: s.json(s.Ok, "Remove an account"), ...s.errors(404, 409, 415) } },
+    (c) => {
+      const accountStore = requireStore();
+      const actor = actorOf(c);
+      const user = accountStore.removeUser(accountId(c, "user_unknown", "unknown user"), actor?.id ?? null);
+      docify.logs.append("accounts", `${actor?.login ?? "?"} removed ${user.login}`);
+      return json({ ok: true });
+    },
+  );
+  accountAdmin(
+    { method: "get", path: "/api/access", tags: ["Accounts"], summary: "Read the access list", description: "Administrators only. `rules` are the entries; `outsiders` says what happens to a person who matches none: `pending` (waits for approval) or `refuse` (gets no account). 404 when GitHub sign-in is off.", responses: { 200: s.json(s.Outsiders.extend({ rules: z.array(s.AccessRule), maxOrgs: z.number(), maxRules: z.number() }), "Read the access list"), ...s.errors(404) } },
+    (c) => {
+      const accountStore = requireStore();
+      return json({ outsiders: accountStore.outsiders, rules: accountStore.listRules().map(ruleView), maxOrgs: MAX_ORG_RULES, maxRules: MAX_ACCESS_RULES });
+    },
+  );
+  accountAdmin(
+    { method: "put", path: "/api/access", tags: ["Accounts"], summary: "Set the policy for outsiders", description: "Administrators only. Accounts that already exist are not changed.", request: { body: s.jsonBody(s.Outsiders) }, responses: { 200: s.json(s.Outsiders, "Set the policy for outsiders"), ...s.errors(404, 400, 409, 415) } },
+    (c) => {
+      const accountStore = requireStore();
+      const outsiders = accountStore.setOutsiders(valid(c, "json", s.Outsiders).outsiders);
+      docify.logs.append("accounts", `${actorOf(c)?.login ?? "?"} set people outside the access list to ${outsiders === "refuse" ? "be refused" : "wait for approval"}`);
+      return json({ outsiders });
+    },
+  );
+  accountAdmin(
+    { method: "post", path: "/api/access/rules", tags: ["Accounts"], summary: "Add an access rule", description: "Administrators only. A person who matches gets in as a member at their next sign-in. An organization or email entry makes sign-in ask GitHub for the `read:org` or `user:email` scope. A refused value is reported with `field: value`.", request: { body: s.jsonBody(s.NewRule) }, responses: { 201: s.json(s.AccessRule, "Add an access rule"), ...s.errors(404, 400, 409, 415) } },
+    (c) => {
+      const accountStore = requireStore();
+      const b = valid(c, "json", s.NewRule);
+      const actor = actorOf(c);
+      const rule = accountStore.addRule(b.kind, b.value, actor?.login ?? null);
+      docify.logs.append("accounts", `${actor?.login ?? "?"} added ${rule.kind} ${rule.value} to the access list`);
+      return json(ruleView(rule), 201);
+    },
+  );
+  accountAdmin(
+    { method: "delete", path: "/api/access/rules/{id}", tags: ["Accounts"], summary: "Remove an access rule", description: "Administrators only. The people it let in are signed out, lose their MCP keys and wait for approval; `suspended` lists their logins. Accounts approved by hand stay. An entry that lets the caller in is refused with 409.", request: { params: s.AccountId }, responses: { 200: s.json(s.Ok.extend({ suspended: z.array(z.string()) }), "Remove an access rule"), ...s.errors(404, 409, 415) } },
+    (c) => {
+      const accountStore = requireStore();
+      const actor = actorOf(c);
+      const { rule, suspended } = accountStore.removeRule(accountId(c, "rule_unknown", "unknown access rule"), actor?.id ?? null);
+      docify.logs.append("accounts", `${actor?.login ?? "?"} removed ${rule.kind} ${rule.value} from the access list${suspended.length ? `; waiting again: ${suspended.join(", ")}` : ""}`);
+      return json({ ok: true, suspended });
+    },
+  );
+  accountMember(
+    { method: "get", path: "/api/me/keys", tags: ["Accounts"], summary: "List your MCP keys", description: "Any approved account. Only the caller's own keys; the key itself is never returned here. 404 when GitHub sign-in is off.", responses: { 200: s.json(z.object({ keys: z.array(s.Key), max: z.number() }), "List your MCP keys"), ...s.errors(404) } },
+    (c) => {
+      const { accountStore, user } = me(c);
+      return json({ keys: accountStore.listKeys(user.id).map(keyView), max: MAX_KEYS_PER_USER });
+    },
+  );
+  accountMember(
+    { method: "post", path: "/api/me/keys", tags: ["Accounts"], summary: "Create an MCP key (token shown once)", description: "Any approved account. `token` is the key for `/mcp` (`Authorization: Bearer <token>`); this is the only response that carries it, the server keeps its SHA-256 hash. Names are unique per person, at most ten keys.", request: { body: s.jsonBody(s.KeyName) }, responses: { 201: s.json(z.object({ key: s.Key, token: z.string() }), "Create an MCP key (token shown once)"), ...s.errors(404, 400, 409, 415) } },
+    (c) => {
+      const { accountStore, user } = me(c);
+      const { key, token } = accountStore.createKey(user.id, valid(c, "json", s.KeyName).name);
+      docify.logs.append("accounts", `${user.login} created the MCP key "${key.name}"`);
+      // The only answer that ever carries the key.
+      return json({ key: keyView(key), token }, 201);
+    },
+  );
+  accountMember(
+    { method: "delete", path: "/api/me/keys/{id}", tags: ["Accounts"], summary: "Revoke your MCP key", description: "The key stops working at once. Another person's key answers 404.", request: { params: s.AccountId }, responses: { 200: s.json(s.Ok, "Revoke your MCP key"), ...s.errors(404, 409, 415) } },
+    (c) => {
+      const { accountStore, user } = me(c);
+      const key = accountStore.revokeKey(user.id, accountId(c, "key_unknown", "unknown key"));
+      docify.logs.append("accounts", `${user.login} revoked the MCP key "${key.name}"`);
+      return json({ ok: true });
+    },
+  );
+  accountMember(
+    { method: "get", path: "/api/me/queries", tags: ["Accounts"], summary: "Read your recent searches", description: "Any approved account. The caller's own searches from the page and through their keys, newest first: the query and its outcome, not the passages. The newest `kept` are stored.", request: { query: s.HistoryQuery }, responses: { 200: s.json(z.object({ queries: z.array(s.HistoryEntry), kept: z.number() }), "Read your recent searches"), ...s.errors(404, 400) } },
+    (c) => {
+      const { accountStore, user } = me(c);
+      const queries = accountStore.listQueries(user.id, valid(c, "query", s.HistoryQuery).limit);
+      return json({
+        queries: queries.map((q) => ({ id: q.id, at: q.at, via: q.via, keyName: q.key_name, query: q.query, scope: q.scope, status: q.status, hits: q.hits })),
+        kept: MAX_QUERIES_PER_USER,
+      });
+    },
+  );
+  accountMember(
+    { method: "delete", path: "/api/me/queries", tags: ["Accounts"], summary: "Clear your search history", responses: { 200: s.json(s.Ok.extend({ removed: z.number() }), "Clear your search history"), ...s.errors(404, 409, 415) } },
+    (c) => {
+      const { accountStore, user } = me(c);
+      return json({ ok: true, removed: accountStore.clearQueries(user.id) });
+    },
+  );
 
   // ---- Server ----
   add(
@@ -154,9 +345,9 @@ export function createApi(deps: ApiDeps) {
       return json(describeConfig(docify.config));
     },
   );
-  add(
+  member(
     { method: "get", path: "/api/pins", tags: ["Settings"], summary: "Read project pins", description: "The nearest `.docify.json` above the directory `docify serve` started in.", responses: { 200: s.json(s.Pins, "Pins"), ...s.errors(400) } },
-    () => json(pinsView()),
+    (c) => json(isMember(c) ? { ...pinsView(), project: null, file: null } : pinsView()),
   );
   add(
     { method: "put", path: "/api/pins", tags: ["Settings"], summary: "Set or remove a version pin", request: { body: s.jsonBody(s.PinBody) }, responses: { 200: s.json(s.Pins, "Pins after the change"), ...s.errors(400, 415) } },
@@ -168,11 +359,11 @@ export function createApi(deps: ApiDeps) {
   );
 
   // ---- Sources ----
-  add(
+  member(
     { method: "get", path: "/api/groups", tags: ["Sources"], summary: "List source groups", description: "Pass a group name in `groups` to search or scope all its sources.", responses: { 200: s.json(s.Groups, "Groups"), ...s.errors() } },
     () => json(docify.listGroups()),
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/sources",
@@ -184,7 +375,9 @@ export function createApi(deps: ApiDeps) {
     },
     (c) => {
       const { query } = valid(c, "query", s.SourcesQuery);
-      return json(query === undefined ? sources(docify) : discoverSources(docify, query));
+      if (query !== undefined) return json(discoverSources(docify, query, isMember(c) ? memberView : undefined));
+      const list = sources(docify);
+      return json(isMember(c) ? memberView(list) : list);
     },
   );
   add(
@@ -216,12 +409,13 @@ export function createApi(deps: ApiDeps) {
       return json(docify.addSource({ library: b.library, version, kind: "url", locator: b.locator, crawlProvider: b.crawlProvider, crawl: b.crawl as never, ignore: b.ignore, graphIgnore: b.graphIgnore, ...labels }), 201);
     },
   );
-  add(
+  member(
     { method: "get", path: "/api/sources/{id}", tags: ["Sources"], summary: "Read one source", request: { params: s.SourceIdParam }, responses: { 200: s.json(s.SourceInfo, "The source"), ...s.errors(404) } },
     (c) => {
       const id = sourceId(c);
       docify.requireSource(id);
-      return json(sources(docify).find((source) => source.id === id));
+      const source = sources(docify).find((source) => source.id === id)!;
+      return json(isMember(c) ? memberView([source])[0] : source);
     },
   );
   add(
@@ -304,7 +498,7 @@ export function createApi(deps: ApiDeps) {
       );
     },
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/sources/{id}/documents",
@@ -327,11 +521,11 @@ export function createApi(deps: ApiDeps) {
       );
     },
   );
-  add(
+  member(
     { method: "get", path: "/api/sources/{id}/graph", tags: ["Sources"], summary: "Read the knowledge graph", request: { params: s.SourceIdParam }, responses: { 200: s.json(s.GraphView, "Graph of the active generation"), ...s.errors(404) } },
     (c) => json(graphView(docify, sourceId(c))),
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/sources/{id}/artifacts/{kind}",
@@ -446,7 +640,7 @@ export function createApi(deps: ApiDeps) {
   );
 
   // ---- Query ----
-  add(
+  member(
     {
       method: "post",
       path: "/api/search",
@@ -468,10 +662,21 @@ export function createApi(deps: ApiDeps) {
         graphWeight: b.graphWeight ?? undefined,
         project,
       };
-      return json(b.queries ? await searchMany(docify, { ...common, queries: b.queries }) : await search(docify, { ...common, query: b.query! }));
+      const actor = deps.accounts?.actor(c.req.raw);
+      const note = (q: { query: string; status: string; hits: unknown[] }) => {
+        if (actor) deps.accounts!.remember(actor, { via: "web", query: q.query, status: q.status, hits: q.hits.length, scope: scopeText(common) });
+      };
+      if (b.queries) {
+        const result = await searchMany(docify, { ...common, queries: b.queries });
+        result.queries.forEach(note);
+        return json(result);
+      }
+      const result = await search(docify, { ...common, query: b.query! });
+      note(result);
+      return json(result);
     },
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/scope",
@@ -485,10 +690,11 @@ export function createApi(deps: ApiDeps) {
       const q = valid(c, "query", s.ScopeQuery);
       const list = q.source === undefined ? undefined : Array.isArray(q.source) ? q.source : [q.source];
       const groups = q.group === undefined ? undefined : Array.isArray(q.group) ? q.group : [q.group];
-      return json(scope(docify, { library: str(q.library), version: str(q.version), sources: list, groups, project }));
+      const result = scope(docify, { library: str(q.library), version: str(q.version), sources: list, groups, project });
+      return json(isMember(c) ? memberScope(result) : result);
     },
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/sources/{id}/outline",
@@ -503,7 +709,7 @@ export function createApi(deps: ApiDeps) {
       return json(outline(docify, { source: sourceId(c), path: q.path, maxTokens: q.maxTokens }));
     },
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/sources/{id}/open",
@@ -518,7 +724,7 @@ export function createApi(deps: ApiDeps) {
       return json(open(docify, { source: sourceId(c), path: q.path, heading: q.heading, maxTokens: q.maxTokens }));
     },
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/read/{id}",
@@ -530,7 +736,7 @@ export function createApi(deps: ApiDeps) {
     },
     (c) => json(read(docify, valid(c, "param", s.PassageIdParam).id, valid(c, "query", s.ReadQuery).maxTokens)),
   );
-  add(
+  member(
     {
       method: "get",
       path: "/api/raw/{id}",
@@ -617,16 +823,17 @@ export function openApiSpec(): { openapi: string; paths: Record<string, Record<s
       title: "Docify web API",
       version: VERSION,
       description:
-        "Controls Docify and reads everything it stores: sources, preparation, generations, search, settings, logs and backups. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes. Errors are `{ error, code, field? }`.",
+        "Controls Docify and reads everything it stores: sources, preparation, generations, search, settings, logs and backups. When `DOCIFY_WEB_TOKEN` is set, every call needs it, sent as `X-Docify-Token`; without it the API needs no token unless GitHub accounts are enabled. With accounts, use the session cookie (named `__Host-docify_session` over HTTPS). Members may search, read and manage their own keys and history; management routes require an administrator. Requests other than GET must send JSON, except `/api/import`, which takes the backup as raw bytes. Errors are `{ error, code, field? }`.",
     },
     servers: [{ url: "/" }],
-    security: [{ docifyToken: [] }],
+    security: [{ docifyToken: [] }, { docifySession: [] }],
     tags: [
       { name: "Sources", description: "Register, configure, inspect and remove sources" },
       { name: "Operations", description: "Prepare, cancel, summarize and compress" },
       { name: "Query", description: "Search and read prepared documentation; never writes" },
       { name: "Settings", description: "config.json and project pins" },
       { name: "Backup", description: "Export and import the whole store" },
+      { name: "Accounts", description: "Sessions, personal keys, search history and access administration" },
       { name: "Server", description: "Status and logs" },
     ],
   });

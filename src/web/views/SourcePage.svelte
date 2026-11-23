@@ -11,6 +11,7 @@
   import { api, ApiError, downloadArtifact, errorText, type SourceInfo } from "../lib/api.ts";
   import { ago, fraction, graphCoverage } from "../lib/format.ts";
   import { nav } from "../lib/nav.svelte.ts";
+  import { session } from "../lib/session.svelte.ts";
   import { sources } from "../lib/sources.svelte.ts";
   import { button, capsule, capsuleButton, cn, footnote, input, isPatternField, notice, patternError, patternLines, popup, sourceStateLabel, sourceTone, textArea, type PatternField } from "../lib/ui.ts";
 
@@ -306,20 +307,21 @@
         {#if sources.list === null}
           Loading sources…
         {:else if nav.sourceId && sources.list.length}
-          This source is no longer in the store. Pick another one in the sidebar, or add a new one.
+          This source is no longer in the store. Pick another one in the sidebar{session.admin ? ", or add a new one" : ""}.
         {:else if sources.list.length}
-          Pick a source in the sidebar to see its index, crawler settings and actions.
+          Pick a source in the sidebar to see its index{session.admin ? ", crawler settings and actions" : ""}.
         {:else}
-          No sources yet. Add a website or a local folder, and Docify keeps a copy of its documentation for agents.
+          {session.admin ? "No sources yet. Add a website or a local folder, and Docify keeps a copy of its documentation for agents." : "No sources yet. An administrator adds them."}
         {/if}
       </p>
-      <button type="button" class={button({ intent: "primary", size: "md", class: "mt-4" })} onclick={() => (nav.addingSource = true)}>Add Source</button>
+      {#if session.admin}<button type="button" class={button({ intent: "primary", size: "md", class: "mt-4" })} onclick={() => (nav.addingSource = true)}>Add Source</button>{/if}
     </div>
   </div>
 {:else}
   <Toolbar>
     <span class="flex-1"></span>
-    <span class={capsule({ class: "relative" })} bind:this={menuRoot}>
+    <!-- Members read a source; preparing, crawler settings and removal are for administrators. -->
+    <span class={capsule({ class: cn("relative", !session.admin && "hidden") })} bind:this={menuRoot}>
       {#if preparing}
         <button type="button" class={capsuleButton()} disabled={busy} onclick={cancel}><X size={14} />Cancel</button>
       {:else}
@@ -390,7 +392,7 @@
       </div>
 
       <Group title="Name and groups" hint="The name is a label; agents and citations keep using the id. A group lets agents search all its sources at once by passing its name.">
-        {#if editingLabels}
+        {#if session.admin && editingLabels}
           <form onsubmit={saveLabels}>
             <Row class="flex-col items-stretch gap-1.5">
               <label for="source-title" class="text-[13px] text-label">Name</label>
@@ -419,19 +421,21 @@
           <Row label="Id"><span class="font-mono text-[13px] text-label2 break-all">{s.id}</span></Row>
           <Row label="Name"><span class="text-[13px] text-label2">{s.title ?? "Not set"}</span></Row>
           <Row label="Groups"><span class="font-mono text-[13px] text-label2">{s.groups.length ? s.groups.join(", ") : "None"}</span></Row>
-          <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy} onclick={editLabels}>Edit</button></Row>
+          {#if session.admin}
+            <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy} onclick={editLabels}>Edit</button></Row>
+          {/if}
         {/if}
       </Group>
 
-      <Group title="Collection summary" hint="A generated discovery hint, not cited evidence. Generation sends a documentation sample to the configured OpenAI-compatible graph provider.">
+      <Group title="Collection summary" hint={session.admin ? "A generated discovery hint, not cited evidence. Generation sends a documentation sample to the configured OpenAI-compatible graph provider." : "A generated discovery hint, not cited evidence."}>
         <div class="px-3.5 py-3">
           {#if s.summary}
             <p class="text-[13px] leading-5 break-words whitespace-pre-wrap">{s.summary.text}</p>
             <p class="mt-2 text-[12px] text-label2" title={s.summary.generatedAt}>Generated {ago(s.summary.generatedAt)} · {s.summary.model} · generation #{s.summary.generation}</p>
           {:else}
-            <p class="text-[13px] leading-5 text-label2">{g ? "No summary for this generation. Generate one to help agents discover what this collection covers." : "Prepare this source before generating a summary."}</p>
+            <p class="text-[13px] leading-5 text-label2">{!session.admin ? "No summary for this generation." : g ? "No summary for this generation. Generate one to help agents discover what this collection covers." : "Prepare this source before generating a summary."}</p>
           {/if}
-          <div class="mt-3 flex flex-wrap items-center gap-3">
+          <div class={cn("mt-3 flex flex-wrap items-center gap-3", !session.admin && "hidden")}>
             <button type="button" class={button({ size: "xs" })} disabled={busy || preparing || !g} onclick={generateSummary}>{s.summary ? "Regenerate Summary" : "Generate Summary"}</button>
             {#if summarizing}
               <button type="button" class={button({ size: "xs" })} disabled={actionBusy} onclick={cancel}>Cancel</button>
@@ -544,40 +548,43 @@
         </Group>
       {/if}
 
-      <Group title="Ignored paths" hint="Regular expressions matched against the document path, such as ^changelog/. Changes apply on the next update.">
-        {#if editingIgnore}
-          <form onsubmit={saveIgnore}>
-            <Row class="flex-col items-stretch gap-1.5">
-              <label for="source-ignore" class="text-[13px] text-label">Do not collect</label>
-              <textarea id="source-ignore" class={textArea({ invalid: ignoreError?.field === "ignore" })} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={ignoreError?.field === "ignore"} aria-describedby="source-ignore-note" bind:value={ignoreText} oninput={() => ignoreError?.field === "ignore" && (ignoreError = null)} disabled={busy || preparing}></textarea>
-              {#if ignoreError?.field === "ignore"}
-                <span id="source-ignore-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{ignoreError.message}</span>
-              {:else}
-                <span id="source-ignore-note" class={footnote}>Matching {s.kind === "url" ? "pages are not fetched" : "files are not read"} and cannot be searched.</span>
-              {/if}
-            </Row>
-            <Row class="flex-col items-stretch gap-1.5">
-              <label for="source-graph-ignore" class="text-[13px] text-label">Leave out of the graph</label>
-              <textarea id="source-graph-ignore" class={textArea({ invalid: ignoreError?.field === "graphIgnore" })} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={ignoreError?.field === "graphIgnore"} aria-describedby="source-graph-ignore-note" bind:value={graphIgnoreText} oninput={() => ignoreError?.field === "graphIgnore" && (ignoreError = null)} disabled={busy || preparing}></textarea>
-              {#if ignoreError?.field === "graphIgnore"}
-                <span id="source-graph-ignore-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{ignoreError.message}</span>
-              {:else}
-                <span id="source-graph-ignore-note" class={footnote}>Matching documents stay searchable but get no graph nodes.</span>
-              {/if}
-            </Row>
-            <Row class="justify-end">
-              <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingIgnore = false)}>Cancel</button>
-              <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy || preparing}>Save</button>
-            </Row>
-          </form>
-        {:else}
-          {@render patterns("Do not collect", s.ignore)}
-          {@render patterns("Leave out of the graph", s.graphIgnore)}
-          <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy || preparing} onclick={editIgnore}>Edit patterns</button></Row>
-        {/if}
-      </Group>
+      {#if session.admin}
+        <Group title="Ignored paths" hint="Regular expressions matched against the document path, such as ^changelog/. Changes apply on the next update.">
+          {#if editingIgnore}
+            <form onsubmit={saveIgnore}>
+              <Row class="flex-col items-stretch gap-1.5">
+                <label for="source-ignore" class="text-[13px] text-label">Do not collect</label>
+                <textarea id="source-ignore" class={textArea({ invalid: ignoreError?.field === "ignore" })} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={ignoreError?.field === "ignore"} aria-describedby="source-ignore-note" bind:value={ignoreText} oninput={() => ignoreError?.field === "ignore" && (ignoreError = null)} disabled={busy || preparing}></textarea>
+                {#if ignoreError?.field === "ignore"}
+                  <span id="source-ignore-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{ignoreError.message}</span>
+                {:else}
+                  <span id="source-ignore-note" class={footnote}>Matching {s.kind === "url" ? "pages are not fetched" : "files are not read"} and cannot be searched.</span>
+                {/if}
+              </Row>
+              <Row class="flex-col items-stretch gap-1.5">
+                <label for="source-graph-ignore" class="text-[13px] text-label">Leave out of the graph</label>
+                <textarea id="source-graph-ignore" class={textArea({ invalid: ignoreError?.field === "graphIgnore" })} rows="3" spellcheck="false" autocomplete="off" placeholder="One pattern per line" aria-invalid={ignoreError?.field === "graphIgnore"} aria-describedby="source-graph-ignore-note" bind:value={graphIgnoreText} oninput={() => ignoreError?.field === "graphIgnore" && (ignoreError = null)} disabled={busy || preparing}></textarea>
+                {#if ignoreError?.field === "graphIgnore"}
+                  <span id="source-graph-ignore-note" class={cn(footnote, "font-medium break-words text-bad-text")} role="alert">{ignoreError.message}</span>
+                {:else}
+                  <span id="source-graph-ignore-note" class={footnote}>Matching documents stay searchable but get no graph nodes.</span>
+                {/if}
+              </Row>
+              <Row class="justify-end">
+                <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => (editingIgnore = false)}>Cancel</button>
+                <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy || preparing}>Save</button>
+              </Row>
+            </form>
+          {:else}
+            {@render patterns("Do not collect", s.ignore)}
+            {@render patterns("Leave out of the graph", s.graphIgnore)}
+            <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy || preparing} onclick={editIgnore}>Edit patterns</button></Row>
+          {/if}
+        </Group>
 
-      {#if s.kind === "url"}
+      {/if}
+
+      {#if s.kind === "url" && session.admin}
         <Group title="Crawl limits" hint="Leave a field blank to use the global setting. Changes apply on the next update.">
           {#if editingLimits}
             <form onsubmit={saveLimits}>
@@ -668,6 +675,7 @@
         </Group>
       {/if}
 
+      {#if session.admin}
       <Group
         class="mt-7"
         hint={preparing
@@ -681,6 +689,7 @@
           onclick={() => (confirmRemove = true)}>Remove Source…</button
         >
       </Group>
+      {/if}
     </div>
   </div>
 

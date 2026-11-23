@@ -29,7 +29,8 @@ export function parseBearerClients(value: string | undefined): BearerClient[] {
 const digest = (s: string) => createHash("sha256").update(s).digest();
 
 // Compares fixed-size digests against every client, so timing reveals neither length nor which client matched.
-export function bearerAuth(clients: BearerClient[]): Guard {
+// `other` is asked about a token no client has, and names the client it belongs to (or null).
+export function bearerAuth(clients: BearerClient[], other?: (token: string, req: Request) => string | null): Guard {
   const known = clients.map((c) => ({ name: c.name, digest: digest(c.token) }));
   const unauthorized = () => jsonError(401, "unauthorized", "missing or wrong bearer token", { "www-authenticate": 'Bearer realm="docify"' });
   return (req, ctx) => {
@@ -38,6 +39,7 @@ export function bearerAuth(clients: BearerClient[]): Guard {
     const given = digest(match[1]!);
     let client: string | undefined;
     for (const k of known) if (timingSafeEqual(given, k.digest)) client = k.name;
+    client ??= other?.(match[1]!, req) ?? undefined;
     if (!client) return unauthorized();
     ctx.client = client;
     return null;

@@ -67,7 +67,7 @@ test("the DSH adapter depends on the published runtime directly, with no vendore
   const source = readFileSync(join(pluginRoot, "dsh", "index.js"), "utf8");
   expect(source).toContain(`import { createPlugin, rootFrom } from '${RUNTIME}'`);
   expect(source).toContain("root: rootFrom(import.meta.url)");
-  const lock = Bun.JSONC.parse(readFileSync(join(pluginRoot, "dsh", "bun.lock"), "utf8"));
+  const lock = Bun.JSONC.parse(readFileSync(join(pluginRoot, "dsh", "bun.lock"), "utf8")) as { packages: Record<typeof RUNTIME, unknown[]> };
   expect(lock.packages[RUNTIME][0]).toBe(`${RUNTIME}@${RUNTIME_VERSION}`);
   expect(lock.packages[RUNTIME][3]).toMatch(/^sha512-\S+$/);
 });

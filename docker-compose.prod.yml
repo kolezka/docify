@@ -40,6 +40,14 @@ services:
       DOCIFY_SOURCE_ROOTS: ${DOCIFY_SOURCE_ROOTS:-/sources}
       # Optional; empty means no token. The server refuses tokens shorter than 16 characters.
       DOCIFY_WEB_TOKEN: ${DOCIFY_WEB_TOKEN:-}
+      # User accounts with GitHub sign-in, instead of the token. Client id and secret of a GitHub
+      # OAuth app, the administrators' GitHub logins, and the public https address (required with
+      # accounts: the server will not start without it here). Empty id and secret keep accounts off.
+      DOCIFY_ACCOUNTS_ENABLED: "${DOCIFY_ACCOUNTS_ENABLED:-}"
+      DOCIFY_GITHUB_CLIENT_ID: ${DOCIFY_GITHUB_CLIENT_ID:-}
+      DOCIFY_GITHUB_CLIENT_SECRET: ${DOCIFY_GITHUB_CLIENT_SECRET:-}
+      DOCIFY_ADMINS: ${DOCIFY_ADMINS:-}
+      DOCIFY_PUBLIC_URL: ${DOCIFY_PUBLIC_URL:-}
       # Public hostnames, comma separated. Empty accepts any Host and logs a warning.
       DOCIFY_ALLOWED_HOSTS: ${DOCIFY_ALLOWED_HOSTS:-}
       # MCP over HTTP at /mcp: name:token pairs, comma separated. Empty keeps /mcp off.
