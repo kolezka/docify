@@ -185,7 +185,11 @@ describe("failed updates", () => {
       const info = sources(d).find((s) => s.id === "lib@2.0")!;
       expect(info.state).toBe("stale");
       expect(info.latest?.error).toContain(`boom at ${phase}`);
-      expect(d.db.query("SELECT count(*) AS n FROM passages WHERE generation_id = ?").get(info.latest!.id)).toEqual({ n: 0 });
+      // From the graph phase on, the index is kept (unserved) for a graph-only retry; before it, nothing is.
+      const kept = phase === "embed" ? 0 : 1;
+      expect(d.db.query("SELECT count(*) AS n FROM passages WHERE generation_id = ?").get(info.latest!.id)).toEqual({ n: kept });
+      expect(info.graphRetry?.generation ?? null).toBe(kept ? info.latest!.id : null);
+      expect(d.db.query("SELECT count(*) AS n FROM graph_nodes WHERE generation_id = ?").get(info.latest!.id)).toEqual({ n: 0 });
     });
   }
 

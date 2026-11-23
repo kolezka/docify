@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { join, resolve } from "node:path";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { Docify, DocifyError, type CrawlProvider } from "./core/docify.ts";
+import { Docify, DocifyError, sourceLabels, validateGroups, type CrawlProvider } from "./core/docify.ts";
 import { summarizeSource } from "./core/summary.ts";
 import { discoverSources, open, outline, read, renderSources, scope, search, searchMany, sources, type Mode } from "./core/search.ts";
 import { embedTexts, loadEmbedder } from "./core/embed.ts";
@@ -15,7 +15,7 @@ const USAGE = `docify <command> [options]
 Preparation (may use the network or the configured graph provider):
   setup                         install the pinned Graphify runtime and download the embedding model
   add <library> <path|url> [--version V] [--id ID] [--crawler builtin|crawl4ai|browserless]
-                                [--ignore REGEX ...] [--graph-ignore REGEX ...]
+                                [--ignore REGEX ...] [--graph-ignore REGEX ...] [--title T] [--group G ...]
   crawler <source-id> <builtin|crawl4ai|browserless|default>
   ignore <source-id> [--ignore REGEX ...] [--graph-ignore REGEX ...] [--no-ignore] [--no-graph-ignore]
                                 paths left out of a source, as regular expressions over the
@@ -23,17 +23,26 @@ Preparation (may use the network or the configured graph provider):
                                 searchable, but not in the graph. Each option replaces its list,
                                 --no-... removes it; without options the current lists are shown.
                                 Applies at the next prepare.
+  title <source-id> [title] [--clear]
+                                show or set the display name of a source; the id does not change
+  group <name> [add|remove <source-id> ...]
+                                show a group, or add sources to it or remove them; a group
+                                exists while it has sources
+  groups [--json]               list source groups and their sources
   summarize <source-id> [--force] generate and save a collection summary using the configured OpenAI graph provider
   prepare <source-id> [--no-graph] [--force] [--summary]
+  prepare <source-id> --graph-only [--force]
+                                retry only the graph after a prepare failed in the graph phase,
+                                from that attempt's saved snapshot, passages and vectors (no collecting)
   remove <source-id>
 
 Queries (local and offline only):
   sources [topic] [--json]       discover collections using saved summaries, or list all sources
-  search <query> [--library L] [--version V] [--source ID] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
+  search <query> [--library L] [--version V] [--source ID] [--group G] [--mode combined|lexical|vector|graph] [--max-tokens N] [--graph-weight W] [--json]
   search --query Q [--query Q ...] [same options]
                                 up to 8 queries in one call, sharing --max-tokens
                                 (default 1400 per query)
-  scope [--library L] [--version V] [--source ID] [--json]
+  scope [--library L] [--version V] [--source ID] [--group G] [--json]
                                 show what search would search with these filters
   read <passage-id> [--max-tokens N] [--json]
   outline <source-id> [--path PREFIX] [--max-tokens N] [--json]
@@ -57,7 +66,8 @@ Servers:
                                 and DOCIFY_SOURCE_ROOTS are read from the environment;
                                 DOCIFY_MCP_TOKENS also serves MCP over HTTP at /mcp;
                                 DOCIFY_GITHUB_CLIENT_ID, DOCIFY_GITHUB_CLIENT_SECRET and
-                                DOCIFY_ADMINS turn on GitHub sign-in with user accounts
+                                DOCIFY_ADMINS configure GitHub sign-in; DOCIFY_ACCOUNTS_ENABLED
+                                can require (true) or disable (false) accounts
   mcp [--require X.Y.Z]         MCP server on stdio; refuses to start when docify is older than X.Y.Z
 
   --version                     print the docify version
@@ -78,12 +88,16 @@ async function main(argv: string[]) {
       id: { type: "string" },
       library: { type: "string" },
       source: { type: "string", multiple: true },
+      group: { type: "string", multiple: true },
+      title: { type: "string" },
+      clear: { type: "boolean" },
       query: { type: "string", multiple: true },
       mode: { type: "string" },
       "max-tokens": { type: "string" },
       path: { type: "string" },
       json: { type: "boolean" },
       "no-graph": { type: "boolean" },
+      "graph-only": { type: "boolean" },
       summary: { type: "boolean" },
       force: { type: "boolean" },
       "keep-config": { type: "boolean" },
@@ -131,7 +145,7 @@ async function main(argv: string[]) {
         const [library, locator] = positionals;
         if (!library || !locator) throw new DocifyError("invalid_input", "usage: docify add <library> <path|url> [--version V]");
         const kind = /^https?:\/\//.test(locator) ? "url" : "local";
-        const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id, crawlProvider: values.crawler as CrawlProvider | undefined, ignore: values.ignore, graphIgnore: values["graph-ignore"] });
+        const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id, crawlProvider: values.crawler as CrawlProvider | undefined, ignore: values.ignore, graphIgnore: values["graph-ignore"], title: values.title, groups: values.group });
         console.log(`added ${s.id} (${s.kind} ${s.locator}). Run: docify prepare ${s.id}`);
         break;
       }
@@ -147,6 +161,33 @@ async function main(argv: string[]) {
         const list = (patterns: string[] | undefined) => (patterns?.length ? patterns.map((p) => `\n    ${p}`).join("") : " none");
         console.log(`${id}\n  ignored paths:${list(options.ignore)}\n  left out of the graph:${list(options.graphIgnore)}`);
         if (changed) console.log(`Run: docify prepare ${id}`);
+        break;
+      }
+      case "title": {
+        const [id, ...words] = positionals;
+        if (!id) throw new DocifyError("invalid_input", "usage: docify title <source-id> [title] [--clear]");
+        if (values.clear && words.length) throw new DocifyError("invalid_input", "give a title or --clear, not both");
+        const source = values.clear || words.length ? docify.updateSourceLabels(id, { title: values.clear ? null : words.join(" ") }) : docify.requireSource(id);
+        const { title } = sourceLabels(source);
+        console.log(title ? `${id}: ${title}` : `${id}: no title`);
+        break;
+      }
+      case "group": {
+        const [name, action, ...ids] = positionals;
+        if (!name || (action && action !== "add" && action !== "remove") || (action && !ids.length)) {
+          throw new DocifyError("invalid_input", "usage: docify group <name> [add|remove <source-id> ...]");
+        }
+        const [group] = validateGroups([name]);
+        // Check every id first, so a typo does not leave half the list applied.
+        for (const id of ids) docify.requireSource(id);
+        for (const id of ids) docify.setSourceGroup(id, group!, action === "add");
+        const members = docify.listGroups().find((g) => g.name === group)?.sources ?? [];
+        console.log(members.length ? `${group}: ${members.join(", ")}` : `${group}: no sources`);
+        break;
+      }
+      case "groups": {
+        const list = docify.listGroups();
+        console.log(values.json ? JSON.stringify(list, null, 2) : list.length ? list.map((g) => `${g.name}: ${g.sources.join(", ")}`).join("\n") : "No source groups. Create one with docify group <name> add <source-id> ...");
         break;
       }
       case "crawler": {
@@ -166,7 +207,8 @@ async function main(argv: string[]) {
           if (g?.status === "staging") console.error(`  ${g.phase} ${g.progress ?? ""}`);
         }, 2000);
         try {
-          const r = await docify.prepare(id, { graph: !values["no-graph"], force: values.force, signal: controller.signal });
+          if (values["graph-only"] && values["no-graph"]) throw new DocifyError("invalid_input", "use either --graph-only or --no-graph");
+          const r = await docify.prepare(id, { graph: !values["no-graph"], graphOnly: values["graph-only"], force: values.force, signal: controller.signal });
           console.log(`${r.status} ${r.sourceId} generation ${r.generationId}: ${JSON.stringify(r.stats)}`);
           const missing = (r.stats.graphMissing as string[] | undefined) ?? [];
           const warned = ((r.stats.graphWarnings as string[] | undefined) ?? []).length > 0;
@@ -216,6 +258,7 @@ async function main(argv: string[]) {
           library: values.library,
           version: values.version,
           sources: values.source,
+          groups: values.group,
           mode: (values.mode as Mode | undefined) ?? "combined",
           maxTokens: values["max-tokens"] ? Number(values["max-tokens"]) : undefined,
           project: process.env.DOCIFY_PROJECT ?? process.cwd(),
@@ -234,7 +277,7 @@ async function main(argv: string[]) {
         break;
       }
       case "scope": {
-        const r = scope(docify, { library: values.library, version: values.version, sources: values.source, project: process.env.DOCIFY_PROJECT ?? process.cwd() });
+        const r = scope(docify, { library: values.library, version: values.version, sources: values.source, groups: values.group, project: process.env.DOCIFY_PROJECT ?? process.cwd() });
         console.log(values.json ? JSON.stringify(r, null, 2) : r.text);
         if (r.status !== "ok") process.exitCode = 3;
         break;

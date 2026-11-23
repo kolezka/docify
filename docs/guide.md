@@ -147,6 +147,27 @@ Each `--ignore` or `--graph-ignore` option given to `docify ignore` replaces tha
 
 Changes apply on the next prepare and are refused while the source is preparing. A link that redirects to an ignored path is skipped before the target is requested, and a start URL that matches `ignore` fails the prepare. Documents left out by `graphIgnore` do not count as missing from the graph, so they do not make it partial. If every document matches `graphIgnore`, no graph is built.
 
+### Titles and groups
+
+A source can carry a display title and belong to groups. Neither changes its id, so citations, pins, snapshots and backups keep working.
+
+```bash
+docify add bun ~/docs/bun --version 1.4 --title "Bun runtime" --group backend
+docify title bun@1.4 Bun runtime docs   # set the title; --clear removes it
+docify group frontend add react@19 svelte@5
+docify group frontend remove svelte@5
+docify groups                            # every group with its sources
+docify search "useEffect cleanup" --group frontend
+```
+
+A group name is lowercase letters, digits, `.`, `_` and `-` (no `@`, so it cannot look like a source id); names are matched case-insensitively. A source holds at most 20 groups, and a title is at most 120 characters. A group exists while at least one source is in it; removing a source drops its memberships. `docify group` checks every id before changing anything.
+
+In the web UI, once any source has a group, the sidebar lists sources under a collapsible heading per group, with ungrouped sources under Other. A source in two groups appears under both. The browser remembers which groups are collapsed.
+
+Agents pass a group name in `groups` to `docs_search` or `docs_scope`; the group expands to its sources, and `groups` plus `sources` search their union. An unknown name returns `source_unknown` and lists the registered groups. `docs_sources` lists the groups first, then each source with its title and groups. Titles and groups take effect at once, also while a source prepares.
+
+In the web UI, set both in the New Source sheet or under Name and groups on a source page; the search scope menu lists groups above sources. The API takes `title` and `groups` on `POST /api/sources` and `PATCH /api/sources/{id}` (`null` removes them), `groups` on `POST /api/search`, and lists groups at `GET /api/groups`. A rejected value answers 400 with `field` set to `title` or `groups`, and nothing in the request is saved.
+
 ### Choose a crawler
 
 URL sources can use `builtin`, `crawl4ai` or `browserless`. Select one when registering a source, or change it later:
@@ -207,7 +228,17 @@ Graph extraction calls an LLM. The default provider is the LiteLLM proxy named b
 
 When the model leaves some documents out or a request fails, Graphify still returns a graph of the rest. Docify activates it with graph status `partial`, lists the documents without nodes in the generation stats (`graphMissing`) and warns in the `prepare` output. A partial graph is searched like a complete one. The next `prepare` rebuilds the source even if nothing changed, and Graphify sends only the missing documents again, because it caches the complete ones.
 
+The graph is model output, so a record can come back broken: an edge without a source or target, a node without a label, a group member that is not an id. Docify skips those records, imports the rest and counts them in the generation stats (`graphDropped`) and in Logs. They do not make the graph `partial`, because a retry would get the same cached records back.
+
 `graph.timeoutSeconds` (default 900) is an inactivity limit: Graphify is stopped only after that many seconds without any output, so a large source can take longer as long as chunks keep finishing. A stopped run fails the prepare and keeps the previous generation; Graphify has cached the finished chunks, so the next `prepare` continues from there.
+
+When a prepare fails in the graph phase (provider down, timeout, cancel), the documents it collected, its passages and its vectors are kept, unserved. Retry only the graph from them, without crawling or embedding again:
+
+```bash
+docify prepare mylib@unknown --graph-only
+```
+
+In the web UI this is **Retry Graph Only** in the prepare menu; `docify sources --json` shows such an attempt as `graphRetry`. Only the newest failed attempt is kept, and a successful prepare or a change of embedding model discards it; then run a full `prepare`. Failures before the graph phase keep nothing. Backups never include a kept attempt.
 
 Five more `graph` keys tune the model requests. They are also in Settings, under Semantic Graph. Graphify runs with a clean environment, so a `GRAPHIFY_*` variable set in your shell does not reach it; use these keys instead.
 
@@ -234,9 +265,9 @@ docify serve             # one-screen UI; open the printed http://127.0.0.1:4747
 docify mcp               # MCP server on stdio: docs_search, docs_read, docs_outline, docs_open, docs_sources, docs_scope
 ```
 
-`search` also takes `--version`, `--source` (repeatable), `--mode` and `--graph-weight`; `search`, `read`, `outline` and `open` take `--json` for the full result. `outline` (MCP `docs_outline`) lists the documents of a source's active generation with the passage id of each section, for browsing when search finds nothing; `--path` keeps documents under a path prefix and `--max-tokens` caps the output (default 2000). `open` (MCP `docs_open`) returns a whole document, or one section with its subsections when `--heading` is given, from the active generation, cut at a passage boundary to fit `--max-tokens` (default 3000) with the passage id to continue from. Its statuses are `ok`, `not_found`, `not_indexed` and `source_unknown`. `docify search --query A --query B` runs up to 8 queries in one call.
+`search` also takes `--version`, `--source` (repeatable), `--group` (repeatable, see Titles and groups), `--mode` and `--graph-weight`; `search`, `read`, `outline` and `open` take `--json` for the full result. `outline` (MCP `docs_outline`) lists the documents of a source's active generation with the passage id of each section, for browsing when search finds nothing; `--path` keeps documents under a path prefix and `--max-tokens` caps the output (default 2000). `open` (MCP `docs_open`) returns a whole document, or one section with its subsections when `--heading` is given, from the active generation, cut at a passage boundary to fit `--max-tokens` (default 3000) with the passage id to continue from. Its statuses are `ok`, `not_found`, `not_indexed` and `source_unknown`. `docify search --query A --query B` runs up to 8 queries in one call.
 
-The MCP tool `docs_search` takes `query` or `queries` (1 to 8, exactly one of the two), plus `library`, `version`, `sources`, `mode`, `max_tokens` and `graph_weight`. With `queries`, every query runs with the same filters and keeps its own status line, all of them share `max_tokens`, and a passage found by several queries is shown once with the query numbers that hit it. Each query first gets an equal share of the budget, then the leftover goes to the remaining hits round-robin by rank (`docs/evaluation.md`, "Several queries in one call"). Without `max_tokens`, several queries get 1400 tokens each (2800 for two, 4200 for three, at most 20000); one query keeps the 2000 default. A single `query` returns the same text as before. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
+The MCP tool `docs_search` takes `query` or `queries` (1 to 8, exactly one of the two), plus `library`, `version`, `sources`, `groups`, `mode`, `max_tokens` and `graph_weight`. With `queries`, every query runs with the same filters and keeps its own status line, all of them share `max_tokens`, and a passage found by several queries is shown once with the query numbers that hit it. Each query first gets an equal share of the budget, then the leftover goes to the remaining hits round-robin by rank (`docs/evaluation.md`, "Several queries in one call"). Without `max_tokens`, several queries get 1400 tokens each (2800 for two, 4200 for three, at most 20000); one query keeps the 2000 default. A single `query` returns the same text as before. Project pins are read from `./.docify.json`, or from the directory in `DOCIFY_PROJECT`.
 
 Search statuses: `ok`, `weak_match` (hits with a low-confidence warning), `no_match`, `not_indexed`, `version_unavailable`, `source_unknown`, `update_failed`. Modes: `combined` (default: lexical, vector and exact-symbol fusion), `lexical`, `vector`, `graph`. `--graph-weight` adds graph hits to combined fusion; it defaults to 0 because it lowered recall on the evaluation corpus (`docs/evaluation.md`). `lexicalWeight` in `config.json` (default 1) sets the weight of word matches in that fusion. With bge-m3, `0.5` measured better: pages that only share words with a question, common with non-English questions, no longer push the vector's answer down.
 
@@ -286,13 +317,13 @@ codex plugin add docify@docify-local
 # remove: codex plugin remove docify@docify-local && codex plugin marketplace remove docify-local
 ```
 
-DeepSeek Harness loads the Claude Code plugin through the adapter in `integrations/claude-code/docify/dsh/`. The adapter imports the published [`claude-plugin-dsh`](https://www.npmjs.com/package/claude-plugin-dsh) runtime (pinned to 0.2.0 in `dsh/package.json` and `dsh/bun.lock`), so install its dependencies first. DSH does not install them for you:
+DeepSeek Harness loads the Claude Code plugin through the adapter in `integrations/claude-code/docify/dsh/`. The adapter imports the published [`claude-plugin-dsh`](https://www.npmjs.com/package/claude-plugin-dsh) runtime (pinned to an exact version in `dsh/package.json` and `dsh/bun.lock`), so install its dependencies first. DSH does not install them for you:
 
 ```bash
 cd /path/to/ai-docify/integrations/claude-code/docify/dsh && bun install --frozen-lockfile
 ```
 
-To check what the adapter registers without DSH, run `bun x claude-plugin-dsh@0.2.0 inspect /path/to/ai-docify/integrations/claude-code/docify`; it lists the `docify` skill. Do not run that CLI's `sync` or `scaffold` on this adapter: they write a vendored copy of the runtime, which this adapter no longer uses. To move to a newer runtime, change the exact version in `dsh/package.json`, run `bun install` in `dsh/` and commit the updated `bun.lock`.
+To check what the adapter registers without DSH, run `bun x claude-plugin-dsh@0.2.1 inspect /path/to/ai-docify/integrations/claude-code/docify`; it lists the `docify` skill. Do not run that CLI's `sync` or `scaffold` on this adapter: they write a vendored copy of the runtime, which this adapter no longer uses. To move to a newer runtime, change the exact version in `dsh/package.json`, run `bun install` in `dsh/` and commit the updated `bun.lock`.
 
 Start a Docify service with user accounts or with `DOCIFY_MCP_TOKENS` configured as described below. Set `DOCIFY_MCP_TOKEN` in the DSH process environment to the token for this client: a personal key from the Account view, or a shared token (the token only, not `name:token`). Optionally set `DOCIFY_MCP_URL`; it defaults to `http://127.0.0.1:4747/mcp`. Restart DSH after changing its environment. Do not commit tokens. Configure the embedding credentials in the service environment, not the DSH client.
 
@@ -354,7 +385,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 The container joins the external `shared-services` network, so it reaches a crawler on the same host by name. Put the Crawl4AI or Browserless stack on that network with an alias, for example `crawl4ai`, and set the crawler URL to `http://crawl4ai:11235`. `127.0.0.1` inside the container is the container itself.
 
-Open `http://127.0.0.1:4747/`, or `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>` when a token is set. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; the public routes are `/healthz`, which returns `{"ok":true,"version":"X.Y.Z"}`, and the API reference at `/api/docs`, which holds no data.
+Open `http://127.0.0.1:4747/`, or `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKEN>` when a token is set. The token is read from the URL fragment, so it never appears in server logs or proxy access logs; the public routes are `/healthz`, which returns `{"ok":true,"version":"X.Y.Z"}`, and the API reference at `/api/docs`, which holds no data. The same `/api` the UI uses covers the whole system: sources (add, change, remove, generations, documents, graph, outline, open), prepare, cancel, summary, compress, search (one query or up to 8), scope, read, settings, pins, logs, status, export and import. `/api/docs` lists every route with its schemas, generated from the route definitions in `src/web/api.ts`.
 
 `DOCIFY_ALLOWED_HOSTS` lists the hostnames the server answers for, comma separated; a bare hostname matches any port. When it is empty and the server binds a non-loopback address, any Host is accepted and a warning is logged, so set it in production. `DOCIFY_BIND` defaults to `127.0.0.1`: put a reverse proxy in front, or set it to `0.0.0.0` when the port must be reachable directly.
 
@@ -408,6 +439,8 @@ If the domain changes, update `DOCIFY_ALLOWED_HOSTS` and redeploy.
 ### User accounts (GitHub sign-in)
 
 By default the web UI has no accounts: it is open, or guarded by the one shared `DOCIFY_WEB_TOKEN`. To give each person their own account, turn on GitHub sign-in. The store stays shared; accounts decide who may use it and who may change it.
+
+`DOCIFY_ACCOUNTS_ENABLED` is read at startup. Leave it unset to follow the GitHub credentials, or set it to `true` to refuse startup if credentials are missing. Set it to `false` to disable sign-in and personal MCP keys without removing the credentials or deleting accounts. Before disabling accounts on a reachable server, set `DOCIFY_WEB_TOKEN` or restrict network access: without either protection, anyone who can reach the UI can administer the store. Shared MCP tokens are configured separately.
 
 1. On GitHub, open Settings, Developer settings, OAuth Apps, New OAuth App. Set the homepage URL to the public address of the UI and the authorization callback URL to `<public address>/auth/github/callback`.
 2. Set `DOCIFY_GITHUB_CLIENT_ID` and `DOCIFY_GITHUB_CLIENT_SECRET` from that app, `DOCIFY_ADMINS` to your GitHub login, and `DOCIFY_PUBLIC_URL` to the public address (`https://docify.example.com`, scheme and host only). Remove `DOCIFY_WEB_TOKEN`: the server refuses to start with both. It also refuses to start without `DOCIFY_PUBLIC_URL` unless it listens on loopback only, which is every Docker deployment.

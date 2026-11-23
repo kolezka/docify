@@ -114,6 +114,41 @@ test("the active graph comes back with pages, grounding, one edge per pair and h
   expect(g.stats.grounded).toBe(g.nodes.filter((n) => n.grounding).length);
 });
 
+// Graphify's raw (--no-cluster) output is not validated. The first two edges are the records
+// that failed a real prepare with "NOT NULL constraint failed: graph_edges.src".
+test("malformed records in graph.json are skipped and counted, they never fail the prepare", async () => {
+  const d = setup();
+  const broken: typeof fakeGraph = async (...args) => {
+    const r = await fakeGraph(...args);
+    const [first, second, third] = r.graph.nodes.map((n) => n.id);
+    const bad: unknown[] = [
+      { id: "claude_desktop_config_json", label: "claude_desktop_config.json", file_type: "document", source_file: "doc1.md" },
+      { id: first, target: second, relation: "references", confidence: "EXTRACTED" },
+      { source: first, target: null, relation: "references" },
+      { source: first, target: third },
+      null,
+    ];
+    r.graph.links.push(...(bad as typeof r.graph.links));
+    r.graph.nodes.push({ id: "no_label" } as (typeof r.graph.nodes)[number]);
+    r.graph.hyperedges = [
+      { id: "h1", label: "Setup steps", nodes: [null, first, second, third], relation: "form" },
+      { id: "h2", label: "Not a list", nodes: "abc", relation: "form" },
+    ] as unknown as typeof r.graph.hyperedges;
+    return r;
+  };
+  const result = await d.prepare("lib@1", { graphRunner: broken });
+  expect(result.status).toBe("activated");
+  // 5 edges, 1 node, 1 hyperedge member and 1 hyperedge.
+  expect(result.stats).toMatchObject({ graphNodes: 3, graphEdges: 4, graphDropped: 8, graphMissing: [] });
+
+  // Documents are all covered, so the graph is not partial: a retry would get the same cached records.
+  const g = graphView(d, "lib@1");
+  expect(g.graphStatus).toBe("ok");
+  expect(g.nodes).toHaveLength(3);
+  expect(g.edges).toHaveLength(2);
+  expect(g.groups).toEqual([{ label: "Setup steps", size: 3 }]);
+});
+
 test("the web API serves the graph and maps an unknown source to 404", async () => {
   const d = setup();
   await d.prepare("lib@1", { graphRunner: runner });

@@ -43,6 +43,7 @@ services:
       # User accounts with GitHub sign-in, instead of the token. Client id and secret of a GitHub
       # OAuth app, the administrators' GitHub logins, and the public https address (required with
       # accounts: the server will not start without it here). Empty id and secret keep accounts off.
+      DOCIFY_ACCOUNTS_ENABLED: "${DOCIFY_ACCOUNTS_ENABLED:-}"
       DOCIFY_GITHUB_CLIENT_ID: ${DOCIFY_GITHUB_CLIENT_ID:-}
       DOCIFY_GITHUB_CLIENT_SECRET: ${DOCIFY_GITHUB_CLIENT_SECRET:-}
       DOCIFY_ADMINS: ${DOCIFY_ADMINS:-}

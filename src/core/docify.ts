@@ -9,7 +9,7 @@ import { normalize } from "./normalize.ts";
 import { chunk } from "./chunk.ts";
 import { countTokens } from "./tokens.ts";
 import { sha256 } from "./hash.ts";
-import { writeSnapshotFile } from "./snapshot-file.ts";
+import { readSnapshotFile, snapshotRel, writeSnapshotFile } from "./snapshot-file.ts";
 import { embedTexts, embeddingIdentity } from "./embed.ts";
 import { crawl4aiFetcher } from "./crawl4ai.ts";
 import { browserlessFetcher } from "./browserless.ts";
@@ -137,10 +137,16 @@ export interface AddSourceInput {
   ignore?: string[];
   // Paths that stay searchable but are left out of the graph.
   graphIgnore?: string[];
+  // Display name; the id is unchanged by it.
+  title?: string | null;
+  // Named groups an agent can search together.
+  groups?: string[];
 }
 
 export interface PrepareOptions {
   graph?: boolean; // default true; false records graph_status = skipped
+  // Retry only the graph of the newest generation whose graph phase failed, from its saved snapshot.
+  graphOnly?: boolean;
   force?: boolean;
   signal?: AbortSignal;
   fetcher?: Fetcher;
@@ -154,6 +160,29 @@ export interface PrepareResult {
   generationId: number;
   status: "activated" | "unchanged";
   stats: Record<string, unknown>;
+}
+
+// Saved in stats.resume of a failed generation whose graph phase was reached. Its documents,
+// passages, vectors and snapshot are kept, so the graph can be retried without collecting again.
+export interface GraphResume {
+  downloadedAt: string;
+  snapshotHash: string;
+  embedding: string;
+  dims: number;
+  // Stats of the phases before the graph.
+  base: Record<string, unknown> & { pipeline: number; passages: number; documents: number };
+}
+
+export function graphResumeOf(gen: Pick<GenerationRow, "status" | "stats">): GraphResume | null {
+  if (gen.status !== "failed") return null;
+  return (JSON.parse(gen.stats) as { resume?: GraphResume }).resume ?? null;
+}
+
+interface GraphDoc {
+  path: string;
+  markdown: string;
+  docId: number;
+  passages: { rowid: number; text: string; headingPath: string[] }[];
 }
 
 export class DocifyError extends Error {
@@ -170,6 +199,47 @@ export class DocifyError extends Error {
 const ID_RE = /^[a-z0-9][a-z0-9._@-]{0,80}$/;
 const LIBRARY_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/;
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,40}$/;
+// Group names share no namespace with source ids: no "@", so "bun@1" can never be a group.
+export const GROUP_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/;
+export const MAX_TITLE_LENGTH = 120;
+export const MAX_SOURCE_GROUPS = 20;
+
+// A display name only; the id stays the key for citations, snapshots and pins.
+export function validateTitle(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") throw new DocifyError("invalid_input", "title must be text", "title");
+  const title = value.replace(/\s+/g, " ").trim();
+  if (!title) return null;
+  if (title.length > MAX_TITLE_LENGTH) throw new DocifyError("invalid_input", `title is limited to ${MAX_TITLE_LENGTH} characters`, "title");
+  return title;
+}
+
+export function validateGroups(value: unknown): string[] {
+  const invalid = (message: string) => new DocifyError("invalid_input", `groups: ${message}`, "groups");
+  if (value === null) return [];
+  if (!Array.isArray(value)) throw invalid("must be a list of group names");
+  if (value.length > MAX_SOURCE_GROUPS) throw invalid(`a source can be in at most ${MAX_SOURCE_GROUPS} groups`);
+  const groups = value.map((g) => (typeof g === "string" ? g.trim().toLowerCase() : g));
+  for (const g of groups) {
+    if (typeof g !== "string" || !GROUP_RE.test(g)) throw invalid(`${JSON.stringify(g)} is not a valid group name (lowercase letters, digits, ".", "_" and "-")`);
+  }
+  return [...new Set(groups as string[])].sort();
+}
+
+export interface SourceLabels {
+  title: string | null;
+  groups: string[];
+}
+
+// Absent values read as unset. A malformed stored value is an error, never an empty list:
+// silently dropping a group would quietly narrow what a group search covers.
+export function sourceLabels(source: Pick<SourceRow, "id" | "options">): SourceLabels {
+  const options = JSON.parse(source.options) as { title?: unknown; groups?: unknown };
+  const broken = (what: string) => new DocifyError("invalid_store", `source ${source.id} has a malformed stored ${what}`);
+  if (options.title !== undefined && (typeof options.title !== "string" || !options.title)) throw broken("title");
+  if (options.groups !== undefined && (!Array.isArray(options.groups) || options.groups.some((g) => typeof g !== "string" || !GROUP_RE.test(g)))) throw broken("group list");
+  return { title: (options.title as string | undefined) ?? null, groups: (options.groups as string[] | undefined) ?? [] };
+}
 
 // Bump when normalization, chunking or indexing changes, so identical raw snapshots are rebuilt.
 export const PIPELINE_VERSION = 5;
@@ -279,6 +349,8 @@ export class Docify {
     }
     const ignore = input.ignore === undefined ? [] : validateIgnorePatterns(input.ignore, "ignore");
     const graphIgnore = input.graphIgnore === undefined ? [] : validateIgnorePatterns(input.graphIgnore, "graphIgnore");
+    const title = input.title === undefined ? null : validateTitle(input.title);
+    const groups = input.groups === undefined ? [] : validateGroups(input.groups);
     let locator = input.locator.trim();
     if (input.kind === "local") {
       locator = resolve(locator.replace(/^~(?=$|\/)/, homedir()));
@@ -306,6 +378,8 @@ export class Docify {
         ...(input.crawlProvider === undefined ? {} : { crawlProvider: input.crawlProvider }),
         ...(ignore.length ? { ignore } : {}),
         ...(graphIgnore.length ? { graphIgnore } : {}),
+        ...(title ? { title } : {}),
+        ...(groups.length ? { groups } : {}),
       }), nowIso()],
     );
     this.logs.append(id, `Source registered (${input.kind})`);
@@ -357,6 +431,45 @@ export class Docify {
     }).immediate();
   }
 
+  // Title and groups only label a source: they change no snapshot or index, so they apply at once
+  // and are allowed while the source prepares. null or an empty value removes them.
+  updateSourceLabels(id: string, patch: { title?: unknown; groups?: unknown }): SourceRow {
+    if (patch.title === undefined && patch.groups === undefined) throw new DocifyError("invalid_input", "title or groups is required");
+    const title = patch.title === undefined ? undefined : validateTitle(patch.title);
+    const groups = patch.groups === undefined ? undefined : validateGroups(patch.groups);
+    return this.db.transaction(() => {
+      const source = this.requireSource(id);
+      const options = JSON.parse(source.options);
+      if (title !== undefined) {
+        if (title) options.title = title;
+        else delete options.title;
+      }
+      if (groups !== undefined) {
+        if (groups.length) options.groups = groups;
+        else delete options.groups;
+      }
+      this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
+      return this.requireSource(id);
+    }).immediate();
+  }
+
+  // Adds or removes one source in one group; returns the source's groups after the change.
+  setSourceGroup(id: string, group: string, member: boolean): string[] {
+    const [name] = validateGroups([group]);
+    return this.db.transaction(() => {
+      const current = sourceLabels(this.requireSource(id)).groups;
+      const next = member ? [...current, name!] : current.filter((g) => g !== name);
+      return sourceLabels(this.updateSourceLabels(id, { groups: next })).groups;
+    }).immediate();
+  }
+
+  // Every group with its member ids, sorted by name.
+  listGroups(): { name: string; sources: string[] }[] {
+    const groups = new Map<string, string[]>();
+    for (const s of this.listSourceRows()) for (const g of sourceLabels(s).groups) (groups.get(g) ?? groups.set(g, []).get(g)!).push(s.id);
+    return [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, sources]) => ({ name, sources }));
+  }
+
   removeSource(id: string) {
     const src = this.requireSource(id);
     if (src.lock_pid && leaseAlive(src.lock_pid, src.lock_at)) throw new DocifyError("busy", `source ${id} is being prepared by pid ${src.lock_pid}`);
@@ -402,7 +515,8 @@ export class Docify {
           const s = this.getSource(c.source_id);
           if (!g || !isInterrupted(g, s)) return false;
           this.deleteGenerationRows(c.id);
-          this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [INTERRUPTED_ERROR, nowIso(), c.id]);
+          // stats = '{}' also drops a graph-only retry's resume record: its index is deleted here.
+          this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ?, stats = '{}' WHERE id = ?", [INTERRUPTED_ERROR, nowIso(), c.id]);
           if (s && s.lock_pid === g.pid) this.db.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL WHERE id = ? AND lock_pid IS ?", [s.id, g.pid]);
           return true;
         })
@@ -488,7 +602,7 @@ export class Docify {
       this.db.run("UPDATE sources SET lock_at = ? WHERE id = ? AND lock_pid = ?", [nowIso(), sourceId, process.pid]);
     }, HEARTBEAT_MS);
     try {
-      return await this.prepareLocked(source, opts);
+      return await (opts.graphOnly ? this.retryGraph(source, opts) : this.prepareLocked(source, opts));
     } finally {
       clearInterval(heartbeat);
     }
@@ -506,6 +620,7 @@ export class Docify {
     );
     const snapshotDir = join(this.config.home, "snapshots", sourceId, String(genId));
     let result: PrepareResult;
+    let resume: GraphResume | null = null;
     const checkpoint = async (phase: string, progress = "") => {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
       this.setPhase(genId, phase, progress);
@@ -631,80 +746,231 @@ export class Docify {
       }
       const embedMs = Math.round(performance.now() - embedStart);
       const embedReused = reused.size;
+      this.checkCounts(genId, passageCount);
 
-      let graphStatus = "skipped";
-      let graphStats: Record<string, unknown> = {};
-      const graphDocs = normalizedDocs.filter((d) => inGraph(d.path));
-      const graphIgnored = normalizedDocs.length - graphDocs.length;
-      if (graphEnabled && graphIgnored) {
-        this.logs.append(sourceId, graphDocs.length
-          ? `Left ${graphIgnored} documents out of the graph (graphIgnore)`
-          : `Every document matches graphIgnore; no graph is built`, "system", graphDocs.length ? "info" : "warn");
-      }
-      if (graphWanted) {
-        await checkpoint("graph", "semantic extraction");
-        const runner = opts.graphRunner ?? runGraphify;
-        const result = await runner(this.config, sourceId, graphDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force,
-          (stream, text) => this.logs.append(sourceId, text, stream, /\b(error|failed|traceback)\b/i.test(text) ? "error" : /\bwarn(?:ing)?\b/i.test(text) ? "warn" : "info"));
-        writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
-        // Only documents sent to the graph can be missing from it.
-        graphStats = this.importGraph(genId, result, graphDocs);
-        // Partial still activates and is searchable; it never counts as unchanged, so the next prepare retries the gaps.
-        graphStatus = (graphStats.graphMissing as string[]).length || result.incomplete.length ? "partial" : "ok";
-        if (graphStatus === "partial") this.logs.append(sourceId, `Graph is partial: ${(graphStats.graphMissing as string[]).length} documents without nodes`, "system", "warn");
-      }
-
-      await checkpoint("validate");
-      const counts = this.db
-        .query<{ p: number; v: number }, [number, number]>(
-          "SELECT (SELECT count(*) FROM passages WHERE generation_id = ?) AS p, (SELECT count(*) FROM vectors WHERE generation_id = ?) AS v",
-        )
-        .get(genId, genId)!;
-      if (counts.p !== passageCount || counts.v !== passageCount) {
-        throw new DocifyError("invalid_generation", `validation failed: ${counts.p} passages, ${counts.v} vectors, expected ${passageCount}`);
-      }
-      if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
-        throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
-      }
-      const stats = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, embedReused, artifacts: artifacts.map((a) => a.kind), ...graphStats, ...(graphEnabled && graphIgnorePatterns.length ? { graphIgnore: graphIgnorePatterns, graphIgnored } : {}) };
-
-      await checkpoint("activate");
-      this.db
-        .transaction(() => {
-          const prev = this.requireSource(sourceId).active_generation;
-          if (prev) this.db.run("UPDATE generations SET status = 'superseded' WHERE id = ?", [prev]);
-          this.db.run(
-            `UPDATE generations SET status = 'active', phase = 'done', progress = '', finished_at = ?, downloaded_at = ?, snapshot_hash = ?,
-             snapshot_dir = ?, embedding_model = ?, embedding_dims = ?, graph_status = ?, stats = ? WHERE id = ?`,
-            [nowIso(), downloadedAt, snapshotHash, snapshotDir, embeddingIdentity(this.config), this.config.embeddingDims, graphStatus, JSON.stringify(stats), genId],
-          );
-          this.db.run("UPDATE sources SET active_generation = ? WHERE id = ?", [genId, sourceId]);
-        })
-        .immediate();
-      this.releaseLock(sourceId);
-      result = { sourceId, generationId: genId, status: "activated", stats };
-      this.logs.append(sourceId, `Generation ${genId} activated: ${raw.length} documents, ${passageCount} passages`);
+      const base = { pipeline: PIPELINE_VERSION, collector: provider, documents: raw.length, passages: passageCount, embedMs, embedReused, artifacts: artifacts.map((a) => a.kind) };
+      // From here on only the graph can fail, so a failure keeps the indexed snapshot for a graph-only retry.
+      if (graphWanted) resume = { downloadedAt, snapshotHash, embedding: embeddingIdentity(this.config), dims: this.config.embeddingDims, base };
+      result = await this.finishWithGraph({ sourceId, genId, snapshotDir, docs: normalizedDocs, opts, checkpoint, base, downloadedAt, snapshotHash, graphEnabled });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const cancelled = opts.signal?.aborted || (err instanceof DocifyError && err.code === "cancelled");
-      this.logs.append(sourceId, `${cancelled ? "Preparation cancelled" : "Preparation failed"}: ${message}`, "system", cancelled ? "warn" : "error");
-      this.db.transaction(() => {
-        this.deleteGenerationRows(genId);
-        this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ? WHERE id = ?", [message.slice(0, 2000), nowIso(), genId]);
-      })();
-      rmSync(snapshotDir, { recursive: true, force: true });
-      this.releaseLock(sourceId);
+      this.failGeneration(sourceId, genId, snapshotDir, err, opts, resume);
       throw err;
     }
-    // Outside the try: cleanup of old generations must never undo a committed activation.
+    this.afterActivation(sourceId, genId);
+    return result;
+  }
+
+  // Graph, validation and activation: the shared tail of a full prepare and a graph-only retry.
+  private async finishWithGraph(c: {
+    sourceId: string;
+    genId: number;
+    snapshotDir: string;
+    docs: GraphDoc[];
+    opts: PrepareOptions;
+    checkpoint: (phase: string, progress?: string) => Promise<void>;
+    base: GraphResume["base"];
+    downloadedAt: string;
+    snapshotHash: string;
+    graphEnabled: boolean;
+  }): Promise<PrepareResult> {
+    const { sourceId, genId, snapshotDir, opts } = c;
+    const sourceOpts = JSON.parse(this.requireSource(sourceId).options) as { graphIgnore?: string[] };
+    const graphIgnore = compileIgnore(sourceOpts.graphIgnore, "graphIgnore");
+    const graphIgnorePatterns = validateIgnorePatterns(sourceOpts.graphIgnore ?? [], "graphIgnore");
+    let graphStatus = "skipped";
+    let graphStats: Record<string, unknown> = {};
+    const graphDocs = c.docs.filter((d) => !graphIgnore.some((pattern) => pattern.test(d.path)));
+    const graphIgnored = c.docs.length - graphDocs.length;
+    if (c.graphEnabled && graphIgnored) {
+      this.logs.append(sourceId, graphDocs.length
+        ? `Left ${graphIgnored} documents out of the graph (graphIgnore)`
+        : `Every document matches graphIgnore; no graph is built`, "system", graphDocs.length ? "info" : "warn");
+    }
+    if (c.graphEnabled && graphDocs.length) {
+      await c.checkpoint("graph", "semantic extraction");
+      const runner = opts.graphRunner ?? runGraphify;
+      const result = await runner(this.config, sourceId, graphDocs.map((d) => ({ path: d.path, markdown: d.markdown })), opts.signal, opts.force,
+        (stream, text) => this.logs.append(sourceId, text, stream, /\b(error|failed|traceback)\b/i.test(text) ? "error" : /\bwarn(?:ing)?\b/i.test(text) ? "warn" : "info"));
+      writeFileSync(join(snapshotDir, "graph.json"), result.graphJsonText);
+      // Only documents sent to the graph can be missing from it.
+      graphStats = this.importGraph(genId, result, graphDocs);
+      if (graphStats.graphDropped) this.logs.append(sourceId, `Skipped ${graphStats.graphDropped} malformed graph records (no usable id, label or relation)`, "system", "warn");
+      // Partial still activates and is searchable; it never counts as unchanged, so the next prepare retries the gaps.
+      graphStatus = (graphStats.graphMissing as string[]).length || result.incomplete.length ? "partial" : "ok";
+      if (graphStatus === "partial") this.logs.append(sourceId, `Graph is partial: ${(graphStats.graphMissing as string[]).length} documents without nodes`, "system", "warn");
+    }
+
+    await c.checkpoint("validate");
+    this.checkCounts(genId, c.base.passages);
+    if (graphStatus !== "skipped" && !(graphStats.groundedNodes as number)) {
+      throw new DocifyError("invalid_generation", "graph extraction produced no nodes grounded in passages");
+    }
+    const stats = { ...c.base, ...graphStats, ...(c.graphEnabled && graphIgnorePatterns.length ? { graphIgnore: graphIgnorePatterns, graphIgnored } : {}) };
+
+    await c.checkpoint("activate");
+    this.db
+      .transaction(() => {
+        const prev = this.requireSource(sourceId).active_generation;
+        if (prev) this.db.run("UPDATE generations SET status = 'superseded' WHERE id = ?", [prev]);
+        this.db.run(
+          `UPDATE generations SET status = 'active', phase = 'done', progress = '', error = NULL, finished_at = ?, downloaded_at = ?, snapshot_hash = ?,
+           snapshot_dir = ?, embedding_model = ?, embedding_dims = ?, graph_status = ?, stats = ? WHERE id = ?`,
+          [nowIso(), c.downloadedAt, c.snapshotHash, snapshotDir, embeddingIdentity(this.config), this.config.embeddingDims, graphStatus, JSON.stringify(stats), genId],
+        );
+        this.db.run("UPDATE sources SET active_generation = ? WHERE id = ?", [genId, sourceId]);
+      })
+      .immediate();
+    this.releaseLock(sourceId);
+    this.logs.append(sourceId, `Generation ${genId} activated: ${c.base.documents} documents, ${c.base.passages} passages`);
+    return { sourceId, generationId: genId, status: "activated", stats };
+  }
+
+  private checkCounts(genId: number, passageCount: number) {
+    const counts = this.db
+      .query<{ p: number; v: number }, [number, number]>(
+        "SELECT (SELECT count(*) FROM passages WHERE generation_id = ?) AS p, (SELECT count(*) FROM vectors WHERE generation_id = ?) AS v",
+      )
+      .get(genId, genId)!;
+    if (counts.p !== passageCount || counts.v !== passageCount) {
+      throw new DocifyError("invalid_generation", `validation failed: ${counts.p} passages, ${counts.v} vectors, expected ${passageCount}`);
+    }
+  }
+
+  // With resume, the generation keeps its documents, passages, vectors and snapshot (not its graph),
+  // so `prepare --graph-only` can retry the graph. Without it everything goes, as before.
+  private failGeneration(sourceId: string, genId: number, snapshotDir: string, err: unknown, opts: PrepareOptions, resume: GraphResume | null) {
+    const message = err instanceof Error ? err.message : String(err);
+    const cancelled = opts.signal?.aborted || (err instanceof DocifyError && err.code === "cancelled");
+    this.logs.append(sourceId, `${cancelled ? "Preparation cancelled" : "Preparation failed"}: ${message}`, "system", cancelled ? "warn" : "error");
+    this.db.transaction(() => {
+      if (resume) this.deleteGraphRows(genId);
+      else this.deleteGenerationRows(genId);
+      this.db.run("UPDATE generations SET status = 'failed', error = ?, finished_at = ?, stats = ?, snapshot_dir = ? WHERE id = ?", [
+        message.slice(0, 2000),
+        nowIso(),
+        JSON.stringify(resume ? { resume } : {}),
+        resume ? snapshotDir : null,
+        genId,
+      ]);
+    })();
+    if (resume) {
+      rmSync(join(snapshotDir, "graph.json"), { force: true });
+      this.logs.append(sourceId, `Generation ${genId} keeps its index; run prepare --graph-only to retry the graph without collecting again`, "system", "info");
+    } else {
+      rmSync(snapshotDir, { recursive: true, force: true });
+    }
+    this.releaseLock(sourceId);
     try {
+      this.pruneResumable(sourceId);
+    } catch (pruneErr) {
+      this.logs.append(sourceId, `cleanup of earlier failed generations failed: ${pruneErr instanceof Error ? pruneErr.message : pruneErr}`, "system", "warn");
+    }
+  }
+
+  // Outside the prepare try: cleanup of old generations must never undo a committed activation.
+  private afterActivation(sourceId: string, genId: number) {
+    try {
+      // Failed generations older than the new active one can no longer be retried.
+      this.pruneResumable(sourceId);
       this.collectGarbage(sourceId);
     } catch (err) {
       const message = `cleanup of old generations failed; generation ${genId} stays active: ${err instanceof Error ? err.message : err}`;
       this.logs.append(sourceId, message, "system", "warn");
       console.error(`docify: ${sourceId}: ${message}`);
     }
+  }
+
+  // The failed generation a graph-only retry would use: the newest one with a saved index that is
+  // newer than the active generation. Older ones are pruned, so there is at most one.
+  resumableGeneration(sourceId: string): GenerationRow | null {
+    const active = this.requireSource(sourceId).active_generation ?? 0;
+    const gen = this.db
+      .query<GenerationRow, [string, number]>("SELECT * FROM generations WHERE source_id = ? AND status = 'failed' AND id > ? AND json_extract(stats, '$.resume') IS NOT NULL ORDER BY id DESC LIMIT 1")
+      .get(sourceId, active);
+    return gen && graphResumeOf(gen) ? gen : null;
+  }
+
+  private async retryGraph(source: SourceRow, opts: PrepareOptions): Promise<PrepareResult> {
+    const sourceId = source.id;
+    if (opts.graph === false) throw new DocifyError("invalid_input", "--graph-only and --no-graph cannot be combined");
+    const gen = this.resumableGeneration(sourceId);
+    const fail = (message: string): never => {
+      this.releaseLock(sourceId);
+      throw new DocifyError("not_resumable", message);
+    };
+    if (!gen) return fail(`${sourceId} has no failed graph to retry; run a full prepare`);
+    const resume = graphResumeOf(gen)!;
+    if (this.config.graph === null) return fail("no graph provider is configured");
+    if (resume.base.pipeline !== PIPELINE_VERSION) return fail(`generation ${gen.id} was indexed by an older pipeline; run a full prepare`);
+    if (resume.embedding !== embeddingIdentity(this.config) || resume.dims !== this.config.embeddingDims) {
+      return fail(`generation ${gen.id} was embedded with ${resume.embedding}, the configuration now uses ${embeddingIdentity(this.config)}; run a full prepare`);
+    }
+    // Built from home, never from the stored snapshot_dir.
+    const snapshotDir = join(this.config.home, "snapshots", sourceId, String(gen.id));
+    const genId = gen.id;
+    this.db.run("UPDATE generations SET status = 'staging', phase = 'graph', progress = '', pid = ?, error = NULL, finished_at = NULL WHERE id = ?", [process.pid, genId]);
+    this.logs.append(sourceId, `Retrying the graph of generation ${genId} from its saved snapshot`);
+    const checkpoint = async (phase: string, progress = "") => {
+      if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
+      this.setPhase(genId, phase, progress);
+      this.logs.append(sourceId, `Generation ${genId}: ${phase}${progress ? ` (${progress})` : ""}`);
+      await opts.onPhase?.(phase, genId);
+    };
+    let result: PrepareResult;
+    try {
+      await checkpoint("load");
+      const docs = this.loadGraphDocs(genId, snapshotDir);
+      this.checkCounts(genId, resume.base.passages);
+      result = await this.finishWithGraph({ sourceId, genId, snapshotDir, docs, opts, checkpoint, base: resume.base, downloadedAt: resume.downloadedAt, snapshotHash: resume.snapshotHash, graphEnabled: true });
+    } catch (err) {
+      // A snapshot that can no longer be read is not worth keeping for another retry.
+      const keep = !(err instanceof DocifyError && (err.code === "invalid_generation" || err.code === "snapshot_missing")) || /grounded/.test(err.message);
+      this.failGeneration(sourceId, genId, snapshotDir, err, opts, keep ? resume : null);
+      throw err;
+    }
+    this.afterActivation(sourceId, genId);
     return result;
+  }
+
+  // Documents of a generation with their normalized markdown and passages, as the graph phase needs them.
+  private loadGraphDocs(genId: number, snapshotDir: string): GraphDoc[] {
+    const docs = this.db.query<{ id: number; path: string; normalized_file: string; normalized_sha256: string }, [number]>(
+      "SELECT id, path, normalized_file, normalized_sha256 FROM documents WHERE generation_id = ? ORDER BY id",
+    ).all(genId);
+    const gen = this.getGeneration(genId)!;
+    using passages = this.db.prepare<{ rowid: number; text: string; heading_path: string }, [number]>("SELECT rowid, text, heading_path FROM passages WHERE document_id = ? ORDER BY ord");
+    return docs.map((d) => {
+      const rel = gen.snapshot_dir ? snapshotRel(gen.snapshot_dir, d.normalized_file) : null;
+      let content: Uint8Array | null = null;
+      try {
+        content = rel ? readSnapshotFile(join(snapshotDir, rel), d.normalized_sha256) : null;
+      } catch {
+        content = null;
+      }
+      if (!content) throw new DocifyError("snapshot_missing", `the saved snapshot of ${d.path} is missing or changed; run a full prepare`);
+      return {
+        path: d.path,
+        markdown: new TextDecoder().decode(content),
+        docId: d.id,
+        passages: passages.all(d.id).map((p) => ({ rowid: p.rowid, text: p.text, headingPath: JSON.parse(p.heading_path) as string[] })),
+      };
+    });
+  }
+
+  // Drops the saved index of every failed generation except the one resumableGeneration() returns.
+  private pruneResumable(sourceId: string) {
+    const keep = this.resumableGeneration(sourceId)?.id;
+    const stale = this.db
+      .query<{ id: number }, [string]>("SELECT id FROM generations WHERE source_id = ? AND status = 'failed' AND json_extract(stats, '$.resume') IS NOT NULL")
+      .all(sourceId)
+      .filter((g) => g.id !== keep);
+    for (const g of stale) {
+      this.db.transaction(() => {
+        this.deleteGenerationRows(g.id);
+        this.db.run("UPDATE generations SET stats = '{}' WHERE id = ?", [g.id]);
+      })();
+      rmSync(join(this.config.home, "snapshots", sourceId, String(g.id)), { recursive: true, force: true });
+    }
   }
 
   // Service origin only: the configured URL may carry a path or query worth keeping out of logs.
@@ -766,14 +1032,24 @@ export class Docify {
     using insertEdge = this.db.prepare("INSERT INTO graph_edges (generation_id, src, dst, relation, confidence) VALUES (?, ?, ?, ?, ?)");
     using insertGround = this.db.prepare("INSERT OR IGNORE INTO node_passages (generation_id, node_id, passage_rowid) VALUES (?, ?, ?)");
     let grounded = 0;
+    let nodes = 0;
     let edges = 0;
+    // graph.json is model output that Graphify's raw mode does not validate: a record without
+    // a usable id is skipped and counted, so it cannot fail the prepare (NOT NULL on graph_edges).
+    let dropped = 0;
+    const text = (v: unknown): v is string => typeof v === "string" && v !== "";
     const covered = new Set<string>();
     this.db.transaction(() => {
       for (const n of result.graph.nodes) {
-        const path = n.source_file ? result.fileToPath.get(n.source_file.split("/").pop()!) : undefined;
+        if (!n || !text(n.id) || !text(n.label)) {
+          dropped++;
+          continue;
+        }
+        nodes++;
+        const path = text(n.source_file) ? result.fileToPath.get(n.source_file.split("/").pop()!) : undefined;
         const doc = path ? byPath.get(path) : undefined;
         if (doc) covered.add(doc.path);
-        insertNode.run(genId, n.id, n.label, (n.norm_label ?? n.label).toLowerCase(), n.file_type ?? null, doc?.docId ?? null);
+        insertNode.run(genId, n.id, n.label, (text(n.norm_label) ? n.norm_label : n.label).toLowerCase(), text(n.file_type) ? n.file_type : null, doc?.docId ?? null);
         const pool = doc ? doc.passages : docs.flatMap((d) => d.passages);
         const terms = groundingTerms(n.label);
         const scored = pool
@@ -794,11 +1070,21 @@ export class Docify {
         if (scored.length) grounded++;
       }
       for (const e of result.graph.links) {
-        insertEdge.run(genId, e.source, e.target, e.relation, e.confidence ?? null);
+        if (!e || !text(e.source) || !text(e.target) || !text(e.relation)) {
+          dropped++;
+          continue;
+        }
+        insertEdge.run(genId, e.source, e.target, e.relation, text(e.confidence) ? e.confidence : null);
         edges++;
       }
       for (const h of result.graph.hyperedges ?? []) {
-        const [hub, ...rest] = h.nodes;
+        if (!h || !text(h.label) || !Array.isArray(h.nodes)) {
+          dropped++;
+          continue;
+        }
+        const members = h.nodes.filter(text);
+        dropped += h.nodes.length - members.length;
+        const [hub, ...rest] = members;
         for (const m of rest) {
           insertEdge.run(genId, hub!, m, `group:${h.label}`, "HYPEREDGE");
           edges++;
@@ -806,9 +1092,10 @@ export class Docify {
       }
     })();
     return {
-      graphNodes: result.graph.nodes.length,
+      graphNodes: nodes,
       groundedNodes: grounded,
       graphEdges: edges,
+      graphDropped: dropped,
       graphMs: result.durationMs,
       graphTokensIn: result.tokensIn,
       graphTokensOut: result.tokensOut,
@@ -842,6 +1129,12 @@ export class Docify {
     );
     const rows = this.db.query<{ r: number }, [number]>("SELECT passage_rowid AS r FROM vectors WHERE generation_id = ?").all(genId);
     return new Set(rows.map((x) => x.r));
+  }
+
+  private deleteGraphRows(genId: number) {
+    this.db.run("DELETE FROM node_passages WHERE generation_id = ?", [genId]);
+    this.db.run("DELETE FROM graph_edges WHERE generation_id = ?", [genId]);
+    this.db.run("DELETE FROM graph_nodes WHERE generation_id = ?", [genId]);
   }
 
   private deleteGenerationRows(genId: number) {

@@ -486,7 +486,8 @@ export function describeConfig(config: DocifyConfig, env: Env = process.env): Co
     ["DOCIFY_GRAPHIFY_BIN", "Graphify executable, unless config.json sets graphifyBin"],
     ["DOCIFY_EMBED_URL", "Ollama URL, unless config.json sets embeddingUrl"],
     ["DOCIFY_PROJECT", "project whose .docify.json pins apply in CLI search and MCP"],
-    ["DOCIFY_GITHUB_CLIENT_ID", "GitHub OAuth app; with the secret it turns on user accounts"],
+    ["DOCIFY_ACCOUNTS_ENABLED", "require (true) or disable (false) GitHub sign-in; unset follows credentials"],
+    ["DOCIFY_GITHUB_CLIENT_ID", "GitHub OAuth app for user accounts"],
     ["DOCIFY_ADMINS", "GitHub logins of the administrators"],
     ["DOCIFY_PUBLIC_URL", "public address, for the GitHub callback and the Secure cookie"],
   ];

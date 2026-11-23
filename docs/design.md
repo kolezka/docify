@@ -13,9 +13,9 @@ The current session produces a handoff only. Product implementation begins in a 
 These are design defaults, not choices the user previously made between offline, source, or automation options. The implementation prompt adopts them unless the user changes them:
 
 - One-screen local web UI, backed by the same core as the CLI and MCP server.
-  Amendment 2026-11-14: a hosted web UI may have user accounts. They are off unless
-  `DOCIFY_GITHUB_CLIENT_ID` and `DOCIFY_GITHUB_CLIENT_SECRET` are set; people then sign in with
-  GitHub. The store stays one shared store: administrators (named in `DOCIFY_ADMINS`) manage
+  Amendment 2026-11-14: a hosted web UI may have user accounts. By default, setting both
+  `DOCIFY_GITHUB_CLIENT_ID` and `DOCIFY_GITHUB_CLIENT_SECRET` enables GitHub sign-in.
+  `DOCIFY_ACCOUNTS_ENABLED=false` ignores those credentials; `true` requires them. The store stays one shared store: administrators (named in `DOCIFY_ADMINS`) manage
   sources, settings, logs, backups and accounts, members search and read, and a new sign-up
   waits for an administrator's approval. Accounts and sessions are kept in `accounts.sqlite`,
   outside `docify.sqlite`, so backups never carry them and imports never replace them. The CLI
@@ -110,6 +110,8 @@ Prefer SQLite for metadata and full-text search after confirming the runtime cap
 Keep downloaded originals alongside normalized Markdown. Normalization should preserve headings, code fences, tables, warnings, links, and provenance. The implementation must verify HTML cleanup and citation fidelity on fixtures rather than assume Graphify provides them.
 
 Each registered source has a stable identity and an explicit library version when known. Unknown versions remain unknown. `downloaded_at` describes retrieval time, not the library version. Allow several versions to coexist and project pins to select versions without changing other projects.
+
+A source may carry a display title and group names, kept in its options. Neither is part of its identity: renaming never changes the id, citations or pins. A group is only a name for a set of sources that a search scope expands to its members; an unknown group is `source_unknown`, and a malformed stored title or group list is an error, never read as empty.
 
 Use a user-local shared cache outside plugin installation directories. A project configuration records source references and version pins. Passage records include stable IDs, source and snapshot identity, content hash, library version, heading path, normalized line range, and a source URL or local locator. Source identity persists across refreshes; passage IDs identify immutable content in a specific snapshot and remain stable across restarts. Reading an old passage ID must return that snapshot's content or an explicit unavailable result, never silently resolve to newer text. Store the mapping needed to trace an excerpt to its preserved source. Record embedding model identity, dimensions, and index schema version separately.
 

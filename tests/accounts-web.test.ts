@@ -571,6 +571,29 @@ test("through a member's key the source list carries no server paths", async () 
   expect((await mcp(adminKey, "tools/call", { name: "docs_sources", arguments: {} })).text).toContain(docs);
 });
 
+test("member discovery, scope and grouped searches keep the same privacy rules on HTTP and MCP", async () => {
+  const { call, mcp, people, d } = await setup();
+  const { admin, alice } = await people();
+  const locator = `${tempDir()}/privateparent/docs`;
+  await Bun.write(`${locator}/guide.md`, "# Guide\n");
+  d.addSource({ kind: "local", library: "sample", version: "1", locator, groups: ["sdk"] });
+  const key = (await call("/api/me/keys", alice, "POST", { name: "agent" })).data.token;
+  const pins = (await call("/api/pins", admin, "PUT", { library: "sample", version: "1" })).data;
+  expect(pins.file).toBeString();
+  expect((await call("/api/sources/sample@1", alice)).data.locator).toBe("docs");
+  expect((await call("/api/sources?query=privateparent", admin)).data[0].locator).toBe(locator);
+  expect((await call("/api/sources?query=privateparent", alice)).data).toEqual([]);
+  expect((await mcp(key, "tools/call", { name: "docs_sources", arguments: { query: "privateparent" } })).text).toContain("No matching documentation collections");
+  const scope = (await call("/api/scope?group=sdk", alice)).data;
+  expect([scope.project, scope.pins.file, scope.pins.values.sample]).toEqual([null, null, "1"]);
+  expect(scope.text).not.toContain(pins.file);
+  const remote = await mcp(key, "tools/call", { name: "docs_scope", arguments: { groups: ["sdk"] } });
+  expect(remote.text).toContain("sample@1");
+  expect(remote.text).not.toContain(pins.file);
+  expect((await call("/api/search", alice, "POST", { queries: ["first", "second"], groups: ["sdk"] })).status).toBe(200);
+  expect((await call("/api/me/queries", alice)).data.queries.map((q: any) => [q.query, q.scope])).toEqual([["second", "group:sdk"], ["first", "group:sdk"]]);
+});
+
 test("personal keys share one request limit per person", async () => {
   const { call, mcp, people } = await setup({ mcpClientRate: { limit: 2, windowMs: 60_000 } });
   const { admin, alice } = await people();

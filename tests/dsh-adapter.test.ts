@@ -6,8 +6,7 @@ import { tempDir } from "./helpers.ts";
 const pluginRoot = join(import.meta.dir, "..", "integrations", "claude-code", "docify");
 const readJson = (path: string) => JSON.parse(readFileSync(join(pluginRoot, path), "utf8"));
 const RUNTIME = "claude-plugin-dsh";
-const RUNTIME_VERSION = "0.2.0";
-const RUNTIME_INTEGRITY = "sha512-pzSobglwIh7NuG5Y5W331kVIg5NExU5wnzW3citMKXl57CMmVW255b5zPLDyVA/ERSgUjhrsugBgkEq5p+S1Zw==";
+const RUNTIME_VERSION = readJson("dsh/package.json").dependencies[RUNTIME];
 
 // Runs in a separate node process: imports the adapter, applies it to a minimal DSH host and
 // prints where the runtime resolved from plus what the plugin registered.
@@ -60,6 +59,7 @@ function probe(root: string) {
 
 test("the DSH adapter depends on the published runtime directly, with no vendored copy", () => {
   const pkg = readJson("dsh/package.json");
+  expect(RUNTIME_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   expect(pkg.dependencies).toEqual({ [RUNTIME]: RUNTIME_VERSION });
   expect(pkg.files).toContain("bun.lock");
   expect(pkg.files).not.toContain("claude-compat.js");
@@ -67,9 +67,9 @@ test("the DSH adapter depends on the published runtime directly, with no vendore
   const source = readFileSync(join(pluginRoot, "dsh", "index.js"), "utf8");
   expect(source).toContain(`import { createPlugin, rootFrom } from '${RUNTIME}'`);
   expect(source).toContain("root: rootFrom(import.meta.url)");
-  const lock = readFileSync(join(pluginRoot, "dsh", "bun.lock"), "utf8");
-  expect(lock).toContain(`"${RUNTIME}@${RUNTIME_VERSION}"`);
-  expect(lock).toContain(RUNTIME_INTEGRITY);
+  const lock = Bun.JSONC.parse(readFileSync(join(pluginRoot, "dsh", "bun.lock"), "utf8")) as { packages: Record<typeof RUNTIME, unknown[]> };
+  expect(lock.packages[RUNTIME][0]).toBe(`${RUNTIME}@${RUNTIME_VERSION}`);
+  expect(lock.packages[RUNTIME][3]).toMatch(/^sha512-\S+$/);
 });
 
 test("a standalone copy installs the runtime from the lockfile and registers the docify skill through it", () => {

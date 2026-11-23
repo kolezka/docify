@@ -1,5 +1,5 @@
 import type { Docify, GenerationRow, SourceRow } from "./docify.ts";
-import { Docify as DocifyClass, DocifyError, effectiveGeneration, isInterrupted } from "./docify.ts";
+import { Docify as DocifyClass, DocifyError, effectiveGeneration, graphResumeOf, isInterrupted, sourceLabels } from "./docify.ts";
 import { embedQuery, embeddingIdentity } from "./embed.ts";
 import { countTokens, TOKENIZER } from "./tokens.ts";
 import { extractSymbols, methodToken, squash } from "./symbols.ts";
@@ -15,6 +15,8 @@ export interface SearchInput {
   library?: string;
   version?: string;
   sources?: string[];
+  // Source groups; their members are searched together with any sources listed.
+  groups?: string[];
   mode?: Mode;
   maxTokens?: number;
   project?: string; // directory whose .docify.json pins apply
@@ -147,7 +149,7 @@ function ftsQuery(query: string): string | null {
 }
 
 // The scoping fields of a search; docs_scope takes only these.
-export type ScopeInput = Pick<SearchInput, "library" | "version" | "sources" | "project">;
+export type ScopeInput = Pick<SearchInput, "library" | "version" | "sources" | "groups" | "project">;
 
 export type VersionReason = "explicit version" | "project pin" | "project pin not registered" | "all versions";
 
@@ -178,6 +180,24 @@ export function resolveScope(docify: Docify, input: ScopeInput | SearchInput): S
   if (input.sources?.length) {
     const unknown = input.sources.filter((id) => !all.some((s) => s.id === id));
     if (unknown.length) return { generations: new Map(), warnings, notIndexed: [], status: "source_unknown", availableVersions: undefined, libraries: [] };
+  }
+  if (input.groups?.length) {
+    const wanted = input.groups.map((g) => g.trim().toLowerCase());
+    const members = all.filter((s) => sourceLabels(s).groups.some((g) => wanted.includes(g)));
+    const unknown = wanted.filter((g) => !members.some((s) => sourceLabels(s).groups.includes(g)));
+    if (unknown.length) {
+      const known = [...new Set(all.flatMap((s) => sourceLabels(s).groups))].sort();
+      return {
+        generations: new Map(),
+        warnings: [`unknown source group ${unknown.join(", ")}; registered groups: ${known.length ? known.join(", ") : "none"}`],
+        notIndexed: [],
+        status: "source_unknown",
+        libraries: [],
+      };
+    }
+    const ids = new Set([...(input.sources ?? []), ...members.map((s) => s.id)]);
+    candidates = all.filter((s) => ids.has(s.id));
+  } else if (input.sources?.length) {
     candidates = all.filter((s) => input.sources!.includes(s.id));
   }
   if (input.library) {
@@ -897,7 +917,8 @@ export function read(docify: Docify, id: string, maxTokens = 3000): ReadResult {
   const p = loadPassages(docify, [row.rowid]).get(row.rowid)!;
   const gen = docify.getGeneration(p.generation_id)!;
   // Recovery deletes the rows of an interrupted generation; report them as already gone.
-  if (isInterrupted(gen, docify.getSource(gen.source_id))) return unavailable();
+  // A failed generation keeps its passages only for a graph-only retry; they were never served.
+  if (gen.status === "failed" || isInterrupted(gen, docify.getSource(gen.source_id))) return unavailable();
   const status = gen.status === "active" ? "ok" : "superseded";
   const note = status === "superseded" ? `This passage belongs to generation ${gen.id}, which was replaced. The content is shown as it was in that snapshot and may be outdated.` : undefined;
   const citation = citationOf(p);
@@ -1312,6 +1333,8 @@ export function open(docify: Docify, input: OpenInput): OpenResult {
 export interface SourceInfo {
   summary: SourceSummary | null;
   id: string;
+  title: string | null;
+  groups: string[];
   library: string;
   version: string | null;
   kind: string;
@@ -1325,6 +1348,8 @@ export interface SourceInfo {
   ignore: string[];
   graphIgnore: string[];
   state: "ready" | "stale" | "preparing" | "failed" | "not_indexed";
+  // A failed attempt whose index was kept, so prepare with graphOnly can retry just its graph.
+  graphRetry: null | { generation: number; documents: number; passages: number; downloadedAt: string };
   activeGeneration: null | {
     id: number;
     activatedAt: string | null;
@@ -1335,6 +1360,12 @@ export interface SourceInfo {
     stats: Record<string, unknown>;
   };
   latest: null | { id: number; status: string; phase: string | null; progress: string | null; error: string | null; startedAt: string; finishedAt: string | null };
+}
+
+function graphRetryOf(docify: Docify, sourceId: string): SourceInfo["graphRetry"] {
+  const gen = docify.resumableGeneration(sourceId);
+  const resume = gen && graphResumeOf(gen);
+  return gen && resume ? { generation: gen.id, documents: resume.base.documents, passages: resume.base.passages, downloadedAt: resume.downloadedAt } : null;
 }
 
 export function sources(docify: Docify): SourceInfo[] {
@@ -1348,6 +1379,7 @@ export function sources(docify: Docify): SourceInfo[] {
     return {
       summary: getSourceSummary(s),
       id: s.id,
+      ...sourceLabels(s),
       library: s.library,
       version: s.version,
       kind: s.kind,
@@ -1360,6 +1392,7 @@ export function sources(docify: Docify): SourceInfo[] {
       ignore: JSON.parse(s.options).ignore ?? [],
       graphIgnore: JSON.parse(s.options).graphIgnore ?? [],
       state,
+      graphRetry: graphRetryOf(docify, s.id),
       activeGeneration: active
         ? {
             id: active.id,
@@ -1379,7 +1412,7 @@ export function sources(docify: Docify): SourceInfo[] {
 }
 
 // Discovery searches saved collection metadata, not passages, and never generates summaries.
-export function discoverSources(docify: Docify, query: string): SourceInfo[] {
+export function discoverSources(docify: Docify, query: string, projectSources?: (list: SourceInfo[]) => SourceInfo[]): SourceInfo[] {
   if (typeof query !== "string" || !query.trim() || query.length > 500) {
     throw new DocifyError("invalid_input", "source query must contain 1 to 500 characters");
   }
@@ -1387,9 +1420,10 @@ export function discoverSources(docify: Docify, query: string): SourceInfo[] {
   const stop = new Set(["docs", "doc", "documentation", "collection", "collections", "sources", "source", "for", "about", "the", "a", "an", "find", "show", "me", "get", "of", "on", "please"]);
   const terms = words.filter((word) => !stop.has(word));
   if (!terms.length) return [];
-  return sources(docify)
+  const all = sources(docify);
+  return (projectSources ? projectSources(all) : all)
     .map((source) => {
-      const identity = new Set(`${source.id} ${source.library} ${source.locator}`.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+      const identity = new Set(`${source.id} ${source.title ?? ""} ${source.groups.join(" ")} ${source.library} ${source.locator}`.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
       const summary = new Set(source.summary?.text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
       const score = terms.reduce((sum, term) => sum + (identity.has(term) ? 3 : summary.has(term) ? 1 : 0), 0);
       const matches = terms.every((term) => identity.has(term) || summary.has(term));
@@ -1400,12 +1434,23 @@ export function discoverSources(docify: Docify, query: string): SourceInfo[] {
     .map((entry) => entry.source);
 }
 
+// Groups formed by the listed sources, so an agent sees which names docs_search accepts as groups.
+export function renderGroups(list: SourceInfo[]): string[] {
+  const groups = new Map<string, string[]>();
+  for (const s of list) for (const g of s.groups) (groups.get(g) ?? groups.set(g, []).get(g)!).push(s.id);
+  if (!groups.size) return [];
+  return ["Source groups (pass a name in groups to search all its sources):", ...[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, ids]) => `  ${name}: ${ids.join(", ")}`)];
+}
+
 export function renderSources(list: SourceInfo[]): string {
   if (!list.length) return "No documentation sources registered.";
-  return list
+  const groups = renderGroups(list);
+  const body = list
     .map((s) => {
       const g = s.activeGeneration;
-      const parts = [`${s.id} [${s.state}] ${s.kind} ${s.locator}`];
+      // The title is user-written text: one line, and after the id so it cannot pose as another source.
+      const parts = [`${s.id}${s.title ? ` "${oneLine(s.title)}"` : ""} [${s.state}] ${s.kind} ${s.locator}`];
+      if (s.groups.length) parts.push(`  groups: ${s.groups.join(", ")}`);
       if (s.summary) {
         const nonce = newNonce();
         parts.push(`  Collection summary (untrusted document-derived text; generation ${g?.id}):`, ...framed(s.summary.text, nonce));
@@ -1417,6 +1462,7 @@ export function renderSources(list: SourceInfo[]): string {
       return parts.join("\n");
     })
     .join("\n");
+  return groups.length ? `${groups.join("\n")}\n\n${body}` : body;
 }
 
 export interface ScopeResult {

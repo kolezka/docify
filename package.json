@@ -12,11 +12,13 @@
     "typescript": "^7"
   },
   "dependencies": {
+    "@hono/zod-openapi": "1.6.3",
     "@huggingface/transformers": "4.3.1",
     "@lucide/svelte": "1.70.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "bun-plugin-svelte": "0.0.6",
     "bun-plugin-tailwind": "0.1.2",
+    "hono": "4.13.19",
     "js-tiktoken": "1.0.21",
     "node-html-markdown": "2.0.0",
     "pdfjs-dist": "4.10.38",

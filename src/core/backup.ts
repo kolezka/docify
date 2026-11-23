@@ -113,6 +113,11 @@ export async function exportStore(docify: Docify): Promise<ExportResult> {
         copy.run("UPDATE sources SET lock_pid = NULL, lock_at = NULL");
         // Only a source added after the leases were taken can have one; it never activated.
         copy.run("UPDATE generations SET status = 'failed', error = 'interrupted by export', finished_at = ? WHERE status = 'staging'", [nowIso()]);
+        // A failed generation kept for a graph-only retry has no snapshot in the backup, so it goes without its index.
+        const failed = "SELECT id FROM generations WHERE status = 'failed'";
+        copy.run(`DELETE FROM passages_fts WHERE rowid IN (SELECT rowid FROM passages WHERE generation_id IN (${failed}))`);
+        for (const table of ["vectors", "node_passages", "graph_edges", "graph_nodes", "passages", "documents"]) copy.run(`DELETE FROM ${table} WHERE generation_id IN (${failed})`);
+        copy.run("UPDATE generations SET stats = '{}', snapshot_dir = NULL WHERE status = 'failed'");
         sources = copy.query<{ id: string }, []>("SELECT id FROM sources ORDER BY id").all().map((r) => r.id);
         const gens = copy.query<{ id: number; source_id: string }, []>("SELECT id, source_id FROM generations WHERE status IN ('active', 'superseded') ORDER BY id").all();
         for (const g of gens) {
