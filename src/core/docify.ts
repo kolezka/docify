@@ -17,7 +17,14 @@ import { groundingTerms, runGraphify, type GraphRunResult } from "./graph.ts";
 import { extractSymbols } from "./symbols.ts";
 import { LogStore } from "./logs.ts";
 
-export type SourceKind = "local" | "url";
+import { collectRepository, repositoryUrl } from "./repository.ts";
+
+export type SourceKind = "local" | "url" | "git";
+
+// Git is a URL-backed source in v1 stores. Decode the subtype at the row boundary.
+function sourceRow(row: SourceRow): SourceRow {
+  return row.kind === "url" && JSON.parse(row.options).repository === true ? { ...row, kind: "git" } : row;
+}
 export type CrawlProvider = "builtin" | "crawl4ai" | "browserless";
 
 function validateCrawlProvider(value: unknown): asserts value is CrawlProvider {
@@ -343,6 +350,7 @@ export class Docify {
       if (input.kind !== "url") throw new DocifyError("invalid_input", "crawlProvider applies only to URL sources");
     }
     if (input.crawl !== undefined) {
+      if (input.kind === "git") throw new DocifyError("invalid_input", "crawler settings do not apply to repositories");
       for (const key of ["maxPages", "maxDepth"] as const) {
         if (key in input.crawl) validateCrawlLimitPatch({ [key]: input.crawl[key] }, false);
       }
@@ -359,6 +367,8 @@ export class Docify {
         throw new DocifyError("invalid_input", "cannot register Docify's own store as a source");
       }
       statSync(locator);
+    } else if (input.kind === "git") {
+      try { locator = repositoryUrl(locator); } catch { throw new DocifyError("invalid_input", "Use an HTTPS repository URL without credentials, query or fragment"); }
     } else {
       let u: URL;
       try {
@@ -373,7 +383,8 @@ export class Docify {
     if (existing) throw new DocifyError("exists", `source ${id} already exists`);
     this.db.run(
       "INSERT INTO sources (id, library, version, kind, locator, options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [id, library, version, input.kind, locator, JSON.stringify({
+      [id, library, version, input.kind === "git" ? "url" : input.kind, locator, JSON.stringify({
+        ...(input.kind === "git" ? { repository: true } : {}),
         crawl: input.crawl ?? {},
         ...(input.crawlProvider === undefined ? {} : { crawlProvider: input.crawlProvider }),
         ...(ignore.length ? { ignore } : {}),
@@ -485,7 +496,8 @@ export class Docify {
   }
 
   getSource(id: string): SourceRow | null {
-    return this.db.query<SourceRow, [string]>("SELECT * FROM sources WHERE id = ?").get(id);
+    const row = this.db.query<SourceRow, [string]>("SELECT * FROM sources WHERE id = ?").get(id);
+    return row && sourceRow(row);
   }
 
   requireSource(id: string): SourceRow {
@@ -495,7 +507,7 @@ export class Docify {
   }
 
   listSourceRows(): SourceRow[] {
-    return this.db.query<SourceRow, []>("SELECT * FROM sources ORDER BY library, version").all();
+    return this.db.query<SourceRow, []>("SELECT * FROM sources ORDER BY library, version").all().map(sourceRow);
   }
 
   generations(sourceId: string): GenerationRow[] {
@@ -633,14 +645,14 @@ export class Docify {
       const ignore = compileIgnore(sourceOpts.ignore, "ignore");
       const graphIgnore = compileIgnore(sourceOpts.graphIgnore, "graphIgnore");
       const inGraph = (path: string) => !graphIgnore.some((pattern) => pattern.test(path));
-      const provider = source.kind === "local" ? "local" : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
-      if (provider !== "local") validateCrawlProvider(provider);
+      const provider = source.kind !== "url" ? source.kind : (sourceOpts.crawlProvider ?? this.config.crawlProvider);
+      if (provider !== "local" && provider !== "git") validateCrawlProvider(provider);
       const limits = { ...DEFAULT_LIMITS, ...(source.kind === "url" ? { maxPages: this.config.maxPages, maxDepth: this.config.maxDepth, maxTotalBytes: this.config.maxTotalMb * BYTES_PER_MB } : {}), ...sourceOpts.crawl };
       const downloadedAt = nowIso();
       const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
       const collectLog: CollectLog = (level, text) => this.logs.append(sourceId, text, "system", level);
-      if (provider !== "local") this.logs.append(sourceId, `Collecting with ${this.describeProvider(provider as CrawlProvider)}`);
-      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits, collectLog, ignore) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts, collectLog, ignore);
+      if (provider !== "local" && provider !== "git") this.logs.append(sourceId, `Collecting with ${this.describeProvider(provider as CrawlProvider)}`);
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits, collectLog, ignore) : source.kind === "git" ? await collectRepository(source.locator, limits, ignore, opts.signal) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts, collectLog, ignore);
       raw.sort((a, b) => a.path.localeCompare(b.path));
       const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
       const snapshotHash = sha256([...docHashes.map((x) => `${x.d.path}\0${x.rawSha}`), ...artifacts.map((a) => `artifact:${a.kind}\0${sha256(a.bytes)}`)].join("\n"));

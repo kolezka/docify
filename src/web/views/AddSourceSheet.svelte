@@ -9,7 +9,7 @@
   import { tick } from "svelte";
   import { button, footnote, input, isPatternField, notice, panel, patternError, patternLines, popup, row, textArea } from "../lib/ui.ts";
 
-  type Kind = "url" | "local";
+  type Kind = "url" | "git" | "local";
   const CRAWLER_LABELS: Record<string, string> = { builtin: "Built-in", crawl4ai: "Crawl4AI", browserless: "Browserless" };
   const FIELDS = ["locator", "library", "version", "crawlProvider", "ignore", "graphIgnore", "title", "groups"] as const;
   type FieldName = (typeof FIELDS)[number];
@@ -58,13 +58,14 @@
   function suggest(kind: Kind, text: string): { library: string; version: string } {
     const value = text.trim();
     if (!value) return { library: "", version: "" };
-    if (kind === "url") {
+    if (kind !== "local") {
       let url: URL;
       try {
         url = new URL(value);
       } catch {
         return { library: "", version: "" };
       }
+      if (kind === "git") return { library: slug((url.pathname.split("/").filter(Boolean).at(-1) ?? "").replace(/\.git$/, "")), version: "" };
       const labels = url.hostname.split(".").filter(Boolean);
       const name = labels.slice(0, -1).find((l) => !SKIP_HOST_LABELS.has(l)) ?? labels[0] ?? "";
       const versionSegment = url.pathname.split("/").map((p) => VERSION_SEGMENT.exec(p)?.[1]).find(Boolean) ?? "";
@@ -84,7 +85,7 @@
     const parts = [!libraryEdited && suggestion.library && "Library", !versionEdited && suggestion.version && "version"].filter(Boolean);
     if (!parts.length) return "";
     const what = parts.length === 2 ? "Library and version were" : parts[0] === "Library" ? "Library was" : "Version was";
-    return `${what} suggested from the ${kind === "url" ? "URL" : "folder name"}`;
+    return `${what} suggested from the ${kind !== "local" ? "URL" : "folder name"}`;
   });
   const sourceId = $derived(libraryValue.trim() ? `${libraryValue.trim().toLowerCase()}@${versionValue.trim() || "unknown"}` : "");
   const canSubmit = $derived(!submitting && !!locator.trim() && !!libraryValue.trim());
@@ -165,6 +166,7 @@
         bind:value={kind}
         options={[
           { value: "url", label: "Website" },
+          { value: "git", label: "Repository" },
           { value: "local", label: "Local Folder" },
         ]}
         onchange={() => fieldError?.field === "locator" && (fieldError = null)}
@@ -180,14 +182,14 @@
 
     <div class={panel({ class: "mt-[18px]" })}>
       <div class={row({ class: "flex-col items-stretch gap-1.5" })}>
-        <label for="add-locator" class="text-[13px] text-label">{kind === "url" ? "Start URL" : "Folder"}</label>
+        <label for="add-locator" class="text-[13px] text-label">{kind === "url" ? "Start URL" : kind === "git" ? "Repository URL" : "Folder"}</label>
         <input
           id="add-locator"
           class={input({ mono: true, invalid: !!errorFor("locator") })}
-          type={kind === "url" ? "url" : "text"}
+          type={kind !== "local" ? "url" : "text"}
           autocomplete="off"
           spellcheck="false"
-          placeholder={kind === "url" ? "https://bun.sh/docs" : "~/Documents/docs"}
+          placeholder={kind === "url" ? "https://bun.sh/docs" : kind === "git" ? "https://github.com/owner/repo" : "~/Documents/docs"}
           aria-invalid={!!errorFor("locator")}
           aria-describedby="add-locator-hint"
           bind:value={locator}
@@ -195,7 +197,7 @@
       </div>
     </div>
     <p id="add-locator-hint" class="mx-3.5 mt-1.5 text-[11px] leading-[14px] {errorFor('locator') ? 'font-medium text-bad-text' : 'text-label2'}">
-      {errorFor("locator") ?? (kind === "url" ? "Follows links under this path on the same site." : "Markdown, MDX and HTML files in this folder and below.")}
+      {errorFor("locator") ?? (kind === "url" ? "Follows links under this path on the same site." : kind === "git" ? "Indexes documentation and source code from the default branch of a public HTTPS Git repository." : "Markdown, MDX and HTML files in this folder and below.")}
     </p>
 
     <div class={panel({ class: "mt-3.5" })}>
