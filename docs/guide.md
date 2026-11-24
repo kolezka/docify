@@ -139,6 +139,16 @@ Some sites send a page whose article is an empty placeholder and keep the text i
 
 Set the global page and depth limits under Settings > Web Crawling, or set `maxPages` and `maxDepth` in `config.json`. The allowed ranges are 1 to 100,000 pages and 0 to 1,000 link levels; depth 0 collects only the start page. Each URL source can override either limit on its source page. Leave a field blank to inherit the global setting. Changes apply on the next prepare and do not expand the allowed origin or path scope. The source API accepts a `crawl` object with `maxPages` and `maxDepth`; a PATCH value of `null` removes that field's override.
 
+### Schedule a source refresh
+
+```bash
+docify schedule mylib@2.1 '0 3 * * 1'  # every Monday at 03:00, server local time
+docify schedule mylib@2.1              # show the schedule or off
+docify schedule mylib@2.1 --clear      # stop future automatic refreshes
+```
+
+Schedules are off by default. Use the same Docify store as the running `docify serve`. The server checks the current schedules each minute and starts a normal prepare for each due source, using its configured crawler, embedding and graph providers. Changes need no restart. A busy source is not queued for a second prepare. While the server is down, nothing runs; missed times are not replayed.
+
 ### Ignore paths
 
 Each source can carry two lists of regular expressions. `ignore` keeps matching documents out of the source: a URL source does not fetch those pages, a local source does not read those files, and neither can be searched. `graphIgnore` keeps matching documents searchable but leaves them out of the semantic graph, which saves LLM time on pages such as changelogs or generated API listings.
