@@ -23,6 +23,15 @@ rm -rf ~/.config/docify/graphify-venv && docify setup   # the venv's scripts hol
 
 `make` lists shortcuts for these and the other commands below: `make check` type-checks and tests.
 
+## Git repository sources
+
+```bash
+docify add itsdangerous https://github.com/pallets/itsdangerous.git --git
+docify prepare itsdangerous@unknown --no-graph
+```
+
+In the web UI choose **New Source > Repository** and enter the public HTTPS clone URL. Registration stores the address. Each prepare uses `git` from `PATH` to fetch the default branch and indexes supported documentation and source files by repository-relative path. Search reads the prepared snapshot, not the remote. Use `--ignore` to exclude matching paths. Git credentials, redirects, submodules and symlinks are not used. Without `--git`, an HTTPS address remains a website source.
+
 ## Collection summaries and discovery
 
 After preparing a source, generate its collection overview explicitly:

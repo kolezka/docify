@@ -1,6 +1,6 @@
 import { NodeHtmlMarkdown } from "node-html-markdown";
 
-export type DocKind = "markdown" | "mdx" | "html";
+export type DocKind = "markdown" | "mdx" | "html" | "code";
 
 export interface NormalizedDoc {
   title: string | null;
@@ -23,6 +23,7 @@ export function kindFromPath(path: string): DocKind | null {
 }
 
 export function normalize(raw: string, kind: DocKind): NormalizedDoc {
+  if (kind === "code") return { title: null, markdown: raw.replace(/\r\n?/g, "\n"), linesMatchRaw: true, anchors: new Map() };
   return kind === "html" ? normalizeHtml(raw) : normalizeMarkdown(raw);
 }
 

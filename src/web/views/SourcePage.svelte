@@ -360,7 +360,7 @@
         {/if}
       {/if}
     </span>
-    {#if s.kind === "url"}
+    {#if s.kind !== "local"}
       <span class={capsule()}>
         <a class={capsuleButton({ class: "px-0" })} href={s.locator} target="_blank" rel="noopener noreferrer" aria-label="Open site" title="Open site"><ExternalLink size={14} /></a>
       </span>
@@ -383,7 +383,7 @@
       <div class="mt-1.5 flex min-w-0 items-center gap-2 text-[13px] text-label2">
         <StatusChip tone={sourceTone(s.state)} label={sourceStateLabel(s.state)} />
         <span aria-hidden="true">·</span>
-        {#if s.kind === "url"}
+        {#if s.kind !== "local"}
           <Link size={13} class="shrink-0 text-label3" aria-hidden="true" />
           <a class="truncate font-mono text-[12px] text-accent-text hover:underline" href={s.locator} target="_blank" rel="noopener noreferrer" title={s.locator}>{s.locator}</a>
         {:else}

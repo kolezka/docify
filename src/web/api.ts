@@ -406,7 +406,7 @@ export function createApi(deps: ApiDeps) {
         if (!withinSourceRoots(real, sourceRoots)) throw new DocifyError("invalid_input", `local sources must be inside DOCIFY_SOURCE_ROOTS (${sourceRoots.join(delimiter)})`);
         return json(docify.addSource({ library: b.library, version, kind: "local", locator: real, ignore: b.ignore, graphIgnore: b.graphIgnore, ...labels }), 201);
       }
-      return json(docify.addSource({ library: b.library, version, kind: "url", locator: b.locator, crawlProvider: b.crawlProvider, crawl: b.crawl as never, ignore: b.ignore, graphIgnore: b.graphIgnore, ...labels }), 201);
+      return json(docify.addSource({ library: b.library, version, kind: b.kind, locator: b.locator, crawlProvider: b.crawlProvider, crawl: b.crawl as never, ignore: b.ignore, graphIgnore: b.graphIgnore, ...labels }), 201);
     },
   );
   member(

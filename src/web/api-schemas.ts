@@ -141,7 +141,7 @@ export const Generation = z
 
 export const AddSourceBody = z
   .object({
-    kind: z.enum(["local", "url"]).default("local"),
+    kind: z.enum(["local", "url", "git"]).default("local"),
     library: z.string().trim().min(1),
     locator: z.string().trim().min(1).openapi({ description: "Directory path (inside DOCIFY_SOURCE_ROOTS) or start URL" }),
     version: z.string().nullable().optional(),

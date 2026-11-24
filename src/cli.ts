@@ -14,7 +14,7 @@ const USAGE = `docify <command> [options]
 
 Preparation (may use the network or the configured graph provider):
   setup                         install the pinned Graphify runtime and download the embedding model
-  add <library> <path|url> [--version V] [--id ID] [--crawler builtin|crawl4ai|browserless]
+  add <library> <path|url> [--git] [--version V] [--id ID] [--crawler builtin|crawl4ai|browserless]
                                 [--ignore REGEX ...] [--graph-ignore REGEX ...] [--title T] [--group G ...]
   crawler <source-id> <builtin|crawl4ai|browserless|default>
   ignore <source-id> [--ignore REGEX ...] [--graph-ignore REGEX ...] [--no-ignore] [--no-graph-ignore]
@@ -107,6 +107,7 @@ async function main(argv: string[]) {
       "graph-weight": { type: "string" },
       require: { type: "string" },
       heading: { type: "string" },
+      git: { type: "boolean" },
       crawler: { type: "string" },
       ignore: { type: "string", multiple: true },
       "graph-ignore": { type: "string", multiple: true },
@@ -143,8 +144,8 @@ async function main(argv: string[]) {
         break;
       case "add": {
         const [library, locator] = positionals;
-        if (!library || !locator) throw new DocifyError("invalid_input", "usage: docify add <library> <path|url> [--version V]");
-        const kind = /^https?:\/\//.test(locator) ? "url" : "local";
+        if (!library || !locator) throw new DocifyError("invalid_input", "usage: docify add <library> <path|url> [--git] [--version V]");
+        const kind = values.git ? "git" : /^https?:\/\//.test(locator) ? "url" : "local";
         const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id, crawlProvider: values.crawler as CrawlProvider | undefined, ignore: values.ignore, graphIgnore: values["graph-ignore"], title: values.title, groups: values.group });
         console.log(`added ${s.id} (${s.kind} ${s.locator}). Run: docify prepare ${s.id}`);
         break;
