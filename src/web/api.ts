@@ -423,7 +423,7 @@ export function createApi(deps: ApiDeps) {
       method: "patch",
       path: "/api/sources/{id}",
       tags: ["Sources"],
-      summary: "Change title, groups, crawler settings or ignore patterns",
+      summary: "Change title, groups, refresh schedule, crawler settings or ignore patterns",
       description: "Every value is checked before anything is written, so a bad one leaves the whole request unapplied. Crawler settings and ignore patterns take effect on the next prepare; title and groups at once, also while the source prepares. The id never changes.",
       request: { params: s.SourceIdParam, body: s.jsonBody(s.PatchSourceBody) },
       responses: { 200: s.json(s.Ok, "Saved"), ...s.errors(400, 404, 415) },
@@ -434,16 +434,19 @@ export function createApi(deps: ApiDeps) {
       const crawler = b.crawlProvider !== undefined || b.crawl4ai !== undefined || b.crawl !== undefined;
       const ignoring = b.ignore !== undefined || b.graphIgnore !== undefined;
       const labelling = b.title !== undefined || b.groups !== undefined;
-      if (!crawler && !ignoring && !labelling) throw new DocifyError("invalid_input", "crawler settings, ignore patterns, title or groups are required");
+      if (!crawler && !ignoring && !labelling && b.refreshCron === undefined) throw new DocifyError("invalid_input", "a source setting is required");
       // Checked before anything is written, so a bad value cannot leave half of the request applied.
       for (const name of ["ignore", "graphIgnore"] as const) {
         if (b[name] !== undefined && b[name] !== null) validateIgnorePatterns(b[name], name);
       }
       if (b.title !== undefined) validateTitle(b.title);
       if (b.groups !== undefined) validateGroups(b.groups);
-      if (labelling) docify.updateSourceLabels(id, { title: b.title, groups: b.groups });
-      if (crawler) docify.updateSourceCrawler(id, b.crawlProvider, b.crawl4ai, b.crawl);
-      if (ignoring) docify.updateSourceIgnore(id, { ignore: b.ignore, graphIgnore: b.graphIgnore });
+      docify.db.transaction(() => {
+        if (b.refreshCron !== undefined) docify.setRefreshCron(id, b.refreshCron);
+        if (labelling) docify.updateSourceLabels(id, { title: b.title, groups: b.groups });
+        if (crawler) docify.updateSourceCrawler(id, b.crawlProvider, b.crawl4ai, b.crawl);
+        if (ignoring) docify.updateSourceIgnore(id, { ignore: b.ignore, graphIgnore: b.graphIgnore });
+      }).immediate();
       return json({ ok: true });
     },
   );

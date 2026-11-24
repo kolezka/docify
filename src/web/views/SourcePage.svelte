@@ -48,6 +48,8 @@
   let ignoreText = $state("");
   let graphIgnoreText = $state("");
   let ignoreError = $state<{ field: PatternField; message: string } | null>(null);
+  let cronDraft = $state<string | null>(null);
+  let cronError = $state("");
   let editingLabels = $state(false);
   let titleText = $state("");
   let groupsText = $state("");
@@ -61,6 +63,8 @@
       menuOpen = false;
       confirmRemove = false;
       showAllMissing = false;
+      cronDraft = null;
+      cronError = "";
       editingCrawl4ai = false;
       editingLimits = false;
       editingIgnore = false;
@@ -157,6 +161,22 @@
       await api(path, { method: "PATCH", body: { crawl: { maxPages: maxPages === "" ? null : Number(maxPages), maxDepth: maxDepth === "" ? null : Number(maxDepth) } } });
       editingLimits = false;
     });
+  }
+
+  async function saveSchedule(event: SubmitEvent) {
+    event.preventDefault();
+    const id = nav.sourceId;
+    actionBusy = true;
+    cronError = "";
+    try {
+      await api(path, { method: "PATCH", body: { refreshCron: cronDraft?.trim() || null } });
+      await sources.refresh();
+      if (nav.sourceId === id) cronDraft = null;
+    } catch (err) {
+      if (nav.sourceId === id) cronError = errorText(err);
+    } finally {
+      actionBusy = false;
+    }
   }
 
   function editIgnore() {
@@ -549,6 +569,25 @@
       {/if}
 
       {#if session.admin}
+        <Group title="Automatic refresh" hint="Uses the server’s local time. Missed runs are skipped while Docify is stopped.">
+          {#if cronDraft === null}
+            <Row label="Schedule"><span class="font-mono text-[13px]">{s.refreshCron ?? "Off"}</span></Row>
+            <Row class="justify-end"><button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => { cronDraft = s?.refreshCron ?? ""; cronError = ""; }}>Edit schedule</button></Row>
+          {:else}
+            <form onsubmit={saveSchedule}>
+              <Row class="flex-col items-stretch gap-1.5">
+                <label for="source-cron">Cron expression</label>
+                <input id="source-cron" class={input({ invalid: !!cronError })} bind:value={cronDraft} placeholder="0 3 * * *" spellcheck="false" autocomplete="off" aria-describedby="cron-help" aria-invalid={!!cronError} disabled={busy} oninput={() => cronError = ""} />
+                <span id="cron-help" class={footnote}>Minute, hour, day of month, month, weekday. For example, 0 3 * * * runs daily at 03:00. Leave blank to turn off.</span>
+                {#if cronError}<span class={cn(footnote, "text-bad-text")} role="alert">{cronError}</span>{/if}
+              </Row>
+              <Row class="justify-end">
+                <button type="button" class={button({ size: "xs" })} disabled={busy} onclick={() => cronDraft = null}>Cancel</button>
+                <button type="submit" class={button({ intent: "primary", size: "xs" })} disabled={busy}>Save schedule</button>
+              </Row>
+            </form>
+          {/if}
+        </Group>
         <Group title="Ignored paths" hint="Regular expressions matched against the document path, such as ^changelog/. Changes apply on the next update.">
           {#if editingIgnore}
             <form onsubmit={saveIgnore}>

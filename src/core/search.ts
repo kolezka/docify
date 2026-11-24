@@ -1347,6 +1347,7 @@ export interface SourceInfo {
   // Regular expressions over document paths: not collected, and collected but left out of the graph.
   ignore: string[];
   graphIgnore: string[];
+  refreshCron: string | null;
   state: "ready" | "stale" | "preparing" | "failed" | "not_indexed";
   // A failed attempt whose index was kept, so prepare with graphOnly can retry just its graph.
   graphRetry: null | { generation: number; documents: number; passages: number; downloadedAt: string };
@@ -1391,6 +1392,7 @@ export function sources(docify: Docify): SourceInfo[] {
       crawl4ai: s.kind === "url" ? (JSON.parse(s.options).crawl4ai ?? {}) : undefined,
       ignore: JSON.parse(s.options).ignore ?? [],
       graphIgnore: JSON.parse(s.options).graphIgnore ?? [],
+      refreshCron: JSON.parse(s.options).refreshCron ?? null,
       state,
       graphRetry: graphRetryOf(docify, s.id),
       activeGeneration: active
