@@ -31,6 +31,20 @@ async function setup(opts: { project?: string } = {}) {
   return { home, d, project, base, call };
 }
 
+test("web schedule edits share CLI state and invalid schedules leave the source unchanged", async () => {
+  const { d, call } = await setup();
+  d.addSource({ id: "docs", library: "docs", locator: "https://example.com", kind: "url" });
+  const path = "/api/sources/docs";
+  d.setRefreshCron("docs", "0 3 * * *");
+  expect((await call(path)).data.refreshCron).toBe("0 3 * * *");
+  expect((await call(path, "PATCH", { refreshCron: "invalid", title: "changed" })).status).toBe(400);
+  expect((await call(path)).data).toMatchObject({ refreshCron: "0 3 * * *", title: null });
+  expect((await call(path, "PATCH", { refreshCron: "15 4 * * *" })).status).toBe(200);
+  expect(JSON.parse(d.requireSource("docs").options).refreshCron).toBe("15 4 * * *");
+  expect((await call(path, "PATCH", { refreshCron: null })).status).toBe(200);
+  expect((await call(path)).data.refreshCron).toBeNull();
+});
+
 test("the page and every asset it references are served, with a restrictive policy on the page", async () => {
   const { base } = await setup();
   const page = await fetch(`${base}/`);
