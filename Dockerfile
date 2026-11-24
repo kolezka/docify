@@ -51,7 +51,13 @@ RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
  && chown -R docify:docify /data /home/docify /sources \
  && chmod -R a+rX /opt/docify
 
+# Repository sources invoke Git during preparation, not during application setup.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/*
+
 USER docify
+RUN git --version
 EXPOSE 4747
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
