@@ -442,6 +442,23 @@ export class Docify {
     }).immediate();
   }
 
+  setRefreshCron(id: string, cron: string | null): void {
+    if (cron !== null) {
+      cron = cron.trim();
+      try {
+        if (cron.split(/\s+/).length !== 5 || !Bun.cron.parse(cron)) throw new Error();
+      } catch {
+        throw new DocifyError("invalid_input", "expected a five-field cron expression with a future occurrence");
+      }
+    }
+    this.db.transaction(() => {
+      const options = JSON.parse(this.requireSource(id).options);
+      if (cron === null) delete options.refreshCron;
+      else options.refreshCron = cron;
+      this.db.run("UPDATE sources SET options = ? WHERE id = ?", [JSON.stringify(options), id]);
+    }).immediate();
+  }
+
   // Title and groups only label a source: they change no snapshot or index, so they apply at once
   // and are allowed while the source prepares. null or an empty value removes them.
   updateSourceLabels(id: string, patch: { title?: unknown; groups?: unknown }): SourceRow {

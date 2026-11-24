@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { delimiter, resolve } from "node:path";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Docify, DocifyError } from "../core/docify.ts";
+import { refreshDueSources } from "../core/refresh.ts";
 import { uiAssets } from "./bundle.ts";
 import { LOOPBACK_HOSTS, hostAllowed, hostGuard, originAllowed, parseAllowedHosts, splitList } from "../http/host.ts";
 import { bearerAuth, parseBearerClients, type BearerClient } from "../http/auth.ts";
@@ -407,5 +408,16 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       console.log(`MCP over HTTP on /mcp for ${names}; ${mcp.clientRate.limit} requests per ${mcp.clientRate.windowMs / 1000} s per client, ${mcp.ipRate.limit} per ${mcp.ipRate.windowMs / 1000} s per IP.`);
     }
   }
-  return Object.assign(server, { token, accounts: store });
+  const tick = Bun.cron("* * * * *", () => {
+    try {
+      refreshDueSources(docify);
+    } catch (err) {
+      console.error("Scheduled refresh could not read sources:", err);
+    }
+  });
+  const stop = server.stop.bind(server);
+  return Object.assign(server, { token, accounts: store, stop(closeActiveConnections?: boolean) {
+    tick.stop();
+    return stop(closeActiveConnections);
+  } });
 }

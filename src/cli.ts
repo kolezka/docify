@@ -23,6 +23,9 @@ Preparation (may use the network or the configured graph provider):
                                 searchable, but not in the graph. Each option replaces its list,
                                 --no-... removes it; without options the current lists are shown.
                                 Applies at the next prepare.
+  schedule <source-id> ["minute hour day month weekday" | --clear]
+                                show, set or disable automatic prepare (server local time).
+                                Only runs while docify serve is up; missed runs are skipped.
   title <source-id> [title] [--clear]
                                 show or set the display name of a source; the id does not change
   group <name> [add|remove <source-id> ...]
@@ -148,6 +151,13 @@ async function main(argv: string[]) {
         const kind = values.git ? "git" : /^https?:\/\//.test(locator) ? "url" : "local";
         const s = docify.addSource({ library, locator, kind, version: values.version ?? null, id: values.id, crawlProvider: values.crawler as CrawlProvider | undefined, ignore: values.ignore, graphIgnore: values["graph-ignore"], title: values.title, groups: values.group });
         console.log(`added ${s.id} (${s.kind} ${s.locator}). Run: docify prepare ${s.id}`);
+        break;
+      }
+      case "schedule": {
+        const [id, cron] = positionals;
+        if (!id || positionals.length > 2 || (values.clear && cron !== undefined)) throw new DocifyError("invalid_input", 'usage: docify schedule <source-id> ["cron" | --clear]');
+        if (values.clear || cron !== undefined) docify.setRefreshCron(id, cron ?? null);
+        console.log(`${id}: ${JSON.parse(docify.requireSource(id).options).refreshCron ?? "off"}`);
         break;
       }
       case "ignore": {
