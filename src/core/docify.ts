@@ -671,7 +671,7 @@ export class Docify {
       const artifacts: { kind: "screenshot" | "pdf"; bytes: Uint8Array }[] = [];
       const collectLog: CollectLog = (level, text) => this.logs.append(sourceId, text, "system", level);
       if (provider !== "local" && provider !== "git") this.logs.append(sourceId, `Collecting with ${this.describeProvider(provider as CrawlProvider)}`);
-      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits, collectLog, ignore) : source.kind === "git" ? await collectRepository(source.locator, limits, ignore, opts.signal) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts, collectLog, ignore);
+      const raw: RawDoc[] = source.kind === "local" ? collectLocal(source.locator, limits, collectLog, ignore) : source.kind === "git" ? await collectRepository(source.locator, limits, ignore, opts.signal, join(this.config.home, "repositories", sha256(`${sourceId}\0${source.locator}`)), collectLog) : await this.collectUrl(source.locator, limits, opts, provider as CrawlProvider, sourceOpts.crawl4ai, artifacts, collectLog, ignore);
       raw.sort((a, b) => a.path.localeCompare(b.path));
       const docHashes = raw.map((d) => ({ d, rawSha: sha256(d.bytes) }));
       const snapshotHash = sha256([...docHashes.map((x) => `${x.d.path}\0${x.rawSha}`), ...artifacts.map((a) => `artifact:${a.kind}\0${sha256(a.bytes)}`)].join("\n"));

@@ -1,11 +1,54 @@
 import { test, expect } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { rmSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { newDocify, tempDir, writeDocs } from "./helpers.ts";
-import { readRepositoryTree } from "../src/core/repository.ts";
+import { collectRepository, readRepositoryTree } from "../src/core/repository.ts";
 import { DEFAULT_LIMITS } from "../src/core/collect.ts";
 import { normalize } from "../src/core/normalize.ts";
+
+test("update pulls a new commit, reports no change, and logs a failed pull", async () => {
+  const root = tempDir();
+  const remote = join(root, "upstream");
+  const bin = join(root, "bin");
+  const cache = join(root, "cache");
+  const url = "https://example.invalid/project.git";
+  const originalPath = process.env.PATH;
+  const realGit = Bun.which("git")!;
+  const messages: string[] = [];
+  const collect = () => collectRepository(url, DEFAULT_LIMITS, [], undefined, cache, (_level, text) => messages.push(text));
+  const git = (...args: string[]) => execFileSync(realGit, args, { cwd: remote });
+  try {
+    mkdirSync(remote);
+    git("init", "--quiet", "--template=");
+    const commit = (text: string) => {
+      writeDocs(remote, { "README.md": text });
+      git("add", ".");
+      git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgSign=false", "commit", "-qm", text);
+    };
+    commit("first");
+    // Rewrite only the fixture URL; clone and pull still execute real Git.
+    writeDocs(bin, { git: `#!/bin/sh\nexport GIT_ALLOW_PROTOCOL=file\nprintf '%s\\n' "$*" >> '${root}/commands'\nexec "${realGit}" -c 'url.file://${remote}.insteadOf=${url}' "$@"\n` });
+    chmodSync(join(bin, "git"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    expect((await collect())[0]?.bytes.toString()).toBe("first");
+    commit("second");
+    messages.length = 0;
+    expect((await collect())[0]?.bytes.toString()).toBe("second");
+    const commands = readFileSync(join(root, "commands"), "utf8").split("\n");
+    expect(commands.filter(line => line.includes(" clone "))).toHaveLength(1);
+    expect(commands.filter(line => line.includes(" pull --ff-only "))).toHaveLength(1);
+    expect(readdirSync(cache)).toEqual([".git"]);
+    expect(messages.join("\n")).toContain("git pull --ff-only");
+    expect(messages.join("\n")).toContain(git("rev-parse", "--short", "HEAD").toString().trim());
+    messages.length = 0;
+    await collect();
+    expect(messages.join("\n")).toContain("Already up to date");
+    rmSync(remote, { recursive: true });
+    await expect(collect()).rejects.toThrow();
+    expect(messages.at(-1)).toContain("git pull failed");
+  } finally { process.env.PATH = originalPath; rmSync(root, { recursive: true, force: true }); }
+});
 
 test("register and reopen a repository without contacting its host", () => {
   const home = tempDir();
