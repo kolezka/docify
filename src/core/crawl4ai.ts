@@ -62,19 +62,21 @@ export function crawl4aiFetcher(opts: Crawl4aiOptions, render: Crawl4aiRenderOpt
   }
   const endpoint = new URL(render.stream ? "crawl/stream" : "crawl", crawl4aiServiceUrl(opts.url).toString().replace(/\/*$/, "/"));
   const doFetch = opts.fetchImpl ?? fetch;
-  const pending = new Map<string, { html: string; status: number }>();
+  const defaultChain = {};
+  const pending = new WeakMap<object, { url: string; html: string; status: number }>();
   const secret = opts.apiKey;
   const scrub = (s: string) => (secret ? s.split(secret).join("<redacted>") : s).slice(0, 300);
 
   let captured: { url: string; result: Record<string, unknown> } | undefined;
-  const fetcher: Fetcher = async (target: string): Promise<Response> => {
-    const cached = pending.get(target);
-    if (cached) {
-      pending.delete(target);
+  const fetcher: Fetcher = async (target: string, init, chain = defaultChain): Promise<Response> => {
+    const cached = pending.get(chain);
+    if (cached?.url === target) {
+      pending.delete(chain);
       return page(cached.html, cached.status, target);
     }
     const signals = [AbortSignal.timeout(opts.timeoutMs)];
     if (opts.signal) signals.push(opts.signal);
+    if (init.signal) signals.push(init.signal);
     const signal = AbortSignal.any(signals);
     const headers: Record<string, string> = { "content-type": "application/json", accept: render.stream ? "application/x-ndjson" : "application/json" };
     if (secret) headers.authorization = `Bearer ${secret}`;
@@ -126,7 +128,7 @@ export function crawl4aiFetcher(opts: Crawl4aiOptions, render: Crawl4aiRenderOpt
         const finalUrl = typeof result.redirected_url === "string" && result.redirected_url ? result.redirected_url : target;
         if (sameUrl(finalUrl, target) === null) throw new Crawl4aiError(`Crawl4AI response for ${target} has an invalid redirected_url`);
         if (!sameUrl(finalUrl, target)) {
-          pending.set(finalUrl, { html: "", status });
+          pending.set(chain, { url: finalUrl, html: "", status });
           return new Response(null, { status: 302, headers: { location: finalUrl } });
         }
         return page("", status, target);
@@ -138,7 +140,7 @@ export function crawl4aiFetcher(opts: Crawl4aiOptions, render: Crawl4aiRenderOpt
     if (sameUrl(finalUrl, target) === null) throw new Crawl4aiError(`Crawl4AI response for ${target} has an invalid redirected_url`);
     if (capture) captured = { url: finalUrl, result };
     if (!sameUrl(finalUrl, target)) {
-      pending.set(finalUrl, { html: result.html, status });
+      pending.set(chain, { url: finalUrl, html: result.html, status });
       return new Response(null, { status: 302, headers: { location: finalUrl } });
     }
     return page(result.html, status, target);

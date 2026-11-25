@@ -33,7 +33,8 @@ test("crawl follows Markdown index links including extensionless documentation p
   const docs = await crawl(base + "llms.txt", DEFAULT_LIMITS, fetcher);
   expect(docs.map((d) => d.path)).toEqual(["llms.txt", "guide.md", "setup", "usage.html", "options.md"]);
   expect(new TextDecoder().decode(docs[1]!.bytes)).toContain("kestrelSpeed");
-  expect(requested).toEqual(["llms.txt", "guide.md", "setup.md", "setup", "usage.html", "options.md"]);
+  expect(requested.toSorted()).toEqual(["llms.txt", "guide.md", "setup.md", "setup", "usage.html", "options.md"].sort());
+  expect(requested.indexOf("setup.md")).toBeLessThan(requested.indexOf("setup"));
 });
 
 // An index such as docs.openclaw.ai/llm.txt lists routes without ".md" while the site serves each
@@ -81,7 +82,8 @@ test("a route listed in llms.txt falls back to the route when its export is miss
       { path: "section/", kind: "html" },
       { path: "usage.html", kind: "html" },
     ]);
-    expect(requested, what).toEqual(["llms.txt", "setup.md", "setup", "section/", "usage.html"]);
+    expect(requested.toSorted(), what).toEqual(["llms.txt", "setup.md", "setup", "section/", "usage.html"].sort());
+    expect(requested.indexOf("setup.md")).toBeLessThan(requested.indexOf("setup"));
   }
 });
 

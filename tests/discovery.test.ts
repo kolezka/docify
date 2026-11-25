@@ -58,7 +58,8 @@ test("ordinary Markdown discovery keeps scope, asset, duplicate and redirect gua
   const docs = await crawl(base + "guide.md", DEFAULT_LIMITS, fetcher);
   expect(docs.map((d) => d.path)).toEqual(["guide.md", "child"]);
   expect(new TextDecoder().decode(docs[1]!.bytes)).toContain("Safe content.");
-  expect(requested).toEqual([base + "guide.md", base + "child.md", base + "child", base + "redirect.md", base + "redirect"]);
+  expect(requested.toSorted()).toEqual(["guide.md", "child.md", "child", "redirect.md", "redirect"].map(path => base + path).sort());
+  for (const path of ["child", "redirect"]) expect(requested.indexOf(base + path + ".md")).toBeLessThan(requested.indexOf(base + path));
 });
 
 test("Markdown discovery prefers sibling Markdown representations before broken HTML routes", async () => {
