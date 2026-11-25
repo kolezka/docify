@@ -10,13 +10,17 @@ const encoder = new Tiktoken(o200k);
 // sum never undercounts the budget.
 const LONG_RUN = /\S{64,}/g;
 
+// Documentation may spell out a special token such as <|endoftext|>. encode() throws on one by
+// default; with both lists empty it is counted as the plain text it is.
+const plain = (text: string) => encoder.encode(text, [], []).length;
+
 export function countTokens(text: string): number {
   let total = 0;
   let last = 0;
   for (const m of text.matchAll(LONG_RUN)) {
-    total += encoder.encode(text.slice(last, m.index)).length;
-    for (let i = 0; i < m[0].length; i += 64) total += encoder.encode(m[0].slice(i, i + 64)).length;
+    total += plain(text.slice(last, m.index));
+    for (let i = 0; i < m[0].length; i += 64) total += plain(m[0].slice(i, i + 64));
     last = m.index + m[0].length;
   }
-  return total + encoder.encode(text.slice(last)).length;
+  return total + plain(text.slice(last));
 }
