@@ -113,6 +113,59 @@ test("rejected settings report the field and leave config.json untouched", async
   expect(d.config.graphifyBin).not.toBe("/tmp/evil");
 });
 
+test("active web job uses its initial model and the next job uses the saved model", async () => {
+  const { d, call } = await setup();
+  const release = Promise.withResolvers<void>();
+  const models: string[] = [];
+  const origin = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+    if (new URL(req.url).pathname === "/api/embed") {
+      const { model, input } = await req.json();
+      models.push(model);
+      return Response.json({ embeddings: input.map(() => Array(384).fill(0.1)) });
+    }
+    await release.promise;
+    return new Response("# Local fixture\n\nOne document for the worker.", { headers: { "content-type": "text/markdown" } });
+  } });
+  try {
+    expect((await call("/api/config", "PUT", { embeddingProvider: "ollama", embeddingUrl: origin.url.origin, embeddingModel: "first" })).status).toBe(200);
+    for (const id of ["first", "next"]) d.addSource({ id, library: id, kind: "url", locator: new URL("page.md", origin.url).href });
+    for (const id of ["first", "next"]) {
+      expect((await call(`/api/sources/${id}/prepare`, "POST", { graph: false })).status).toBe(202);
+      if (id === "first") {
+        expect((await call("/api/config", "PUT", { embeddingModel: "second" })).status).toBe(200);
+        release.resolve();
+      }
+      for (let i = 0; i < 300 && d.requireSource(id).lock_pid; i++) await Bun.sleep(10);
+      expect(d.requireSource(id).active_generation).toBeGreaterThan(0);
+    }
+    expect(models).toEqual(["first", "second"]);
+  } finally {
+    release.resolve();
+    await origin.stop(true);
+  }
+}, 15000);
+
+test("a web prepare holds its own lease while settings stay writable", async () => {
+  const { d, call } = await setup();
+  const gate = Promise.withResolvers<void>();
+  const origin = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch() { await gate.promise; return new Response("# Page"); } });
+  d.addSource({ id: "held", library: "held", kind: "url", locator: origin.url.href });
+  try {
+    expect((await call("/api/sources/held/prepare", "POST", { graph: false })).status).toBe(202);
+    expect((await call("/api/config", "PUT", { lexicalWeight: 0.6 })).status).toBe(200);
+    const pid = d.requireSource("held").lock_pid;
+    expect(pid).toBeGreaterThan(0);
+    expect(pid).not.toBe(process.pid);
+    expect(d.config.lexicalWeight).toBe(0.6);
+  } finally {
+    await call("/api/sources/held/cancel", "POST", {});
+    gate.resolve();
+    await origin.stop(true);
+    for (let i = 0; i < 200 && d.requireSource("held").lock_pid; i++) await Bun.sleep(10);
+  }
+  expect(d.requireSource("held").lock_pid).toBeNull();
+});
+
 test("settings cannot change while this process prepares a source", async () => {
   const { home, d, call } = await setup();
   const docs = writeDocs(join(tempDir("docify-src-"), "docs"), { "a.md": "# A\n\ntext\n" });

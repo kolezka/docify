@@ -410,7 +410,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   }
   const tick = Bun.cron("* * * * *", () => {
     try {
-      refreshDueSources(docify);
+      refreshDueSources(docify, Date.now(), async id => api.startPrepare(id));
     } catch (err) {
       console.error("Scheduled refresh could not read sources:", err);
     }
@@ -418,6 +418,6 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   const stop = server.stop.bind(server);
   return Object.assign(server, { token, accounts: store, stop(closeActiveConnections?: boolean) {
     tick.stop();
-    return stop(closeActiveConnections);
+    return Promise.all([stop(closeActiveConnections), api.stopWorkers()]).then(() => {});
   } });
 }
