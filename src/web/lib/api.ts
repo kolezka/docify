@@ -33,6 +33,7 @@ function readToken(): string {
 }
 
 let token = readToken();
+export const webToken = () => token;
 // A restarted server prints a new link; pasting it into this tab changes only the fragment.
 addEventListener("hashchange", () => {
   if (new URLSearchParams(location.hash.slice(1)).has("token")) token = readToken();

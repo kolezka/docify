@@ -253,8 +253,10 @@ export const SourcesQuery = z.object({
 });
 export const LogsQuery = z.object({
   after: queryInt(0, Number.MAX_SAFE_INTEGER, "Return entries after this sequence number"),
+  before: queryInt(1, Number.MAX_SAFE_INTEGER, "Return the last entries strictly before this sequence number"),
+  tail: z.literal("1").optional().openapi({ description: "Return the newest page" }),
   limit: queryInt(1, 1000, "At most this many entries, default 1000"),
-});
+}).refine(q => [q.after, q.before, q.tail].filter(v => v !== undefined).length <= 1, "Choose only one of after, before or tail");
 export const ImportQuery = z.object({
   force: z.enum(["0", "1"]).optional().openapi({ description: "1 replaces a store that has sources; its files are moved aside" }),
   keepConfig: z.enum(["0", "1"]).optional().openapi({ description: "1 keeps this server's config.json" }),
@@ -341,6 +343,7 @@ export const LogPage = z
     lines: z.array(z.object({ seq: z.number(), ts: z.string(), source: z.string(), stream: z.string(), level: z.string(), text: z.string() })),
     cursor: z.number(),
     capped: z.boolean(),
+    hasOlder: z.boolean().optional(),
   })
   .openapi("LogPage");
 

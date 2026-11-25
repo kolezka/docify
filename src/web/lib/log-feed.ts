@@ -8,15 +8,19 @@ export interface LogFeedState {
   error: string;
 }
 
-function logPage(value: unknown, after: number): LogPage {
+function validLine(line: LogEntry) {
+  return line && Number.isSafeInteger(line.seq) && line.seq > 0 && typeof line.text === 'string' && typeof line.source === 'string' &&
+    typeof line.ts === 'string' && Number.isFinite(Date.parse(line.ts)) && ['stdout', 'stderr', 'system'].includes(line.stream) && ['info', 'warn', 'error'].includes(line.level);
+}
+
+export function logPage(value: unknown, after: number): LogPage {
   const fail = () => { throw new Error("Invalid log response. History could not be read."); };
   if (!value || typeof value !== "object") return fail();
   const page = value as LogPage;
   if (!Array.isArray(page.lines) || page.lines.length > 1000 || typeof page.capped !== "boolean" || !Number.isSafeInteger(page.cursor)) return fail();
   let previous = after;
   for (const line of page.lines) {
-    if (!line || !Number.isSafeInteger(line.seq) || line.seq <= previous || typeof line.text !== "string" || typeof line.source !== "string" ||
-      typeof line.ts !== "string" || !Number.isFinite(Date.parse(line.ts)) || !["stdout", "stderr", "system"].includes(line.stream) || !["info", "warn", "error"].includes(line.level)) return fail();
+    if (!validLine(line) || line.seq <= previous) return fail();
     previous = line.seq;
   }
   if (page.cursor !== previous) return fail();
@@ -57,6 +61,36 @@ export class LogFeed {
     } catch (err) {
       if (!this.stopped) this.publish({ loading: false, live: false, error: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  seed(lines: LogEntry[]) {
+    this.cursor = lines.at(-1)?.seq ?? 0;
+    this.publish({ lines, loading: false, live: true, error: '' });
+  }
+
+  prepend(older: LogEntry[]) {
+    this.publish({ lines: [...older, ...this.state.lines], error: '' });
+  }
+
+  historyError(err: unknown) {
+    this.publish({ loading: false, error: err instanceof Error ? err.message : String(err) });
+  }
+
+  get after() { return this.cursor; }
+
+  append(entries: LogEntry[]) {
+    if (this.stopped) return;
+    let previous = 0, capped = this.state.capped;
+    for (const line of entries) {
+      if (!validLine(line) || line.seq <= previous) throw Error('Invalid live log entry.');
+      if (line.seq > Math.max(previous, this.cursor) + 1) capped = true;
+      previous = line.seq;
+    }
+    const fresh = entries.filter(line => line.seq > this.cursor);
+    if (!fresh.length) return;
+    const lines = [...this.state.lines, ...fresh];
+    this.cursor = previous;
+    this.publish({ lines: lines.slice(-this.maxLines), capped: capped || lines.length > this.maxLines, loading: false, live: true, error: '' });
   }
 
   dispose() { this.stopped = true; this.controller.abort(); }

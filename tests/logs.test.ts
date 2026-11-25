@@ -47,6 +47,20 @@ test("source activity and failed preparation are timestamped, ordered and pagina
   expect(await (await get(`?after=${second.cursor}`)).json()).toEqual({ lines: [], cursor: second.cursor, capped: false });
 });
 
+test("the tail and older pages are bounded and stable while new logs arrive", async () => {
+  const { d, get } = await setup();
+  d.logs.append("bulk", Array.from({ length: 2100 }, (_, i) => String(i + 1)).join("\n"));
+  const tail = await (await get("?tail=1")).json();
+  expect(tail.lines).toHaveLength(1000);
+  expect([tail.lines[0].seq, tail.cursor, tail.hasOlder]).toEqual([1101, 2100, true]);
+  d.logs.append("bulk", "live");
+  const older = await (await get("?before=1101")).json();
+  expect([older.lines.length, older.lines[0].seq, older.cursor, older.hasOlder]).toEqual([1000, 101, 1100, true]);
+  const oldest = await (await get("?before=101")).json();
+  expect([oldest.lines.length, oldest.lines[0].seq, oldest.cursor, oldest.hasOlder]).toEqual([100, 1, 100, false]);
+  expect((await get("?tail=1&after=0")).status).toBe(400);
+});
+
 test("log API rejects invalid cursors and limits instead of silently resetting them", async () => {
   const { get } = await setup();
   for (const query of ["?after=-1", "?after=abc", "?after=1.5", "?after=9007199254740992", "?limit=0", "?limit=1001", "?limit=no", "?after="]) {

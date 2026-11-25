@@ -7,7 +7,7 @@
   decide, which keeps the scroller's height maths exact.
 -->
 <script lang="ts">
-  import { untrack, type Snippet } from "svelte";
+  import { tick, untrack, type Snippet } from "svelte";
   import {
     ArrowDownToLine,
     Check,
@@ -50,6 +50,7 @@
   interface Props {
     /** Oldest first. The component never mutates it. */
     lines: LogLine[];
+    loadOlder?: () => Promise<void>;
     /** The source is still producing lines, so follow mode is meaningful. */
     live: boolean;
     /** Auto scroll to the newest line. Turns itself off when the user scrolls up. */
@@ -97,6 +98,7 @@
 
   let {
     lines,
+    loadOlder,
     live,
     follow = $bindable(true),
     showSource = false,
@@ -238,13 +240,31 @@
     scrollTop = container.scrollTop;
   });
 
+  let requestingOlder = false;
+  async function prependHistory() {
+    if (!loadOlder || requestingOlder || paused || !container || !rows.length) return;
+    requestingOlder = true;
+    const anchor = rows[0].seq;
+    try {
+      await loadOlder();
+      await tick();
+      const index = rows.findIndex(row => row.seq === anchor);
+      if (container && !follow && index > 0) {
+        container.scrollTop += offsets?.[index] ?? index * ROW_HEIGHT;
+        scrollTop = container.scrollTop;
+      }
+    } finally { requestingOlder = false; }
+  }
+
   function handleScroll(): void {
     if (container === null) return;
+    const upward = container.scrollTop < scrollTop;
     scrollTop = container.scrollTop;
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
     const atBottom = distance <= BOTTOM_EPSILON;
     // Scrolling up leaves the tail; scrolling back to the bottom rejoins it.
     if (follow !== atBottom) follow = atBottom;
+    if (upward && !atBottom && scrollTop < 3 * ROW_HEIGHT) void prependHistory();
   }
 
   function jumpToLatest(): void {

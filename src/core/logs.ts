@@ -70,24 +70,27 @@ export class LogStore {
     }
   }
 
-  read(after = 0, limit = 1000): LogPage {
+  read(after = 0, limit = 1000, before?: number): LogPage & { hasOlder?: boolean } {
+    if (before !== undefined && (!Number.isSafeInteger(before) || before < 1 || after !== 0)) throw new RangeError("invalid backward log cursor");
     if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new RangeError("invalid log cursor or limit");
     const file = join(this.config().home, "logs.sqlite");
-    if (!existsSync(file)) return { lines: [], cursor: after, capped: false };
+    if (!existsSync(file)) return { lines: [], cursor: after, capped: false, ...(before !== undefined && { hasOlder: false }) };
     let db: Database | undefined;
     try {
       db = new Database(file, { readonly: true, strict: true });
       db.run("PRAGMA busy_timeout = 1000");
       return db.transaction(() => {
         const first = db!.query<{ seq: number | null }, []>("SELECT MIN(seq) AS seq FROM logs").get()!.seq;
-        const lines = db!.query<LogEntry, [number, number]>("SELECT seq, ts, source, stream, level, text FROM logs WHERE seq > ? ORDER BY seq LIMIT ?").all(after, limit);
+        const lines = before !== undefined
+          ? db!.query<LogEntry, [number, number]>("SELECT seq, ts, source, stream, level, text FROM logs WHERE seq < ? ORDER BY seq DESC LIMIT ?").all(before, limit).reverse()
+          : db!.query<LogEntry, [number, number]>("SELECT seq, ts, source, stream, level, text FROM logs WHERE seq > ? ORDER BY seq LIMIT ?").all(after, limit);
         for (const line of lines) {
           if (!Number.isSafeInteger(line.seq) || line.seq <= after || typeof line.text !== "string" || typeof line.source !== "string" ||
             !Number.isFinite(Date.parse(line.ts)) || !["stdout", "stderr", "system"].includes(line.stream) || !["info", "warn", "error"].includes(line.level)) {
             throw new Error("invalid log entry");
           }
         }
-        return { lines, cursor: lines.at(-1)?.seq ?? after, capped: first !== null && first > after + 1 };
+        return { lines, cursor: lines.at(-1)?.seq ?? after, capped: before === undefined && first !== null && first > after + 1, ...(before !== undefined && { hasOlder: !!lines.length && first !== null && first < lines[0]!.seq }) };
       })();
     } catch {
       throw new LogReadError("Application log history could not be read. Check logs.sqlite and store permissions.");

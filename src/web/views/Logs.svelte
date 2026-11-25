@@ -3,7 +3,9 @@
   import { Check, Copy, Hash, Search, Timer, WrapText } from "@lucide/svelte";
   import { LogViewer, filterLines, toPlainText, type LogLine, type StreamFilter } from "../lib/log-viewer/index.ts";
   import { api } from "../lib/api.ts";
-  import { LogFeed, type LogFeedState } from "../lib/log-feed.ts";
+  import { sources } from "../lib/sources.svelte.ts";
+  import type { LogFeedState } from "../lib/log-feed.ts";
+  import { PagedLogs } from "../lib/paged-logs.ts";
   import type { LogEntry } from "../../core/logs.ts";
   import Toolbar from "../components/Toolbar.svelte";
   import Segmented from "../components/Segmented.svelte";
@@ -14,8 +16,8 @@
 
   type Level = "all" | "warn" | "error";
 
-  let state = $state<LogFeedState>({ lines: [], loading: true, live: false, capped: false, error: "" });
-  let feed: LogFeed | undefined;
+  let feedState = $state<LogFeedState>({ lines: [], loading: true, live: false, capped: false, error: "" });
+  let retryHistory = $state<(() => Promise<void>) | undefined>();
 
   let follow = $state(true);
   let stream = $state("all");
@@ -32,18 +34,18 @@
 
   // "Warnings" keeps errors too: both need attention. The level word stays in the text so copy and the text filter keep it.
   const lines = $derived(
-    state.lines
+    feedState.lines
       .filter((line) => level === "all" || (level === "warn" ? line.level !== "info" : line.level === "error"))
       .map((line) => (line.level === "info" ? line : { ...line, text: `[${line.level.toUpperCase()}] ${line.text}` })),
   );
   const shown = $derived(filterLines(lines, stream as StreamFilter, query));
   // The viewer only sees the level-filtered lines, so an empty level filter would otherwise read as "no logs yet".
-  const levelEmpty = $derived(lines.length === 0 && state.lines.length > 0);
+  const levelEmpty = $derived(lines.length === 0 && feedState.lines.length > 0);
   const filtering = $derived(level !== "all" || stream !== "all" || query.trim().length > 0);
 
   const status = $derived.by((): { tone: ChipTone; label: string } => {
-    if (state.loading) return { tone: "neutral", label: "Loading history" };
-    if (!state.live) return { tone: "bad", label: "Disconnected" };
+    if (feedState.loading) return { tone: "neutral", label: "Loading history" };
+    if (!feedState.live || sources.liveNotice) return { tone: "bad", label: "Disconnected" };
     return follow ? { tone: "ok", label: "Following" } : { tone: "neutral", label: "Paused" };
   });
 
@@ -63,14 +65,14 @@
 
   onMount(() => {
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    feed = new LogFeed((after, signal) => api(`/api/logs?after=${after}&limit=1000`, { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) }), (next) => { state = next; });
-    const poll = async () => {
-      await feed!.refresh();
-      if (!stopped) timer = setTimeout(poll, 1000);
+    let leave: (() => void) | undefined;
+    const feed = new PagedLogs((before, signal) => api(`/api/logs?${before === null ? 'tail=1' : `before=${before}`}&limit=1000`, { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) }), (next) => { feedState = next; });
+    retryHistory = async () => {
+      await feed.load();
+      if (!stopped && !feed.state.error) leave ??= sources.live.logs(() => feed.after, entries => feed.append(entries));
     };
-    void poll();
-    return () => { stopped = true; clearTimeout(timer); clearTimeout(copyTimer); feed?.dispose(); };
+    void retryHistory();
+    return () => { stopped = true; leave?.(); clearTimeout(copyTimer); feed.dispose(); };
   });
 </script>
 
@@ -90,7 +92,7 @@
   <Segmented label="Level" bind:value={level} options={[{ value: "all", label: "All" }, { value: "warn", label: "Warnings" }, { value: "error", label: "Errors" }]} />
   <span class="flex-1"></span>
   <span class={footnote} aria-live="polite">
-    {filtering ? `${nf.format(shown.length)} of ${nf.format(state.lines.length)} lines` : `${nf.format(shown.length)} lines`}
+    {filtering ? `${nf.format(shown.length)} of ${nf.format(feedState.lines.length)} lines` : `${nf.format(shown.length)} lines`}
   </span>
   <span role="status"><StatusChip tone={status.tone} label={status.label} /></span>
   <Switch bind:checked={follow} label="Follow" />
@@ -105,15 +107,15 @@
 </Toolbar>
 
 <div class="flex min-h-0 flex-1 flex-col gap-2 pr-4 pb-4 pl-5">
-  {#if state.error}
+  {#if feedState.error}
     <div role="alert" class={notice({ tone: "bad", class: "items-center" })}>
       <StatusIcon tone="bad" />
-      <span class="flex-1">{state.error} Previously loaded lines remain visible.</span>
-      <button type="button" class={button({ size: "xs" })} onclick={() => feed?.refresh()}>Retry</button>
+      <span class="flex-1">{feedState.error} Previously loaded lines remain visible.</span>
+      <button type="button" class={button({ size: "xs" })} onclick={() => retryHistory?.()}>Retry</button>
     </div>
   {/if}
   <div class="docify-logs min-h-0 flex-1 overflow-hidden rounded-[10px] bg-surface">
-    <LogViewer {lines} live={state.live} loading={state.loading} capped={state.capped} showSource={true} labelOf={(source: string) => source}
+    <LogViewer {lines} loadOlder={retryHistory} live={feedState.live && !sources.liveNotice} loading={feedState.loading} capped={feedState.capped} showSource={true} labelOf={(source: string) => source}
       chrome={false} height="none" bind:follow bind:stream bind:query bind:wrap bind:timestamps bind:lineNumbers filterInputId={filterId} {toneOf}
       labels={{ cappedNotice: "Older lines were dropped. Only the latest 10,000 lines are retained." }}
       emptyTitle={levelEmpty ? (level === "error" ? "No errors" : "No warnings or errors") : "No application logs yet"}
@@ -123,5 +125,5 @@
       {/snippet}
     </LogViewer>
   </div>
-  <p class={cn(footnote, "px-1")}>Docify activity and Graphify output from the CLI and the web UI. The latest 10,000 lines are kept. End jumps to the latest line, Home to the top.</p>
+  <p class={cn(footnote, "px-1")}>Docify activity and Graphify output from the CLI and the web UI. Showing the latest 1,000 lines initially. Scroll up for older entries. End returns to live updates.</p>
 </div>
