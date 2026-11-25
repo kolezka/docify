@@ -1,28 +1,31 @@
-import { api, errorText, type SourceInfo } from "./api.ts";
-import { Refresher } from "./refresher.ts";
+import { api, errorText, webToken, type SourceInfo } from "./api.ts";
+import { SourceFeed } from "./source-feed.ts";
+import { LiveClient } from "./live-client.ts";
 
-// One source list shared by the sidebar, the source pages and the search scope picker.
-// It polls every second while any source is preparing.
 class SourceStore {
   list = $state<SourceInfo[] | null>(null);
   error = $state("");
-  #timer: ReturnType<typeof setTimeout> | undefined;
-  #reads = new Refresher(async () => {
-    try {
-      this.list = await api<SourceInfo[]>("/api/sources");
-      this.error = "";
-    } catch (err) {
-      this.error = errorText(err);
-    }
-    clearTimeout(this.#timer);
-    if (this.list?.some((s) => s.state === "preparing")) this.#timer = setTimeout(this.refresh, 1000);
-  });
+  liveNotice = $state("");
+  #feed?: SourceFeed;
+  readonly live = new LiveClient(
+    () => new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/live`),
+    webToken, message => { this.liveNotice = message; },
+  );
 
-  // After a mutation, awaiting this gives a list read after the mutation, never an older one in flight.
-  refresh = (): Promise<void> => {
-    clearTimeout(this.#timer);
-    return this.#reads.run();
-  };
+  start() {
+    const feed = this.#feed = new SourceFeed(() => api('/api/sources', { signal: AbortSignal.timeout(15_000) }), rows => { this.list = rows; this.error = ''; }, err => { this.error = errorText(err); });
+    void feed.refresh();
+    const stop = this.live.start(delta => feed.apply(delta));
+    return () => {
+      stop();
+      feed.dispose();
+      this.#feed = undefined;
+      this.list = null;
+      this.error = this.liveNotice = '';
+    };
+  }
+
+  refresh = () => this.#feed?.refresh() ?? Promise.resolve();
 
   byId(id: string | null): SourceInfo | undefined {
     return id ? this.list?.find((s) => s.id === id) : undefined;

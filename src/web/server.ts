@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Docify, DocifyError } from "../core/docify.ts";
 import { refreshDueSources } from "../core/refresh.ts";
 import { uiAssets } from "./bundle.ts";
+import { liveServer } from "./live-server.ts";
 import { LOOPBACK_HOSTS, hostAllowed, hostGuard, originAllowed, parseAllowedHosts, splitList } from "../http/host.ts";
 import { bearerAuth, parseBearerClients, type BearerClient } from "../http/auth.ts";
 import { RateLimiter, parseRate, rateLimit, type RateLimit } from "../http/rate-limit.ts";
@@ -344,7 +345,13 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
     return redirect("/", [clearState, setCookie(SESSION_COOKIE, session, Math.floor(SESSION_TTL_MS / 1000))]);
   });
 
+  const live = liveServer(docify, (session, given) => {
+    if (!store) return tokenOk(given) ? "admin" : null;
+    const user = store.userForSession(session);
+    return user?.status === "active" ? user.role : null;
+  });
   const server = Bun.serve({
+    websocket: live.websocket,
     hostname: host,
     port,
     development: false,
@@ -360,8 +367,23 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
       "/api/docs/swagger-ui.css": { GET: docs(() => swaggerFile("swagger-ui.css"), "text/css; charset=utf-8") },
       "/api/docs/swagger-ui-bundle.js": { GET: docs(() => swaggerFile("swagger-ui-bundle.js"), "text/javascript; charset=utf-8") },
     },
-    fetch: async (req) => {
-      const path = new URL(req.url).pathname;
+    fetch: async (req, srv) => {
+      const url = new URL(req.url);
+      const path = url.pathname;
+      if (path === "/api/live") {
+        const denied = guard(req, "application/json", "open");
+        if (denied) return denied;
+        const origin = req.headers.get("origin");
+        const authority = req.headers.get("host") ?? "";
+        if (!origin || !originOk(origin, authority) ||
+          !(origin === accounts?.publicUrl || origin === `https://${authority}` || origin === `http://${authority}`)) {
+          return json({ code: "forbidden", error: "same-origin WebSocket required" }, 403);
+        }
+        if (req.method !== "GET" || url.search) return json({ code: "invalid_input", error: "expected GET /api/live without a query" }, 400);
+        const now = Date.now();
+        if (srv.upgrade(req, { data: { session: cookieOf(req, SESSION_COOKIE), opened: now, windowStart: now, updates: 0 } })) return;
+        return json({ code: "unsupported", error: "WebSocket upgrade required" }, 426);
+      }
       if (path.startsWith("/api/")) return api.fetch(req);
       if (req.method !== "GET") return new Response("not found", { status: 404 });
       let assets;
@@ -417,6 +439,7 @@ export async function startServer(port: number, opts: StartServerOptions = {}) {
   });
   const stop = server.stop.bind(server);
   return Object.assign(server, { token, accounts: store, stop(closeActiveConnections?: boolean) {
+    live.stop();
     tick.stop();
     return Promise.all([stop(closeActiveConnections), api.stopWorkers()]).then(() => {});
   } });

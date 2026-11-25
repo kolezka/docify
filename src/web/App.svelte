@@ -21,8 +21,8 @@
   // Data is asked for only once this person may see it, and again after an approval or a new sign-in.
   $effect(() => {
     if (!session.ready) return;
-    sources.refresh();
     if (session.accounts && session.admin) users.refresh();
+    return sources.start();
   });
 
   // Narrow windows hide the sidebar; this picker stands in for it.
@@ -63,6 +63,7 @@
       </select>
       <ThemeSwitch />
     </div>
+    {#if sources.liveNotice}<p role="status" class="px-4 py-2 text-sm text-label2">{sources.liveNotice}</p>{/if}
     <!-- Search stays mounted so its results survive a visit to another view. -->
     <main class="flex min-h-0 flex-1 flex-col" class:hidden={nav.shown !== "search"}>
       <Search />

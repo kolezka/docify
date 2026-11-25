@@ -417,6 +417,8 @@ Open `http://127.0.0.1:4747/`, or `http://127.0.0.1:4747/#token=<DOCIFY_WEB_TOKE
 
 `DOCIFY_ALLOWED_HOSTS` lists the hostnames the server answers for, comma separated; a bare hostname matches any port. When it is empty and the server binds a non-loopback address, any Host is accepted and a warning is logged, so set it in production. `DOCIFY_BIND` defaults to `127.0.0.1`: put a reverse proxy in front, or set it to `0.0.0.0` when the port must be reachable directly.
 
+Configure the reverse proxy to pass WebSocket upgrades for `/api/live` on the same host as the panel. With HTTPS, the client uses `wss://`. Source progress and the Logs view share this connection; loading the panel and fetching log history also require the normal HTTP API. Do not put the web token in a WebSocket URL or proxy logs.
+
 State (sqlite, snapshots, `config.json`) lives in a host directory bind-mounted at `/data`: `/data/docify`, or `DOCIFY_DATA_DIR` when set. The container runs as uid 10001, so the directory must be owned by that uid; mode `0750` keeps it private to it. Docker creates a missing bind-mount directory as root, and the entrypoint then stops with the `mkdir`, `chown` and `chmod` to run. Docker Desktop on macOS cannot create `/data`; set `DOCIFY_DATA_DIR=./data/docify` there. Back up the directory while the container is stopped, or use `docify export`.
 
 To change the embedding provider, edit `config.json` in the data directory on the host and restart:

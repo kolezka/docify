@@ -333,7 +333,7 @@ export function createApi(deps: ApiDeps) {
     { method: "get", path: "/api/logs", tags: ["Server"], summary: "Read log lines", description: "Lines in sequence order; pass the returned cursor as `after` to poll for new ones.", request: { query: s.LogsQuery }, responses: { 200: s.json(s.LogPage, "Log lines after the cursor"), ...s.errors(400, 500) } },
     (c) => {
       const q = valid(c, "query", s.LogsQuery);
-      return json(docify.logs.read(q.after ?? 0, q.limit ?? 1000));
+      return json(docify.logs.read(q.after ?? 0, q.limit ?? 1000, q.tail ? Number.MAX_SAFE_INTEGER : q.before));
     },
   );
   add(
