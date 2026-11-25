@@ -19,6 +19,7 @@ import { VERSION } from "../version.ts";
 import { AccountStore, MAX_ACCESS_RULES, MAX_KEYS_PER_USER, MAX_ORG_RULES, MAX_QUERIES_PER_USER, type AccessRule, type KeyRow, type QueryRecord, type UserRow } from "../core/accounts.ts";
 import { scopeText } from "../mcp/tools.ts";
 import * as s from "./api-schemas.ts";
+import { launchPrepare } from "./prepare-worker.ts";
 
 const STATUS_BY_CODE: Record<string, number> = { invalid_input: 400, exists: 409, busy: 409, source_unknown: 404, generation_changed: 409, summary_failed: 502, invalid_summary: 502, user_unknown: 404, key_unknown: 404, rule_unknown: 404, accounts_off: 404, conflict: 409, not_invited: 403 };
 // A store backup is uploaded whole; a real store is around 100 MB before compression.
@@ -96,6 +97,17 @@ function invalidInput(result: { success: boolean; error?: z.ZodError; target: st
 export function createApi(deps: ApiDeps) {
   const { docify, project, sourceRoots } = deps;
   const running = new Map<string, AbortController>();
+  const workers = new Map<string, Promise<void>>();
+  function startPrepare(id: string, options: { graph?: boolean; graphOnly?: boolean; force?: boolean } = {}) {
+    if (running.has(id)) throw new DocifyError("busy", `${id} already has a running operation`);
+    const controller = new AbortController();
+    const job = launchPrepare({ id, config: docify.config, options }, controller.signal);
+    running.set(id, controller);
+    const done = job.done.finally(() => { running.delete(id); workers.delete(id); });
+    workers.set(id, done);
+    void done.catch(err => console.error(`prepare ${id} failed: ${err.message}`));
+    return job.started;
+  }
   // Set while an import swaps the store files; the database is closed for that moment.
   let importing = false;
 
@@ -340,7 +352,7 @@ export function createApi(deps: ApiDeps) {
     },
     (c) => {
       const patch = valid(c, "json", s.ConfigPatch);
-      if (running.size) throw new DocifyError("busy", `cannot change settings while ${[...running.keys()].join(", ")} has a running operation; wait or cancel first`);
+      for (const id of running.keys()) if (!workers.has(id)) throw new DocifyError("busy", `cannot change settings while summarizing ${id}`);
       docify.saveConfig(patch);
       return json(describeConfig(docify.config));
     },
@@ -578,17 +590,11 @@ export function createApi(deps: ApiDeps) {
       request: { params: s.SourceIdParam, body: s.jsonBody(s.PrepareBody) },
       responses: { 202: s.json(z.object({ started: z.string() }), "Started"), ...s.errors(400, 404, 409, 415) },
     },
-    (c) => {
+    async (c) => {
       const id = sourceId(c);
       const b = valid(c, "json", s.PrepareBody);
       docify.requireSource(id);
-      if (running.has(id)) throw new DocifyError("busy", `${id} is already being prepared`);
-      const controller = new AbortController();
-      running.set(id, controller);
-      docify
-        .prepare(id, { graph: b.graph, graphOnly: b.graphOnly, force: b.force, signal: controller.signal })
-        .catch((err) => console.error(`prepare ${id} failed: ${err instanceof Error ? err.message : err}`))
-        .finally(() => running.delete(id));
+      await startPrepare(id, { graph: b.graph, graphOnly: b.graphOnly, force: b.force });
       return json({ started: id }, 202);
     },
   );
@@ -812,7 +818,10 @@ export function createApi(deps: ApiDeps) {
     },
   );
 
-  return app;
+  return Object.assign(app, { startPrepare, stopWorkers() {
+    for (const id of workers.keys()) running.get(id)?.abort();
+    return Promise.allSettled(workers.values());
+  } });
 }
 
 export type ApiApp = ReturnType<typeof createApi>;
