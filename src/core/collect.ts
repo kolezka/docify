@@ -3,6 +3,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { lazyPageContent } from "./lazy-content.ts";
 import { kindFromPath, type DocKind } from "./normalize.ts";
 import { extractPdfText } from "./pdf.ts";
+import { CrawlPool } from "./crawl-pool.ts";
 
 export interface RawDoc {
   path: string; // relative path or URL path, unique within the snapshot
@@ -93,9 +94,11 @@ export function collectLocal(root: string, limits: CrawlLimits = DEFAULT_LIMITS,
   return docs;
 }
 
-export type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
+export type Fetcher = (url: string, init: RequestInit, redirectChain?: object) => Promise<Response>;
 
 export interface CrawlOptions {
+  pool?: CrawlPool;
+  renderer?: { hostname: string; timeoutMs: number };
   // Cancels the crawl, including a fetch in flight.
   signal?: AbortSignal;
   // Probe `<route>.md` exports before linked routes (default true). Off for a rendering service,
@@ -127,12 +130,18 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
   // The crawl has nowhere else to begin, so say it instead of returning nothing.
   if (ignored(startUrl)) throw new Error(`the start URL matches an ignore pattern: ${docPath(startUrl)}`);
 
+  const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
+  const pool = options.pool ?? new CrawlPool();
+  const source = Symbol(start);
   const fetchInScope = async (url: URL, selectedFetcher: Fetcher = fetcher) => {
     let res: Response | null = null;
     let current = url;
+    const chain = {};
     for (let hop = 0; hop <= limits.maxRedirects; hop++) {
-      const timeout = AbortSignal.timeout(limits.timeoutMs);
-      res = await selectedFetcher(current.toString(), { redirect: "manual", signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout });
+      const timeout = AbortSignal.timeout(selectedFetcher === fetcher && options.renderer ? options.renderer.timeoutMs : limits.timeoutMs);
+      signal.throwIfAborted();
+      res = await selectedFetcher(current.toString(), { redirect: "manual", signal: AbortSignal.any([timeout, signal]) }, chain);
       if (res.status < 300 || res.status >= 400) break;
       const loc = res.headers.get("location");
       if (!loc) break;
@@ -165,9 +174,9 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
   let total = 0;
   let ignoredLinks = 0;
   log("info", `Crawl ${startUrl} within ${startUrl.origin}${scopePath}: up to ${limits.maxPages} pages, depth ${limits.maxDepth}`);
-  while (queue.length && docs.length < limits.maxPages) {
-    const { url, depth, preferMarkdown } = queue.shift()!;
-    if (collected.has(canonical(url))) continue;
+  const fetchPage = async ({ url, depth, preferMarkdown }: (typeof queue)[number]) => {
+    signal.throwIfAborted();
+    if (collected.has(canonical(url))) return null;
     let fetched = null;
     const markdownUrl = new URL(url);
     markdownUrl.pathname += ".md";
@@ -186,17 +195,17 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     }
     const started = performance.now();
     fetched ??= await fetchInScope(url, options.pdfFetcher && /\.pdf$/i.test(url.pathname) ? options.pdfFetcher : fetcher);
-    if (!fetched) continue;
+    if (!fetched) return null;
     const { res, current } = fetched;
     if (collected.has(canonical(current))) {
       await res.body?.cancel();
-      continue;
+      return null;
     }
     if (!res.ok) {
       if (depth === 0) throw new Error(`fetch ${current} failed: HTTP ${res.status}`);
       await res.body?.cancel();
       log("warn", `Skipped ${current}: HTTP ${res.status}`);
-      continue;
+      return null;
     }
     const type = res.headers.get("content-type") ?? "";
     const isPdf = !!options.pdfFetcher && (/^application\/pdf(?:\s*;|\s*$)/i.test(type) || (/\.pdf$/i.test(current.pathname) && /^(?:application\/octet-stream)?(?:\s*;|\s*$)/i.test(type)));
@@ -205,63 +214,84 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
     if (!kind) {
       await res.body?.cancel();
       log("info", `Skipped ${current}: not a document (${type || "no content type"})`);
-      continue;
+      return null;
     }
     const bytes = await readCapped(res, limits.maxBytesPerPage);
     if (!bytes) {
       log("warn", `Skipped ${current}: over the ${kb(limits.maxBytesPerPage)} page limit`);
-      continue;
+      return null;
     }
-    // A page that keeps its text in a lazy component is stored as that text alone, and only
-    // those bytes count: the rest is the component's data, twice, and the site navigation.
-    const pageText = isPdf ? "" : new TextDecoder().decode(bytes);
-    const lazy = kind === "html" ? lazyPageContent(pageText) : null;
-    let content = lazy === null ? bytes : new TextEncoder().encode(lazy);
-    total += lazy === null ? bytes.length : content.length;
-    if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded the ${kb(limits.maxTotalBytes)} total size limit`);
-    const path = docPath(current);
-    collected.add(canonical(current));
-    if (isPdf) {
-      try {
-        content = new TextEncoder().encode(await extractPdfText(bytes));
-      } catch (error) {
-        throw new Error(`failed to extract PDF ${current}: ${error instanceof Error ? error.message : error}`);
-      }
-    }
-    docs.push({ path, url: canonical(current), kind, bytes: content, ...(isPdf ? { extracted: true } : {}) });
-    options.onAcceptedPage?.(current.toString());
-    let queued = 0;
-    // Ordinary Markdown pages also contain navigation, not just llms.txt indexes.
-    if (!isPdf && depth < limits.maxDepth) {
-      const links = kind === "html"
-        ? [...pageText.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((m) => m[1]!)
-        : [...pageText.matchAll(/(?<!!)\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"\n]*")?\s*\)/g)].map((m) => m[1] ?? m[2]!);
-      for (const href of links) {
-        let link: URL;
+    return { current, kind, depth, bytes, isPdf, isMarkdownIndex, started };
+  };
+  const hosts = options.renderer ? [startUrl.hostname, options.renderer.hostname] : startUrl.hostname;
+  const launch = (entry: (typeof queue)[number]) => pool.run(source, hosts, signal, () => fetchPage(entry))
+    .then(page => ({ entry, page } as const), (error: unknown) => ({ entry, error } as const));
+  const pending: ReturnType<typeof launch>[] = [];
+  try {
+    while ((queue.length || pending.length) && docs.length < limits.maxPages) {
+      signal.throwIfAborted();
+      const window = Math.min(pool.capacity, pool.perHost, limits.maxPages - docs.length);
+      while (queue.length && pending.length < window) pending.push(launch(queue.shift()!));
+      const outcome = await pending.shift()!;
+      signal.throwIfAborted();
+      if (collected.has(canonical(outcome.entry.url))) continue;
+      if ('error' in outcome) throw outcome.error;
+      if (!outcome.page || collected.has(canonical(outcome.page.current))) continue;
+      const { current, kind, depth, bytes, isPdf, isMarkdownIndex, started } = outcome.page;
+      // A page that keeps its text in a lazy component is stored as that text alone, and only
+      // those bytes count: the rest is the component's data, twice, and the site navigation.
+      const pageText = isPdf ? "" : new TextDecoder().decode(bytes);
+      const lazy = kind === "html" ? lazyPageContent(pageText) : null;
+      let content = lazy === null ? bytes : new TextEncoder().encode(lazy);
+      total += lazy === null ? bytes.length : content.length;
+      if (total > limits.maxTotalBytes) throw new Error(`crawl exceeded the ${kb(limits.maxTotalBytes)} total size limit`);
+      const path = docPath(current);
+      collected.add(canonical(current));
+      if (isPdf) {
         try {
-          link = new URL(href, current);
-        } catch {
-          continue;
+          content = new TextEncoder().encode(await extractPdfText(bytes));
+        } catch (error) {
+          throw new Error(`failed to extract PDF ${current}: ${error instanceof Error ? error.message : error}`);
         }
-        const key = canonical(link);
-        // Documentation routes often have no extension, including links from HTML.
-        const documentPath = /(\.html?|\/|\.mdx?)$/.test(link.pathname)
-          || (!!options.pdfFetcher && /\.pdf$/i.test(link.pathname))
-          || !/\.[^/]+$/.test(link.pathname);
-        if (!inScope(link) || seen.has(key) || !documentPath) continue;
-        seen.add(key);
-        if (ignored(link)) {
-          ignoredLinks++;
-          continue;
-        }
-        // An llms.txt index mostly lists routes without ".md", on sites that export each as Markdown.
-        const preferMarkdown = (kind === "html" || (kind === "markdown" && (isMarkdownIndex || /\.md$/i.test(current.pathname))))
-          && !link.pathname.endsWith("/") && !/\.[^/]+$/.test(link.pathname);
-        queue.push({ url: link, depth: depth + 1, preferMarkdown });
-        queued++;
       }
+      docs.push({ path, url: canonical(current), kind, bytes: content, ...(isPdf ? { extracted: true } : {}) });
+      options.onAcceptedPage?.(current.toString());
+      let queued = 0;
+      // Ordinary Markdown pages also contain navigation, not just llms.txt indexes.
+      if (!isPdf && depth < limits.maxDepth) {
+        const links = kind === "html"
+          ? [...pageText.matchAll(/href\s*=\s*["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((m) => m[1]!)
+          : [...pageText.matchAll(/(?<!!)\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"\n]*")?\s*\)/g)].map((m) => m[1] ?? m[2]!);
+        for (const href of links) {
+          let link: URL;
+          try {
+            link = new URL(href, current);
+          } catch {
+            continue;
+          }
+          const key = canonical(link);
+          // Documentation routes often have no extension, including links from HTML.
+          const documentPath = /(\.html?|\/|\.mdx?)$/.test(link.pathname)
+            || (!!options.pdfFetcher && /\.pdf$/i.test(link.pathname))
+            || !/\.[^/]+$/.test(link.pathname);
+          if (!inScope(link) || seen.has(key) || !documentPath) continue;
+          seen.add(key);
+          if (ignored(link)) {
+            ignoredLinks++;
+            continue;
+          }
+          // An llms.txt index mostly lists routes without ".md", on sites that export each as Markdown.
+          const preferMarkdown = (kind === "html" || (kind === "markdown" && (isMarkdownIndex || /\.md$/i.test(current.pathname))))
+            && !link.pathname.endsWith("/") && !/\.[^/]+$/.test(link.pathname);
+          queue.push({ url: link, depth: depth + 1, preferMarkdown });
+          queued++;
+        }
+      }
+      log("info", `Fetched ${current} (${docs.length}/${limits.maxPages}, ${isPdf ? "pdf" : kind}, ${kb(bytes.length)}${lazy === null ? "" : `, kept ${kb(content.length)} of lazy-loaded content`}, depth ${depth}, ${queued} new links, ${Math.round(performance.now() - started)} ms)`);
     }
-    log("info", `Fetched ${current} (${docs.length}/${limits.maxPages}, ${isPdf ? "pdf" : kind}, ${kb(bytes.length)}${lazy === null ? "" : `, kept ${kb(content.length)} of lazy-loaded content`}, depth ${depth}, ${queued} new links, ${Math.round(performance.now() - started)} ms)`);
+  } finally {
+    controller.abort();
+    await Promise.all(pending);
   }
   if (queue.length) log("warn", `Stopped at the ${limits.maxPages} page limit; ${queue.length} queued links were not fetched`);
   if (ignoredLinks) log("info", `Ignored ${ignoredLinks} links matching the source's ignore patterns`);
@@ -272,7 +302,10 @@ export async function crawl(start: string, limits: CrawlLimits = DEFAULT_LIMITS,
 
 async function readCapped(res: Response, cap: number): Promise<Uint8Array | null> {
   const declared = Number(res.headers.get("content-length") ?? 0);
-  if (declared > cap) return null;
+  if (declared > cap) {
+    await res.body?.cancel();
+    return null;
+  }
   const reader = res.body?.getReader();
   if (!reader) return new Uint8Array();
   const parts: Uint8Array[] = [];

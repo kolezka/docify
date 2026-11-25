@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { openDb, nowIso, SCHEMA_VERSION } from "./db.ts";
 import { BYTES_PER_MB, loadConfig, saveConfig, type DocifyConfig } from "./config.ts";
+import { CrawlPool } from "./crawl-pool.ts";
 import { collectLocal, crawl, DEFAULT_LIMITS, type CollectLog, type CrawlLimits, type Fetcher, type RawDoc } from "./collect.ts";
 import { normalize } from "./normalize.ts";
 import { chunk } from "./chunk.ts";
@@ -289,6 +290,7 @@ export function effectiveGeneration(gen: GenerationRow, source: SourceRow | null
 }
 
 export class Docify {
+  private readonly crawlPool = new CrawlPool();
   private database: Database;
   readonly logs: LogStore;
   private current: DocifyConfig;
@@ -1021,7 +1023,7 @@ export class Docify {
           maxBytesPerPage: limits.maxBytesPerPage,
           signal: opts.signal,
         });
-        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { signal: opts.signal, markdownExports: false, log, ignore });
+        return await crawl(locator, { ...limits, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, fetcher, { pool: this.crawlPool, renderer: { hostname: new URL(this.config.browserlessUrl).hostname, timeoutMs: this.config.browserlessTimeoutSeconds * 1000 }, signal: opts.signal, markdownExports: false, log, ignore });
       }
       if (provider === "crawl4ai") {
         const fetcher = crawl4aiFetcher({
@@ -1039,14 +1041,14 @@ export class Docify {
             },
           } : undefined,
         }, runOptions);
-        const docs = await crawl(locator, limits, fetcher, { signal: opts.signal, markdownExports: false, pdfFetcher: opts.fetcher ?? fetch, onAcceptedPage: (url) => fetcher.acceptPage(url), log, ignore });
+        const docs = await crawl(locator, limits, fetcher, { pool: this.crawlPool, renderer: { hostname: new URL(this.config.crawl4aiUrl).hostname, timeoutMs: this.config.crawl4aiTimeoutSeconds * 1000 }, signal: opts.signal, markdownExports: false, pdfFetcher: opts.fetcher ?? fetch, onAcceptedPage: (url) => fetcher.acceptPage(url), log, ignore });
         if ((runOptions?.captureScreenshot && !artifacts.some(a => a.kind === "screenshot")) || (runOptions?.capturePdf && !artifacts.some(a => a.kind === "pdf"))) {
           throw new Error("Crawl4AI did not capture the start page");
         }
         return docs;
       }
       if (provider !== "builtin") throw new DocifyError("invalid_config", `unknown crawlProvider: ${String(provider)}`);
-      return await crawl(locator, limits, opts.fetcher, { signal: opts.signal, log, ignore });
+      return await crawl(locator, limits, opts.fetcher, { pool: this.crawlPool, signal: opts.signal, log, ignore });
     } catch (err) {
       if (opts.signal?.aborted) throw new DocifyError("cancelled", "preparation cancelled");
       throw err;

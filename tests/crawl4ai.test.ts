@@ -119,6 +119,19 @@ test("uses the final HTTP status after a browser redirect", async () => {
   }
 });
 
+test("concurrent redirects to one destination keep their own rendered bytes", async () => {
+  const moved = SITE + 'moved';
+  const mock = (async (_url: string, init: RequestInit) => {
+    const target = JSON.parse(String(init.body)).urls[0];
+    return Response.json({ success: true, results: [{ url: target, html: target, success: true, redirected_url: moved }] });
+  }) as unknown as typeof fetch;
+  const f = fetcher({ fetchImpl: mock });
+  const first = {}, second = {};
+  await Promise.all([f(SITE + 'a', {}, first), f(SITE + 'b', {}, second)]);
+  expect(await (await f(moved, {}, first)).text()).toBe(SITE + 'a');
+  expect(await (await f(moved, {}, second)).text()).toBe(SITE + 'b');
+});
+
 test("stream transport sends SPA options and parses split UTF-8 NDJSON", async () => {
   let request: RequestInit | undefined;
   let endpoint = "";
