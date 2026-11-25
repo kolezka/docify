@@ -34,9 +34,12 @@
   }
   const nodes = $derived(tree(paths ?? []));
 
+  // Polls replace the source object even when its active generation is unchanged.
+  const activeSource = $derived(sourceId);
+  const activeGeneration = $derived(generation);
   $effect(() => {
-    const id = sourceId;
-    void generation;
+    const id = activeSource;
+    void activeGeneration;
     const controller = new AbortController();
     paths = null;
     error = "";
