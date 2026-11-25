@@ -1,10 +1,9 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { kindFromPath } from "./normalize.ts";
-import type { CrawlLimits, RawDoc } from "./collect.ts";
+import type { CollectLog, CrawlLimits, RawDoc } from "./collect.ts";
 
 const exec = promisify(execFile);
 const codeFile = /\.(?:[cm]?[jt]sx?|pyi?|rb|rs|go|java|kt[s]?|swift|[ch](?:pp|xx)?|cc|cs|fs|scala|php|lua|sh|bash|zsh|sql|vue|svelte|css|scss|dart|exs?|erl|hs|ml|zig|m|mm)$/i;
@@ -17,21 +16,35 @@ export function repositoryUrl(input: string): string {
   return u.href;
 }
 
-export async function collectRepository(locator: string, limits: CrawlLimits, ignore: RegExp[], signal?: AbortSignal): Promise<RawDoc[]> {
+export async function collectRepository(locator: string, limits: CrawlLimits, ignore: RegExp[], signal: AbortSignal | undefined, cache: string, log: CollectLog): Promise<RawDoc[]> {
   const url = repositoryUrl(locator);
-  const tmp = await mkdtemp(join(tmpdir(), "docify-repo-"));
-  const repo = join(tmp, "repo.git");
-  // A bare clone never checks out untrusted paths, runs checkout filters or follows symlinks.
-  const git = async (args: string[], maxBuffer: number) => (await exec("git", args, {
-    cwd: tmp, maxBuffer, encoding: "buffer", timeout: limits.timeoutMs, signal,
-    env: { PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "https", LC_ALL: "C" },
-  })).stdout;
-  try {
-    await git(["-c", "http.followRedirects=false", "clone", "--bare", "--depth=1", "--single-branch", "--no-tags", "--template=", "--", url, repo], 1024 * 1024);
-    return await readRepositoryTree(repo, limits, ignore, signal);
-  } finally {
-    await rm(tmp, { recursive: true, force: true });
+  const parent = dirname(cache);
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const git = async (cwd: string, ...args: string[]) => (await exec("git", ["-c", "core.hooksPath=/dev/null", "-c", "http.followRedirects=false", ...args], {
+    cwd, maxBuffer: 1024 * 1024, timeout: limits.timeoutMs, signal,
+    env: { PATH: process.env.PATH, HOME: parent, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "https", LC_ALL: "C" },
+  })).stdout.trim();
+  const cached = await stat(cache).catch((err: NodeJS.ErrnoException) => { if (err.code !== "ENOENT") throw err; return null; });
+  if (!cached) {
+    log("info", "git clone: initializing repository cache");
+    const staging = await mkdtemp(join(parent, ".clone-"));
+    try {
+      await git(parent, "clone", "--no-checkout", "--depth=1", "--single-branch", "--no-tags", "--template=", "--", url, staging);
+      // Pull needs a worktree, but collection reads blobs. Keep every remote path out of the worktree.
+      await git(staging, "sparse-checkout", "set", "--no-cone", "!/*");
+      await git(staging, "read-tree", "-mu", "HEAD");
+      await rename(staging, cache);
+    } finally { await rm(staging, { recursive: true, force: true }); }
+    log("info", `git clone: indexed revision selected: ${await git(cache, "rev-parse", "--short", "HEAD")}`);
+  } else {
+    const before = await git(cache, "rev-parse", "HEAD");
+    log("info", "git pull --ff-only: checking upstream");
+    try { await git(cache, "pull", "--ff-only", "--no-rebase", "--no-recurse-submodules", url, "HEAD"); }
+    catch (err) { log("warn", "git pull failed; repository was not indexed"); throw err; }
+    const after = await git(cache, "rev-parse", "HEAD");
+    log("info", before === after ? `git pull: Already up to date (${after.slice(0, 12)})` : `git pull: ${before.slice(0, 12)} -> ${after.slice(0, 12)}`);
   }
+  return readRepositoryTree(join(cache, ".git"), limits, ignore, signal);
 }
 
 export async function readRepositoryTree(repo: string, limits: CrawlLimits, ignore: RegExp[], signal?: AbortSignal): Promise<RawDoc[]> {
