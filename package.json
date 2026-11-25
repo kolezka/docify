@@ -6,7 +6,8 @@
   "private": true,
   "license": "UNLICENSED",
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "happy-dom": "^21.0.4"
   },
   "peerDependencies": {
     "typescript": "^7"
